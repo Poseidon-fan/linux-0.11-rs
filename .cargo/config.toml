@@ -1,6 +1,9 @@
 [build]
 target = "i386-unknown-none.json"
 
+[unstable]
+build-std = ["core", "alloc"]
+
 [target.i386-unknown-none]
 linker = "rust-lld"
 
