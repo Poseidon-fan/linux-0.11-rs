@@ -11,16 +11,17 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main() {
-    todo!()
+pub extern "C" fn main() -> ! {
+    #[allow(clippy::empty_loop)]
+    loop {}
 }
 
+// Format is incorrect, should be modified later
 #[unsafe(no_mangle)]
-pub extern "C" fn stack_start() {
-    todo!()
-}
+pub static stack_start: [u8; 4096] = [0; 4096];
 
 #[unsafe(no_mangle)]
 pub extern "C" fn printk() {
-    todo!()
+    #[allow(clippy::empty_loop)]
+    loop {}
 }
