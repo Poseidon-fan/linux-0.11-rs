@@ -11,7 +11,7 @@
  * the page directory will exist. The startup code will be overwritten by
  * the page directory.
  */
-.text
+.section .head, "ax"
 .globl idt,gdt,pg_dir,tmp_floppy_area
 pg_dir:
 .globl startup_32
