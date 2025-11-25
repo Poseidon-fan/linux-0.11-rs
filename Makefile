@@ -41,6 +41,9 @@ $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 	@$(LD) $(LDFLAGS) -o $(TARGET_DIR)/$* $(TARGET_DIR)/$*.o
 	@$(OBJCOPY) $(OBJCOPY_BOOT_FLAGS) $(TARGET_DIR)/$* $(TARGET_DIR)/$*
 
+qemu: Image
+	@qemu-system-i386 -m 16M -boot a -fda Image -display curses
+
 clean:
 	@echo "Cleaning..."
 	@cargo clean
