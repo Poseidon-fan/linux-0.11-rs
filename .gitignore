@@ -20,5 +20,8 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+# .vscode config is stored in the .devcontainer folder, and will copied to the top folder on startup
+.vscode/
+
 # Image
 Image-*

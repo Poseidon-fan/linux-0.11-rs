@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "processCreateCommands": [
+                "gdb-remote localhost:1234"
+            ],
+            "initCommands": [
+                "process handle SIGTRAP -s false"
+            ],
+            "name": "lldb launch",
+            "program": "${workspaceFolder}/target/i386-unknown-none/debug/linux_rs",
+            "breakpointMode": "file"
+        }
+    ]
+}
