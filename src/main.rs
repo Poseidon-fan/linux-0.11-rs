@@ -11,8 +11,25 @@ global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() -> ! {
+    let memory_end = ((1 << 20) + ((ext_mem_k() as u32) << 10)) & 0xfffff000;
+    let memory_end = memory_end.min(16 * 1024 * 1024);
+    let buffer_memory_end = match memory_end {
+        m if m > 12 * 1024 * 1024 => 4 * 1024 * 1024,
+        m if m > 6 * 1024 * 1024 => 2 * 1024 * 1024,
+        _ => 1024 * 1024,
+    };
+    let main_memory_start = buffer_memory_end;
+
+    mm::init(main_memory_start, memory_end);
+
     #[allow(clippy::empty_loop)]
     loop {}
+}
+
+#[inline(always)]
+pub fn ext_mem_k() -> u16 {
+    const EXT_MEM_K_ADDR: usize = 0x90002;
+    unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
 }
 
 #[unsafe(no_mangle)]
