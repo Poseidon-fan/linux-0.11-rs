@@ -2,14 +2,10 @@
 #![no_main]
 
 mod mm;
+mod panic;
 mod sched;
 
 use core::arch::global_asm;
-
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
-}
 
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
