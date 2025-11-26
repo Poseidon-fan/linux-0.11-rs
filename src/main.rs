@@ -10,7 +10,7 @@ use core::arch::global_asm;
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main() -> ! {
+pub extern "C" fn rust_main() -> ! {
     let memory_end = ((1 << 20) + ((ext_mem_k() as u32) << 10)) & 0xfffff000;
     let memory_end = memory_end.min(16 * 1024 * 1024);
     let buffer_memory_end = match memory_end {
