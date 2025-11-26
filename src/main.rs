@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+mod mm;
+mod sched;
+
 use core::arch::global_asm;
 
 #[panic_handler]
@@ -15,10 +18,6 @@ pub extern "C" fn main() -> ! {
     #[allow(clippy::empty_loop)]
     loop {}
 }
-
-// Format is incorrect, should be modified later
-#[unsafe(no_mangle)]
-pub static stack_start: [u8; 4096] = [0; 4096];
 
 #[unsafe(no_mangle)]
 pub extern "C" fn printk() {
