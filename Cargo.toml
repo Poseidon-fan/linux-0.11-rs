@@ -3,3 +3,6 @@ name = "linux_rs"
 version = "0.1.1"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
+
+[profile.release]
+debug = true
