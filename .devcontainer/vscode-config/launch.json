@@ -12,7 +12,8 @@
             ],
             "name": "lldb launch",
             "program": "${workspaceFolder}/target/i386-unknown-none/debug/linux_rs",
-            "breakpointMode": "file"
+            "breakpointMode": "file",
+            "preLaunchTask": "debug"
         }
     ]
 }

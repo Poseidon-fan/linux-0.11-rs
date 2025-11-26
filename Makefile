@@ -45,11 +45,11 @@ run: Image-release
 	@qemu-system-i386 -m 16M -boot a -fda Image-release -display curses
 
 dbg: Image-debug
-	@qemu-system-i386 -m 16M -boot a -fda Image-debug -display curses -s -S
+	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -fda Image-debug -display curses -s -S
 
 clean:
 	@echo "Cleaning..."
 	@cargo clean
-	@rm -f $(BOOTSECT_BINARY) $(SETUP_BINARY) $(KERNEL_IMAGE) $(SYSTEM_BINARY) Image
+	@rm -f $(BOOTSECT_BINARY) $(SETUP_BINARY) $(KERNEL_IMAGE) $(SYSTEM_BINARY) Image-*
 
 .PHONY: all clean Image

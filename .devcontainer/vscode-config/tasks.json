@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "debug",
+            "type": "shell",
+            "command": "make dbg",
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^(Starting QEMU)",
+                    "line": 1
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^(Starting QEMU)",
+                    "endsPattern": "^(Starting QEMU)"
+                }
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+    ]
+}
