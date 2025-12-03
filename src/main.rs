@@ -4,6 +4,7 @@
 mod mm;
 mod panic;
 mod sched;
+mod trap;
 
 use core::arch::global_asm;
 
