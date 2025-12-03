@@ -43,14 +43,17 @@ fn set_gate(n: usize, descriptor: InterruptDescriptor) {
 }
 
 impl InterruptDescriptor {
+    #[inline(always)]
     pub fn intr(handler: fn(), dpl: u8) -> Self {
         Self::new(handler, dpl, 0xE)
     }
 
+    #[inline(always)]
     pub fn trap(handler: fn(), dpl: u8) -> Self {
         Self::new(handler, dpl, 0xF)
     }
 
+    #[inline(always)]
     fn new(handler: fn(), dpl: u8, gate_type: u8) -> Self {
         const KERNEL_CS: u16 = 0x08;
         let addr = handler as usize;
