@@ -17,7 +17,7 @@ pub fn set_trap_gate(n: usize, handler: fn()) {
 
 #[inline(always)]
 pub fn set_system_gate(n: usize, handler: fn()) {
-    set_gate(n, InterruptDescriptor::trap(handler, 0x11));
+    set_gate(n, InterruptDescriptor::trap(handler, 0x3));
 }
 
 // Interrupt Descriptor Table Entry.
