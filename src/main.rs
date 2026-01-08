@@ -3,7 +3,9 @@
 
 mod mm;
 mod panic;
+mod pmio;
 mod sched;
+mod time;
 mod trap;
 
 use core::arch::global_asm;
@@ -22,6 +24,7 @@ pub extern "C" fn rust_main() -> ! {
     let main_memory_start = buffer_memory_end;
 
     mm::init(main_memory_start, memory_end);
+    time::init();
 
     #[allow(clippy::empty_loop)]
     loop {}
