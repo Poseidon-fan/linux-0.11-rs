@@ -14,8 +14,6 @@ mod trap;
 
 use core::arch::global_asm;
 
-use log::info;
-
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
@@ -31,7 +29,6 @@ pub extern "C" fn rust_main() -> ! {
 
     logging::init();
     println!("logging initialized");
-    info!("logging initialized");
 
     mm::init(main_memory_start, memory_end);
     time::init();
@@ -40,12 +37,14 @@ pub extern "C" fn rust_main() -> ! {
     loop {}
 }
 
-#[inline(always)]
+#[inline]
 pub fn ext_mem_k() -> u16 {
     const EXT_MEM_K_ADDR: usize = 0x90002;
     unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
 }
 
+// Dummy function, currently referenced by `ignore_int` in `head.s`.
+// Remove it later, replace with rust kernel print.
 #[unsafe(no_mangle)]
 pub extern "C" fn printk() {
     #[allow(clippy::empty_loop)]

@@ -1,4 +1,7 @@
-use crate::pmio::{inb_p, outb_p};
+use crate::{
+    pmio::{inb_p, outb_p},
+    println,
+};
 
 /// Partial implementation of the ISO C `broken-down time' structure.
 struct Time {
@@ -45,9 +48,8 @@ pub fn init() {
             };
         }
     };
-    #[allow(unused_variables)]
     let startup_time = kernel_mktime(&time);
-    todo!()
+    println!("startup time: {}", startup_time);
 }
 
 /// Convert a `Time` struct to the number of seconds since 1970-01-01 00:00:00 UTC.
