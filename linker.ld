@@ -28,4 +28,6 @@ SECTIONS
     {
         *(.bss .bss.* COMMON)
     }
+
+    ekernel = .;
 }

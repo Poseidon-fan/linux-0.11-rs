@@ -3,3 +3,6 @@ name = "linux_rs"
 version = "0.1.1"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
+
+[dependencies]
+buddy_system_allocator = "0.11.0"
