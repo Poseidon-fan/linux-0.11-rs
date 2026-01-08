@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+mod logging;
 mod mm;
 mod panic;
 mod pmio;
@@ -12,6 +13,8 @@ mod time;
 mod trap;
 
 use core::arch::global_asm;
+
+use log::info;
 
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
@@ -25,6 +28,10 @@ pub extern "C" fn rust_main() -> ! {
         _ => 1024 * 1024,
     };
     let main_memory_start = buffer_memory_end;
+
+    logging::init();
+    println!("logging initialized");
+    info!("logging initialized");
 
     mm::init(main_memory_start, memory_end);
     time::init();

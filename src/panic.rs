@@ -1,19 +1,19 @@
-use core::ptr;
+use log::error;
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    fill_screen(b'!');
-    loop {}
-}
-
-fn fill_screen(c: u8) {
-    let vga = 0xb8000 as *mut u8;
-    const SCREEN_SIZE: usize = 80 * 25; // 80 columns x 25 rows
-
-    unsafe {
-        for pos in 0..SCREEN_SIZE {
-            ptr::write_volatile(vga.add(pos * 2), c);
-            ptr::write_volatile(vga.add(pos * 2 + 1), 0x07);
-        }
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    if let Some(location) = info.location() {
+        error!(
+            "[kernel] Panicked at {}:{} {}",
+            location.file(),
+            location.line(),
+            info.message().as_str().ok_or("unknown panic msg").unwrap()
+        );
+    } else {
+        error!(
+            "[kernel] Panicked: {}",
+            info.message().as_str().ok_or("unknown panic msg").unwrap()
+        );
     }
+    loop {}
 }
