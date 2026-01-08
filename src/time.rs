@@ -3,7 +3,7 @@ use crate::{
     println,
 };
 
-/// Partial implementation of the ISO C `broken-down time' structure.
+// Partial implementation of the ISO C `broken-down time' structure.
 struct Time {
     pub second: u32, // Seconds 	[0-60] (1 leap second)
     pub minute: u32, // Minutes 	[0-59]
@@ -52,7 +52,7 @@ pub fn init() {
     println!("startup time: {}", startup_time);
 }
 
-/// Convert a `Time` struct to the number of seconds since 1970-01-01 00:00:00 UTC.
+// Convert a `Time` struct to the number of seconds since 1970-01-01 00:00:00 UTC.
 fn kernel_mktime(tm: &Time) -> u32 {
     let year = match tm.year {
         y if y >= 70 => y - 70,
@@ -79,7 +79,7 @@ fn kernel_mktime(tm: &Time) -> u32 {
         - leap_day_adjustment
 }
 
-/// Calculate the number of seconds in each month, assuming a leap year.
+// Calculate the number of seconds in each month, assuming a leap year.
 const fn calculate_months() -> [u32; 12] {
     let days_in_month = [0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30];
     let mut result = [0u32; 12];
