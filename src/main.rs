@@ -4,7 +4,7 @@
 mod mm;
 mod panic;
 mod pmio;
-mod sched;
+mod process;
 mod time;
 mod trap;
 

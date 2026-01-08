@@ -2,12 +2,12 @@ use crate::pmio::{inb_p, outb_p};
 
 /// Partial implementation of the ISO C `broken-down time' structure.
 struct Time {
-    pub second: u32, // Seconds.	[0-60] (1 leap second)
-    pub minute: u32, // Minutes.	[0-59]
-    pub hour: u32,   // Hours.	[0-23]
-    pub day: u32,    // Day.		[1-31]
-    pub month: u32,  // Month.	[0-11]
-    pub year: u32,   // Year	- 1900
+    pub second: u32, // Seconds 	[0-60] (1 leap second)
+    pub minute: u32, // Minutes 	[0-59]
+    pub hour: u32,   // Hours	    [0-23]
+    pub day: u32,    // Day		    [1-31]
+    pub month: u32,  // Month	    [0-11]
+    pub year: u32,   // Year	    [1900-...]
 }
 
 const MINUTE: u32 = 60;
