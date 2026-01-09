@@ -23,7 +23,7 @@
 /// - **Page Offset**: Byte offset within the 4KB page
 #[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub struct LinearAddr(pub u32);
+pub struct LinAddr(pub u32);
 
 /// Physical address.
 ///
@@ -60,4 +60,28 @@ pub struct LinearAddr(pub u32);
 /// ```
 #[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-pub struct PhysicalAddr(pub u32);
+pub struct PhysAddr(pub u32);
+
+/// Physical page number (PPN).
+///
+/// Physical address is 32 bits, and memory is divided into 4KB pages.
+/// Therefore, the high 20 bits represent the physical page number,
+/// and the low 12 bits represent the offset within the page.
+///
+/// ```text
+///  31                 12 11          0
+/// +---------------------+-------------+
+/// │ Physical Page Number│ Page Offset │
+/// +---------------------+-------------+
+///        20 bits            12 bits
+/// ```
+#[repr(C)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub struct PhysPageNum(pub u32);
+
+/// Linear page number (LPN).
+///
+/// Similar to [`PhysPageNum`], but for linear address.
+#[repr(C)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+pub struct LinPageNum(pub u32);
