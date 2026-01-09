@@ -35,7 +35,7 @@ struct InterruptDescriptor {
     offset_high: u16,
 }
 
-#[inline(always)]
+#[inline]
 fn set_gate(n: usize, descriptor: InterruptDescriptor) {
     unsafe {
         idt[n] = descriptor;
@@ -43,17 +43,17 @@ fn set_gate(n: usize, descriptor: InterruptDescriptor) {
 }
 
 impl InterruptDescriptor {
-    #[inline(always)]
+    #[inline]
     pub fn intr(handler: fn(), dpl: u8) -> Self {
         Self::new(handler, dpl, 0xE)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn trap(handler: fn(), dpl: u8) -> Self {
         Self::new(handler, dpl, 0xF)
     }
 
-    #[inline(always)]
+    #[inline]
     fn new(handler: fn(), dpl: u8, gate_type: u8) -> Self {
         const KERNEL_CS: u16 = 0x08;
         let addr = handler as usize;
