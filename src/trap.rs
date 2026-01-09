@@ -5,17 +5,17 @@ unsafe extern "C" {
     static mut idt: [InterruptDescriptor; 256];
 }
 
-#[inline(always)]
+#[inline]
 pub fn set_intr_gate(n: usize, handler: fn()) {
     set_gate(n, InterruptDescriptor::intr(handler, 0x0));
 }
 
-#[inline(always)]
+#[inline]
 pub fn set_trap_gate(n: usize, handler: fn()) {
     set_gate(n, InterruptDescriptor::trap(handler, 0x0));
 }
 
-#[inline(always)]
+#[inline]
 pub fn set_system_gate(n: usize, handler: fn()) {
     set_gate(n, InterruptDescriptor::trap(handler, 0x3));
 }
