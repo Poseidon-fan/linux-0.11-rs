@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use core::arch::asm;
+
 unsafe extern "C" {
     /// Interrupt Descriptor Table, defined in `boot/head.s`.
     static mut idt: [InterruptDescriptor; 256];

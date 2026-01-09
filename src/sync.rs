@@ -1,3 +1,14 @@
+//! Synchronization primitives for kernel use.
+//!
+//! This module provides interrupt-safe wrappers for shared mutable state.
+//! In a single-core kernel without preemptive scheduling, disabling interrupts
+//! is sufficient to ensure exclusive access to shared data.
+//!
+//! # Contents
+//!
+//! - [`sti`] / [`cli`]: Low-level functions to enable/disable interrupts.
+//! - [`IrqSafeCell`]: Interior mutability wrapper with automatic interrupt management.
+
 #![allow(dead_code)]
 use core::{
     arch::asm,
@@ -5,16 +16,15 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::println;
-
+/// Enables interrupts by setting the IF (Interrupt Flag) in EFLAGS.
 #[inline]
 pub fn sti() {
     unsafe {
-        println!("sti");
         asm!("sti");
     }
 }
 
+/// Disables interrupts by clearing the IF (Interrupt Flag) in EFLAGS.
 #[inline]
 pub fn cli() {
     unsafe {
@@ -22,28 +32,33 @@ pub fn cli() {
     }
 }
 
-/// Returns true if interrupts are currently enabled (IF flag is set).
-#[inline]
-fn interrupts_enabled() -> bool {
-    let eflags: u32;
-    unsafe {
-        asm!("pushfd; pop {}", out(reg) eflags, options(nomem, preserves_flags));
-    }
-    // IF (Interrupt Flag) is bit 9
-    (eflags & (1 << 9)) != 0
-}
-
+/// A wrapper providing interior mutability with automatic interrupt disabling.
+///
+/// # Example
+///
+/// ```ignore
+/// static DATA: IrqSafeCell<u32> = unsafe { IrqSafeCell::new(0) };
+///
+/// // Option 1: Scoped access
+/// DATA.exclusive_session(|data| {
+///     *data += 1;
+/// });
+///
+/// // Option 2: RAII guard
+/// {
+///     let mut guard = DATA.exclusive_access();
+///     *guard += 1;
+/// } // interrupts restored here
+/// ```
 pub struct IrqSafeCell<T> {
-    /// inner data
     inner: RefCell<T>,
 }
 
 unsafe impl<T> Sync for IrqSafeCell<T> {}
 
+/// RAII guard for [`IrqSafeCell`]. Restores interrupt state on drop.
 pub struct IrqSafeRefMut<'a, T> {
     inner: Option<RefMut<'a, T>>,
-    /// Whether interrupts were enabled before we disabled them.
-    /// Only restore interrupts on drop if this is true.
     irq_was_enabled: bool,
 }
 
@@ -90,4 +105,15 @@ impl<T> DerefMut for IrqSafeRefMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner.as_mut().unwrap().deref_mut()
     }
+}
+
+/// Returns true if interrupts are currently enabled (IF flag is set).
+#[inline]
+fn interrupts_enabled() -> bool {
+    let eflags: u32;
+    unsafe {
+        asm!("pushfd; pop {}", out(reg) eflags, options(nomem, preserves_flags));
+    }
+    // IF (Interrupt Flag) is bit 9
+    (eflags & (1 << 9)) != 0
 }
