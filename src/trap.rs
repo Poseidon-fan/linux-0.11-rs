@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 unsafe extern "C" {
-    // Interrupt Descriptor Table, defined in boot/head.s
+    /// Interrupt Descriptor Table, defined in `boot/head.s`.
     static mut idt: [InterruptDescriptor; 256];
 }
 
@@ -20,12 +20,13 @@ pub fn set_system_gate(n: usize, handler: fn()) {
     set_gate(n, InterruptDescriptor::trap(handler, 0x3));
 }
 
-// Interrupt Descriptor Table Entry.
-// In fact, there're three descriptor for i386:
-// - Task Gate
-// - Interrupt Gate
-// - Trap Gate
-// We'll not use task gate, so the following struct describes interrupt gate and trap gate.
+/// Interrupt Descriptor Table Entry.
+///
+/// In fact, there're three descriptor for i386:
+/// - Task Gate
+/// - Interrupt Gate
+/// - Trap Gate
+///   We'll not use task gate, so the following struct describes interrupt gate and trap gate.
 #[repr(C, packed)]
 struct InterruptDescriptor {
     offset_low: u16,

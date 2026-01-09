@@ -1,24 +1,34 @@
+//! Kernel time initialization.
+//!
+//! Reads the current time from CMOS RTC (Real-Time Clock) at boot
+//! and converts it to Unix timestamp (seconds since 1970-01-01 00:00:00 UTC).
+
 use crate::{
     pmio::{inb_p, outb_p},
     println,
 };
 
-// Partial implementation of the ISO C `broken-down time' structure.
+/// Broken-down time structure (similar to ISO C `struct tm`).
 struct Time {
-    pub second: u32, // Seconds 	[0-60] (1 leap second)
-    pub minute: u32, // Minutes 	[0-59]
-    pub hour: u32,   // Hours	    [0-23]
-    pub day: u32,    // Day		    [1-31]
-    pub month: u32,  // Month	    [0-11]
-    pub year: u32,   // Year	    [1900-...]
+    second: u32, // Seconds  [0-60] (1 leap second)
+    minute: u32, // Minutes  [0-59]
+    hour: u32,   // Hours    [0-23]
+    day: u32,    // Day      [1-31]
+    month: u32,  // Month    [0-11]
+    year: u32,   // Year     [0-99] (offset from 1900)
 }
 
+// Time unit constants in seconds.
 const MINUTE: u32 = 60;
 const HOUR: u32 = 60 * MINUTE;
 const DAY: u32 = 24 * HOUR;
 const YEAR: u32 = 365 * DAY;
 const MONTH: [u32; 12] = calculate_months();
 
+/// Initializes kernel time by reading from CMOS RTC.
+///
+/// Reads the current date/time from the RTC chip via I/O ports 0x70/0x71,
+/// converts it to Unix timestamp, and stores it as the kernel's startup time.
 pub fn init() {
     // Read a byte from the CMOS RTC at the specified address.
     let cmos_read = |addr: u8| {
@@ -52,7 +62,9 @@ pub fn init() {
     println!("startup time: {}", startup_time);
 }
 
-// Convert a `Time` struct to the number of seconds since 1970-01-01 00:00:00 UTC.
+/// Converts a [`Time`] struct to Unix timestamp.
+///
+/// Returns the number of seconds since 1970-01-01 00:00:00 UTC.
 fn kernel_mktime(tm: &Time) -> u32 {
     let year = match tm.year {
         y if y >= 70 => y - 70,
@@ -79,7 +91,9 @@ fn kernel_mktime(tm: &Time) -> u32 {
         - leap_day_adjustment
 }
 
-// Calculate the number of seconds in each month, assuming a leap year.
+/// Calculates cumulative seconds for each month (assuming leap year).
+///
+/// Returns an array where `MONTH[i]` is the total seconds from Jan 1 to the start of month `i`.
 const fn calculate_months() -> [u32; 12] {
     let days_in_month = [0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30];
     let mut result = [0u32; 12];

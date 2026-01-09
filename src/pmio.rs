@@ -2,7 +2,7 @@
 
 use core::arch::asm;
 
-// Writes a byte to the specified I/O port.
+/// Write a byte to the specified I/O port.
 #[inline]
 #[allow(dead_code)]
 pub fn outb(value: u8, port: u16) {
@@ -16,7 +16,7 @@ pub fn outb(value: u8, port: u16) {
     }
 }
 
-// Reads a byte from the specified I/O port.
+/// Read a byte from the specified I/O port.
 #[inline]
 #[allow(dead_code)]
 pub fn inb(port: u16) -> u8 {
@@ -32,7 +32,7 @@ pub fn inb(port: u16) -> u8 {
     }
 }
 
-// Writes a byte to the specified I/O port with a small delay for slow devices.
+/// Write a byte to the specified I/O port with a small delay for slow devices.
 #[inline]
 pub fn outb_p(value: u8, port: u16) {
     unsafe {
@@ -48,7 +48,7 @@ pub fn outb_p(value: u8, port: u16) {
     }
 }
 
-// Reads a byte from the specified I/O port with a small delay for slow devices.
+/// Read a byte from the specified I/O port with a small delay for slow devices.
 #[inline]
 pub fn inb_p(port: u16) -> u8 {
     let value: u8;
