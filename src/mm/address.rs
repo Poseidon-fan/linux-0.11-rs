@@ -1,5 +1,7 @@
 //! This module defines Memory Address structures.
 
+use crate::mm::PAGE_SIZE;
+
 /// Linear address after segment translation.
 ///
 /// In i386 architecture: `Logical Address --[Segmentation]--> Linear Address --[Paging]--> Physical Address`
@@ -85,3 +87,46 @@ pub struct PhysPageNum(pub u32);
 #[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct LinPageNum(pub u32);
+
+impl From<u32> for LinAddr {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<u32> for PhysAddr {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl From<u32> for PhysPageNum {
+    fn from(value: u32) -> Self {
+        const PPN_WIDTH: u32 = 20;
+        Self(value & ((1 << PPN_WIDTH) - 1))
+    }
+}
+
+impl From<u32> for LinPageNum {
+    fn from(value: u32) -> Self {
+        const LPN_WIDTH: u32 = 20;
+        Self(value & ((1 << LPN_WIDTH) - 1))
+    }
+}
+
+impl From<PhysAddr> for PhysPageNum {
+    fn from(value: PhysAddr) -> Self {
+        assert_eq!(value.page_offset(), 0);
+        value.floor()
+    }
+}
+
+impl PhysAddr {
+    pub fn floor(&self) -> PhysPageNum {
+        PhysPageNum(self.0 / PAGE_SIZE)
+    }
+
+    pub fn page_offset(&self) -> u32 {
+        self.0 & (PAGE_SIZE - 1)
+    }
+}

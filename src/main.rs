@@ -9,6 +9,7 @@ mod mm;
 mod panic;
 mod pmio;
 mod process;
+mod sync;
 mod time;
 mod trap;
 
@@ -47,6 +48,5 @@ pub fn ext_mem_k() -> u16 {
 // Remove it later, replace with rust kernel print.
 #[unsafe(no_mangle)]
 pub extern "C" fn printk() {
-    #[allow(clippy::empty_loop)]
-    loop {}
+    panic!("printk is not implemented");
 }

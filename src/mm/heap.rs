@@ -21,6 +21,8 @@
 
 use buddy_system_allocator::LockedHeap;
 
+use crate::println;
+
 /// End address of the kernel heap (exclusive).
 ///
 /// Kernel claims 0 ~ 1M memory space, starting from address 0x0.
@@ -71,4 +73,5 @@ fn heap_test() {
     for (i, &item) in tmp.iter().enumerate() {
         assert_eq!(item, i as u8);
     }
+    println!("[heap_test] passed");
 }
