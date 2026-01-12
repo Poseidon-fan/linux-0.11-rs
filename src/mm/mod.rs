@@ -1,6 +1,7 @@
 mod address;
 mod frame;
 mod heap;
+mod page;
 
 pub use frame::PAGE_SIZE;
 

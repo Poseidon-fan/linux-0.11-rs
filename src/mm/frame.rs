@@ -60,6 +60,9 @@ impl FrameAllocator {
     }
 
     fn dealloc(&mut self, ppn: PhysPageNum) {
+        if ppn.0 < UNPAGED_PAGES {
+            return;
+        }
         assert!(
             self.mem_map[(ppn.0 - UNPAGED_PAGES) as usize] > 0,
             "Frame {} is not referenced, but dealloc is called",
