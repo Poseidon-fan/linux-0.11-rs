@@ -1,3 +1,5 @@
+mod task_struct;
+
 use core::ptr::addr_of_mut;
 
 use crate::mm::PAGE_SIZE;
