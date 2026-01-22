@@ -43,8 +43,6 @@ impl FrameAllocator {
         self.mem_map.fill(USED);
         let start_no = (PhysAddr::from(start_mem).floor().0 - UNPAGED_PAGES) as usize;
         let end_no = (PhysAddr::from(end_mem).floor().0 - UNPAGED_PAGES) as usize;
-        println!("mm start_mem: 0x{:x}, end_mem: 0x{:x}", start_mem, end_mem);
-        println!("mm start_no: {}, end_no: {}", start_no, end_no);
         self.mem_map[start_no..end_no].fill(0);
     }
 
