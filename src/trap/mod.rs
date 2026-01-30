@@ -34,6 +34,4 @@ pub fn init() {
     for i in 17..48 {
         set_trap_gate(i, reserved);
     }
-
-    info!("trap: initialized");
 }
