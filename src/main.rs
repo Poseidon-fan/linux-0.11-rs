@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
+#![feature(naked_functions)]
+#![feature(asm_goto)]
 
 extern crate alloc;
 
@@ -32,6 +34,7 @@ pub extern "C" fn rust_main() -> ! {
     println!("logging initialized");
 
     mm::init(main_memory_start, memory_end);
+    trap::init();
     time::init();
 
     #[allow(clippy::empty_loop)]

@@ -1,24 +1,23 @@
-#![allow(unused)]
-
-use core::arch::asm;
-
 unsafe extern "C" {
     /// Interrupt Descriptor Table, defined in `boot/head.s`.
     static mut idt: [InterruptDescriptor; 256];
 }
 
+/// Interrupt handler function type (naked functions use extern "C" ABI).
+pub type Handler = extern "C" fn();
+
 #[inline]
-pub fn set_intr_gate(n: usize, handler: fn()) {
+pub fn set_intr_gate(n: usize, handler: Handler) {
     set_gate(n, InterruptDescriptor::intr(handler, 0x0));
 }
 
 #[inline]
-pub fn set_trap_gate(n: usize, handler: fn()) {
+pub fn set_trap_gate(n: usize, handler: Handler) {
     set_gate(n, InterruptDescriptor::trap(handler, 0x0));
 }
 
 #[inline]
-pub fn set_system_gate(n: usize, handler: fn()) {
+pub fn set_system_gate(n: usize, handler: Handler) {
     set_gate(n, InterruptDescriptor::trap(handler, 0x3));
 }
 
@@ -48,17 +47,17 @@ fn set_gate(n: usize, descriptor: InterruptDescriptor) {
 
 impl InterruptDescriptor {
     #[inline]
-    pub fn intr(handler: fn(), dpl: u8) -> Self {
+    fn intr(handler: Handler, dpl: u8) -> Self {
         Self::new(handler, dpl, 0xE)
     }
 
     #[inline]
-    pub fn trap(handler: fn(), dpl: u8) -> Self {
+    fn trap(handler: Handler, dpl: u8) -> Self {
         Self::new(handler, dpl, 0xF)
     }
 
     #[inline]
-    fn new(handler: fn(), dpl: u8, gate_type: u8) -> Self {
+    fn new(handler: Handler, dpl: u8, gate_type: u8) -> Self {
         const KERNEL_CS: u16 = 0x08;
         let addr = handler as usize;
 
