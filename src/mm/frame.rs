@@ -3,7 +3,7 @@ use core::ptr;
 use crate::{
     mm::address::{PhysAddr, PhysPageNum},
     println,
-    sync::IrqSafeCell,
+    sync::KernelCell,
 };
 
 pub const PAGE_SIZE: u32 = 4096;
@@ -13,14 +13,14 @@ const PAGING_PAGES: u32 = PAGING_MEMORY >> 12;
 const UNPAGED_PAGES: u32 = LOW_MEM >> 12;
 
 pub fn init(start_mem: u32, end_mem: u32) {
-    FRAME_ALLOCATOR.exclusive_session(|a| a.init(start_mem, end_mem));
+    FRAME_ALLOCATOR.with_mut(|a| a.init(start_mem, end_mem));
 
     #[cfg(debug_assertions)]
     frame_test();
 }
 
 pub fn alloc() -> Option<PhysFrame> {
-    FRAME_ALLOCATOR.exclusive_session(|allocator| allocator.alloc())
+    FRAME_ALLOCATOR.with_mut(|allocator| allocator.alloc())
 }
 
 pub struct PhysFrame {
@@ -33,7 +33,7 @@ struct FrameAllocator {
 
 impl Drop for PhysFrame {
     fn drop(&mut self) {
-        FRAME_ALLOCATOR.exclusive_session(|allocator| allocator.dealloc(self.ppn));
+        FRAME_ALLOCATOR.with_mut(|allocator| allocator.dealloc(self.ppn));
     }
 }
 
@@ -81,11 +81,9 @@ impl FrameAllocator {
 /// is placed directly in .bss section at compile time, avoiding stack
 /// allocation during initialization (which would cause stack overflow
 /// in debug builds with the 4KB kernel stack).
-static FRAME_ALLOCATOR: IrqSafeCell<FrameAllocator> = unsafe {
-    IrqSafeCell::new(FrameAllocator {
-        mem_map: [0; PAGING_PAGES as usize],
-    })
-};
+static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAllocator {
+    mem_map: [0; PAGING_PAGES as usize],
+});
 
 #[allow(unused)]
 pub fn frame_test() {

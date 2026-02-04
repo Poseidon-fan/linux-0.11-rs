@@ -36,6 +36,7 @@ pub extern "C" fn rust_main() -> ! {
     mm::init(main_memory_start, memory_end);
     trap::init();
     time::init();
+    println!("init complete");
 
     #[allow(clippy::empty_loop)]
     loop {}

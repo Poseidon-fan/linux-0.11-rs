@@ -1,19 +1,24 @@
 //! Synchronization primitives for kernel use.
 //!
-//! This module provides interrupt-safe wrappers for shared mutable state.
-//! In a single-core kernel without preemptive scheduling, disabling interrupts
-//! is sufficient to ensure exclusive access to shared data.
+//! This module provides interior mutability for static variables in a
+//! single-core, non-preemptive kernel environment.
 //!
-//! # Contents
+//! # Safety
 //!
-//! - [`sti`] / [`cli`]: Low-level functions to enable/disable interrupts.
-//! - [`IrqSafeCell`]: Interior mutability wrapper with automatic interrupt management.
+//! [`KernelCell`] is safe to use because:
+//! - Single-core CPU: no parallel execution
+//! - Non-preemptive kernel: kernel code won't be preempted by scheduler
+//! - Runtime borrow checking: `RefCell` panics on conflicting borrows
+//!
+//! # Note
+//!
+//! If data is accessed by both syscall handlers and interrupt handlers,
+//! you must manually use [`cli`]/[`sti`] to protect critical sections.
 
 #![allow(dead_code)]
 use core::{
     arch::asm,
-    cell::{RefCell, RefMut},
-    ops::{Deref, DerefMut},
+    cell::{Ref, RefCell, RefMut},
 };
 
 /// Enables interrupts by setting the IF (Interrupt Flag) in EFLAGS.
@@ -32,88 +37,53 @@ pub fn cli() {
     }
 }
 
-/// A wrapper providing interior mutability with automatic interrupt disabling.
+/// Interior mutability wrapper for static variables in kernel context.
 ///
 /// # Example
 ///
 /// ```ignore
-/// static DATA: IrqSafeCell<u32> = unsafe { IrqSafeCell::new(0) };
+/// static DATA: KernelCell<u32> = KernelCell::new(0);
 ///
-/// // Option 1: Scoped access
-/// DATA.exclusive_session(|data| {
-///     *data += 1;
-/// });
-///
-/// // Option 2: RAII guard
-/// {
-///     let mut guard = DATA.exclusive_access();
-///     *guard += 1;
-/// } // interrupts restored here
+/// fn increment() {
+///     *DATA.borrow_mut() += 1;
+/// }
 /// ```
-pub struct IrqSafeCell<T> {
+///
+/// # Panics
+///
+/// Panics if a borrow conflict occurs (e.g., nested mutable borrows).
+/// This indicates a bug in the kernel code.
+pub struct KernelCell<T> {
     inner: RefCell<T>,
 }
 
-unsafe impl<T> Sync for IrqSafeCell<T> {}
+// SAFETY: Single-core, non-preemptive kernel ensures only one execution
+// flow accesses the cell at a time. RefCell's runtime checks catch bugs.
+unsafe impl<T> Sync for KernelCell<T> {}
 
-/// RAII guard for [`IrqSafeCell`]. Restores interrupt state on drop.
-pub struct IrqSafeRefMut<'a, T> {
-    inner: Option<RefMut<'a, T>>,
-    irq_was_enabled: bool,
-}
-
-impl<T> IrqSafeCell<T> {
-    pub const unsafe fn new(value: T) -> Self {
+impl<T> KernelCell<T> {
+    pub const fn new(value: T) -> Self {
         Self {
             inner: RefCell::new(value),
         }
     }
 
-    pub fn exclusive_access(&self) -> IrqSafeRefMut<'_, T> {
-        let irq_was_enabled = interrupts_enabled();
-        irq_was_enabled.then(cli);
-        IrqSafeRefMut {
-            inner: Some(self.inner.borrow_mut()),
-            irq_was_enabled,
-        }
+    #[inline]
+    pub fn borrow(&self) -> Ref<'_, T> {
+        self.inner.borrow()
     }
 
-    pub fn exclusive_session<F, V>(&self, f: F) -> V
+    #[inline]
+    pub fn borrow_mut(&self) -> RefMut<'_, T> {
+        self.inner.borrow_mut()
+    }
+
+    /// Executes a closure with mutable access to the inner value.
+    #[inline]
+    pub fn with_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut T) -> V,
+        F: FnOnce(&mut T) -> R,
     {
-        let mut inner = self.exclusive_access();
-        f(inner.deref_mut())
+        f(&mut *self.borrow_mut())
     }
-}
-
-impl<T> Drop for IrqSafeRefMut<'_, T> {
-    fn drop(&mut self) {
-        self.inner = None;
-        self.irq_was_enabled.then(sti);
-    }
-}
-
-impl<T> Deref for IrqSafeRefMut<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap().deref()
-    }
-}
-
-impl<T> DerefMut for IrqSafeRefMut<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.as_mut().unwrap().deref_mut()
-    }
-}
-
-/// Returns true if interrupts are currently enabled (IF flag is set).
-#[inline]
-fn interrupts_enabled() -> bool {
-    let eflags: u32;
-    unsafe {
-        asm!("pushfd; pop {}", out(reg) eflags, options(nomem, preserves_flags));
-    }
-    // IF (Interrupt Flag) is bit 9
-    (eflags & (1 << 9)) != 0
 }
