@@ -2,6 +2,19 @@
 
 use crate::{mm::MemorySpace, sync::KernelCell};
 
+pub struct TaskControlBlock {
+    pub pid: u32,
+    // mutable fields
+    inner: KernelCell<TaskControlBlockInner>,
+}
+
+pub struct TaskControlBlockInner {
+    pub sched: TaskSchedInfo,
+    pub memory_space: MemorySpace,
+    pub exit_code: i32,
+    pub tss: TaskStateSegment,
+}
+
 /// x87 FPU (Math Coprocessor) state structure.
 #[repr(C)]
 #[derive(Debug, Default)]
@@ -99,19 +112,6 @@ pub enum TaskState {
     Uninterruptible = 2,
     Zombie = 3,
     Stopped = 4,
-}
-
-pub struct TaskControlBlock {
-    pub pid: u32,
-    // mutable fields
-    inner: KernelCell<TaskControlBlockInner>,
-}
-
-pub struct TaskControlBlockInner {
-    pub sched: TaskSchedInfo,
-    pub memory_space: MemorySpace,
-    pub exit_code: i32,
-    pub tss: TaskStateSegment,
 }
 
 pub struct TaskSchedInfo {
