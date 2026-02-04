@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-use alloc::vec::Vec;
 use bitflags::bitflags;
 
 use crate::mm::{address::PhysPageNum, frame::PhysFrame};
@@ -41,9 +38,8 @@ trait PageEntry: Sized + From<u32> + Into<u32> + Copy + Clone {
     }
 }
 
-struct PageTable {
-    root_ppn: PhysPageNum,
-    frames: Vec<PhysFrame>,
+pub struct PageTable {
+    frame: PhysFrame,
 }
 
 impl From<u32> for PageTableEntry {
