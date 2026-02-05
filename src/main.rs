@@ -11,8 +11,9 @@ mod logging;
 mod mm;
 mod panic;
 mod pmio;
-mod process;
+mod segment;
 mod sync;
+mod task;
 mod time;
 mod trap;
 

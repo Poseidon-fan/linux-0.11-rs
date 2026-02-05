@@ -4,6 +4,7 @@ mod heap;
 mod page;
 mod space;
 
+pub use address::PhysPageNum;
 pub use frame::{PAGE_SIZE, PhysFrame};
 pub use space::MemorySpace;
 

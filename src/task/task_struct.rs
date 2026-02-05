@@ -12,7 +12,16 @@ use crate::{
 /// single-threaded kernel context.
 pub struct TaskControlBlock {
     pub pid: u32,
-    inner: KernelCell<TaskControlBlockInner>,
+    pub inner: KernelCell<TaskControlBlockInner>,
+}
+
+impl TaskControlBlock {
+    pub fn new(pid: u32, inner: TaskControlBlockInner) -> Self {
+        Self {
+            pid,
+            inner: KernelCell::new(inner),
+        }
+    }
 }
 
 /// Mutable fields of the process control block.
@@ -51,12 +60,40 @@ pub struct TaskPage {
     stack: [u8; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
 }
 
+impl TaskPage {
+    pub fn new(pcb: TaskControlBlock) -> Self {
+        Self {
+            pcb,
+            stack: [0; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+        }
+    }
+}
+
 /// An owned task that holds ownership of its underlying physical frame.
 ///
 /// This struct wraps a [`PhysFrame`] and implements [`Deref`] and [`DerefMut`]
 /// to provide transparent access to the [`TaskPage`] stored within the frame.
 /// When a `Task` is dropped, the physical frame is automatically deallocated.
+///
+/// For task 0 (idle process), the frame is statically allocated in kernel
+/// memory (below 1MB), so drop is a no-op (FrameAllocator ignores it).
 pub struct Task(PhysFrame);
+
+impl Task {
+    /// Create a Task from a statically allocated TaskPage address.
+    ///
+    /// # Safety
+    ///
+    /// The address must point to a valid, page-aligned TaskPage that:
+    /// - Lives for the entire kernel lifetime (static allocation)
+    /// - Is located below 1MB (so frame allocator won't try to free it)
+    pub unsafe fn from_static_addr(addr: u32) -> Self {
+        use crate::mm::PhysPageNum;
+        Self(PhysFrame {
+            ppn: PhysPageNum(addr >> 12),
+        })
+    }
+}
 
 /// x87 FPU (Math Coprocessor) state structure.
 #[repr(C)]
@@ -143,6 +180,21 @@ pub struct TaskStateSegment {
 
     /// x87 FPU state (for hardware layout alignment)
     pub i387: I387Struct,
+}
+
+impl I387Struct {
+    pub const fn empty() -> Self {
+        Self {
+            cwd: 0,
+            swd: 0,
+            twd: 0,
+            fip: 0,
+            fcs: 0,
+            foo: 0,
+            fos: 0,
+            st_space: [0; 20],
+        }
+    }
 }
 
 #[repr(u8)]
