@@ -7,6 +7,7 @@
 
 extern crate alloc;
 
+mod boot;
 mod logging;
 mod mm;
 mod panic;
@@ -38,6 +39,7 @@ pub extern "C" fn rust_main() -> ! {
     mm::init(main_memory_start, memory_end);
     trap::init();
     time::init();
+    task::init();
     println!("init complete");
 
     #[allow(clippy::empty_loop)]

@@ -32,6 +32,7 @@ pub struct TaskControlBlockInner {
     pub sched: TaskSchedInfo,
     pub memory_space: MemorySpace,
     pub exit_code: i32,
+    pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
 }
 
@@ -93,6 +94,17 @@ impl Task {
             ppn: PhysPageNum(addr >> 12),
         })
     }
+}
+
+/// Local Descriptor Table (LDT) for a task.
+///
+/// Each task has its own LDT containing:
+/// - Entry 0: Null descriptor
+/// - Entry 1: User code segment
+/// - Entry 2: User data segment
+#[repr(C)]
+pub struct LocalDescriptorTable {
+    pub entries: [u64; 3],
 }
 
 /// x87 FPU (Math Coprocessor) state structure.
@@ -226,5 +238,60 @@ impl DerefMut for Task {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let addr = self.0.ppn.0 << 12;
         unsafe { &mut *(addr as *mut TaskPage) }
+    }
+}
+
+impl LocalDescriptorTable {
+    /// Create a new LDT with user code and data segments.
+    ///
+    /// # Arguments
+    /// - `base`: Base address of the segment (typically 0 for flat model)
+    /// - `limit`: Segment limit in 4KB units (e.g., 0x9f = 640KB / 4KB - 1)
+    pub const fn new(base: u32, limit: u32) -> Self {
+        Self {
+            entries: [
+                0, // Null descriptor
+                Self::user_code_segment(base, limit),
+                Self::user_data_segment(base, limit),
+            ],
+        }
+    }
+
+    /// Create a user code segment descriptor.
+    ///
+    /// Access: 0xFA = Present, DPL=3, Code, Execute/Read
+    /// Flags: 0xC = 4KB granularity, 32-bit
+    const fn user_code_segment(base: u32, limit: u32) -> u64 {
+        Self::segment_descriptor(base, limit, 0xFA, 0xC)
+    }
+
+    /// Create a user data segment descriptor.
+    ///
+    /// Access: 0xF2 = Present, DPL=3, Data, Read/Write
+    /// Flags: 0xC = 4KB granularity, 32-bit
+    const fn user_data_segment(base: u32, limit: u32) -> u64 {
+        Self::segment_descriptor(base, limit, 0xF2, 0xC)
+    }
+
+    /// Build a segment descriptor from components.
+    const fn segment_descriptor(base: u32, limit: u32, access: u8, flags: u8) -> u64 {
+        let limit_low = (limit & 0xFFFF) as u64;
+        let limit_high = ((limit >> 16) & 0xF) as u64;
+        let base_low = (base & 0xFFFF) as u64;
+        let base_mid = ((base >> 16) & 0xFF) as u64;
+        let base_high = ((base >> 24) & 0xFF) as u64;
+
+        limit_low
+            | (base_low << 16)
+            | (base_mid << 32)
+            | ((access as u64) << 40)
+            | (limit_high << 48)
+            | ((flags as u64) << 52)
+            | (base_high << 56)
+    }
+
+    /// Get the address of the LDT for use in GDT LDT descriptor.
+    pub fn as_ptr(&self) -> u32 {
+        self as *const _ as u32
     }
 }

@@ -184,3 +184,126 @@ pub fn current_task_nr() -> u16 {
     let selector = str();
     (selector.index() - FIRST_TSS_ENTRY) >> 1
 }
+
+// ============================================================================
+// Descriptor operations
+// ============================================================================
+
+unsafe extern "C" {
+    /// GDT defined in head.s
+    static mut gdt: [u64; 256];
+}
+
+/// x86 System Segment Descriptor (64-bit).
+///
+/// # Format
+///
+/// ```text
+/// 63       56 55   52 51   48 47       40 39       32
+/// ┌──────────┬───────┬───────┬──────────┬──────────┐
+/// │ Base     │ Flags │ Limit │ Access   │ Base     │
+/// │ [31:24]  │ G D 0 │[19:16]│ P DPL S T│ [23:16]  │
+/// └──────────┴───────┴───────┴──────────┴──────────┘
+/// 31                  16 15                       0
+/// ┌─────────────────────┬─────────────────────────┐
+/// │   Base [15:0]       │     Limit [15:0]        │
+/// └─────────────────────┴─────────────────────────┘
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
+pub struct Descriptor(u64);
+
+impl Descriptor {
+    /// Create an empty (null) descriptor.
+    pub const fn null() -> Self {
+        Self(0)
+    }
+
+    /// Create a system segment descriptor (TSS or LDT).
+    ///
+    /// # Arguments
+    /// - `base`: Linear address of the segment
+    /// - `limit`: Segment limit (size - 1), up to 20 bits
+    /// - `access`: Access byte (type, DPL, present bit, etc.)
+    const fn system_segment(base: u32, limit: u32, access: u8) -> Self {
+        let limit_low = (limit & 0xFFFF) as u64;
+        let limit_high = ((limit >> 16) & 0xF) as u64;
+        let base_low = (base & 0xFFFF) as u64;
+        let base_mid = ((base >> 16) & 0xFF) as u64;
+        let base_high = ((base >> 24) & 0xFF) as u64;
+
+        Self(
+            limit_low
+                | (base_low << 16)
+                | (base_mid << 32)
+                | ((access as u64) << 40)
+                | (limit_high << 48)
+                // flags = 0 (byte granularity, 16-bit for system segments)
+                | (base_high << 56),
+        )
+    }
+
+    /// Create a TSS (Task State Segment) descriptor.
+    ///
+    /// Access byte = 0x89: Present, DPL=0, System, Type=9 (Available 32-bit TSS)
+    pub const fn tss(base: u32, limit: u32) -> Self {
+        Self::system_segment(base, limit, 0x89)
+    }
+
+    /// Create an LDT (Local Descriptor Table) descriptor.
+    ///
+    /// Access byte = 0x82: Present, DPL=0, System, Type=2 (LDT)
+    pub const fn ldt(base: u32, limit: u32) -> Self {
+        Self::system_segment(base, limit, 0x82)
+    }
+
+    /// Get the raw 64-bit value.
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+/// Size of TSS structure in Linux 0.11 (104 bytes).
+/// Used as the limit for TSS descriptors.
+pub const TSS_SIZE: u32 = 104;
+
+/// Set TSS descriptor for task n in GDT.
+///
+/// Writes a TSS descriptor at GDT[4 + n*2] pointing to the given TSS address.
+///
+/// # Safety
+///
+/// - `tss_addr` must point to a valid TSS structure
+/// - Must not be called concurrently with other GDT modifications
+#[inline]
+pub fn set_tss_desc(n: u16, tss_addr: u32) {
+    let index = (FIRST_TSS_ENTRY + n * 2) as usize;
+    let desc = Descriptor::tss(tss_addr, TSS_SIZE);
+    unsafe {
+        core::ptr::write_volatile(&mut gdt[index], desc.as_u64());
+    }
+}
+
+/// Set LDT descriptor for task n in GDT.
+///
+/// Writes an LDT descriptor at GDT[5 + n*2] pointing to the given LDT address.
+///
+/// # Safety
+///
+/// - `ldt_addr` must point to a valid LDT structure
+/// - Must not be called concurrently with other GDT modifications
+///
+/// # Note
+///
+/// This implementation uses the correct limit (23) for LDT with 3 entries.
+/// The original Linux 0.11 has a bug where `_set_tssldt_desc` hardcodes
+/// limit=104 for both TSS and LDT, which is incorrect for LDT but harmless.
+#[inline]
+pub fn set_ldt_desc(n: u16, ldt_addr: u32) {
+    let index = (FIRST_LDT_ENTRY + n * 2) as usize;
+    // LDT has 3 entries (null, cs, ds), each 8 bytes = 24 bytes, limit = 24 - 1 = 23 = 0x17
+    let desc = Descriptor::ldt(ldt_addr, 3 * 8 - 1);
+    unsafe {
+        core::ptr::write_volatile(&mut gdt[index], desc.as_u64());
+    }
+}
