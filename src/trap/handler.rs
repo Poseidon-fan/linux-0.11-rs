@@ -80,25 +80,26 @@ macro_rules! exception_no_error {
         pub extern "C" fn $entry() {
             unsafe {
                 naked_asm!(
-                    "push 0",           // Push fake error code for uniform layout
-                    "push fs",
-                    "push es",
-                    "push ds",
-                    "pusha",            // Save EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
-                    "mov eax, 0x10",    // Load kernel data segment
-                    "mov ds, ax",
-                    "mov es, ax",
-                    "mov fs, ax",
-                    "push esp",         // Pass frame pointer as argument
+                    "pushl $0",          // Push fake error code for uniform layout
+                    "pushl %fs",
+                    "pushl %es",
+                    "pushl %ds",
+                    "pushal",            // Save EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI
+                    "movl $0x10, %eax",  // Load kernel data segment
+                    "movw %ax, %ds",
+                    "movw %ax, %es",
+                    "movw %ax, %fs",
+                    "pushl %esp",        // Pass frame pointer as argument
                     "call {handler}",
-                    "add esp, 4",       // Pop argument
-                    "popa",             // Restore general purpose registers
-                    "pop ds",
-                    "pop es",
-                    "pop fs",
-                    "add esp, 4",       // Skip error code
-                    "iretd",
+                    "addl $4, %esp",     // Pop argument
+                    "popal",             // Restore general purpose registers
+                    "popl %ds",
+                    "popl %es",
+                    "popl %fs",
+                    "addl $4, %esp",     // Skip error code
+                    "iret",
                     handler = sym $handler,
+                    options(att_syntax),
                 );
             }
         }
@@ -117,24 +118,25 @@ macro_rules! exception_with_error {
             unsafe {
                 naked_asm!(
                     // Error code already pushed by CPU
-                    "push fs",
-                    "push es",
-                    "push ds",
-                    "pusha",
-                    "mov eax, 0x10",
-                    "mov ds, ax",
-                    "mov es, ax",
-                    "mov fs, ax",
-                    "push esp",
+                    "pushl %fs",
+                    "pushl %es",
+                    "pushl %ds",
+                    "pushal",
+                    "movl $0x10, %eax",
+                    "movw %ax, %ds",
+                    "movw %ax, %es",
+                    "movw %ax, %fs",
+                    "pushl %esp",
                     "call {handler}",
-                    "add esp, 4",
-                    "popa",
-                    "pop ds",
-                    "pop es",
-                    "pop fs",
-                    "add esp, 4",       // Skip error code
-                    "iretd",
+                    "addl $4, %esp",
+                    "popal",
+                    "popl %ds",
+                    "popl %es",
+                    "popl %fs",
+                    "addl $4, %esp",     // Skip error code
+                    "iret",
                     handler = sym $handler,
+                    options(att_syntax),
                 );
             }
         }
@@ -161,7 +163,7 @@ fn die(message: &str, frame: &InterruptFrame) -> ! {
     // TODO: print base, limit, pid, process nr, etc.
 
     loop {
-        unsafe { asm!("cli", "hlt") }
+        unsafe { asm!("cli", "hlt", options(att_syntax)) }
     }
 }
 
@@ -185,7 +187,7 @@ fn do_nmi(frame: &InterruptFrame) {
 /// It prints register state and returns to continue execution.
 fn do_int3(frame: &InterruptFrame) {
     let tr: u32;
-    unsafe { asm!("str {0:x}", out(reg) tr, options(nomem, nostack)) }
+    unsafe { asm!("str {0:x}", out(reg) tr, options(nomem, nostack, att_syntax)) }
 
     info!("eax\t\tebx\t\tecx\t\tedx");
     info!(

@@ -42,6 +42,14 @@ pub extern "C" fn rust_main() -> ! {
     task::init();
     println!("init complete");
 
+    sync::sti();
+    sync::move_to_user_mode();
+    // Verify: executing privileged instruction in user mode should trigger GPF
+    unsafe {
+        core::arch::asm!("cli", options(att_syntax)); // privileged instruction
+    }
+    println!("ERROR: still in kernel mode!");
+
     #[allow(clippy::empty_loop)]
     loop {}
 }

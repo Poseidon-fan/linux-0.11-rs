@@ -146,7 +146,7 @@ pub mod selectors {
 #[inline]
 pub fn ltr(selector: SegmentSelector) {
     unsafe {
-        asm!("ltr {0:x}", in(reg) selector.as_u16(), options(nomem, nostack));
+        asm!("ltr {0:x}", in(reg) selector.as_u16(), options(nomem, nostack, att_syntax));
     }
 }
 
@@ -156,7 +156,7 @@ pub fn ltr(selector: SegmentSelector) {
 #[inline]
 pub fn lldt(selector: SegmentSelector) {
     unsafe {
-        asm!("lldt {0:x}", in(reg) selector.as_u16(), options(nomem, nostack));
+        asm!("lldt {0:x}", in(reg) selector.as_u16(), options(nomem, nostack, att_syntax));
     }
 }
 
@@ -165,7 +165,7 @@ pub fn lldt(selector: SegmentSelector) {
 pub fn str() -> SegmentSelector {
     let selector: u16;
     unsafe {
-        asm!("str {0:x}", out(reg) selector, options(nomem, nostack));
+        asm!("str {0:x}", out(reg) selector, options(nomem, nostack, att_syntax));
     }
     SegmentSelector(selector)
 }

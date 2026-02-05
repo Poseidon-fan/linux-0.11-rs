@@ -45,10 +45,10 @@ pub fn init() {
     // Clear NT (Nested Task) flag in EFLAGS to prevent issues with task switching
     unsafe {
         asm!(
-            "pushfd",
-            "and dword ptr [esp], 0xffffbfff",
-            "popfd",
-            options(preserves_flags)
+            "pushfl",
+            "andl $0xffffbfff, (%esp)",
+            "popfl",
+            options(preserves_flags, att_syntax)
         );
     }
 
