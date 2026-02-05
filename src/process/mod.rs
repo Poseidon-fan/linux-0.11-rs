@@ -1,3 +1,4 @@
+mod manager;
 mod task_struct;
 
 use core::ptr::addr_of_mut;

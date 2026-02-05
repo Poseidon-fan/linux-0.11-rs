@@ -3,6 +3,7 @@
 #![feature(alloc_error_handler)]
 #![feature(naked_functions)]
 #![feature(asm_goto)]
+#![allow(dead_code)]
 
 extern crate alloc;
 

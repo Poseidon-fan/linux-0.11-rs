@@ -1,11 +1,10 @@
-#![allow(dead_code)]
 mod address;
 mod frame;
 mod heap;
 mod page;
 mod space;
 
-pub use frame::PAGE_SIZE;
+pub use frame::{PAGE_SIZE, PhysFrame};
 pub use space::MemorySpace;
 
 pub fn init(start_mem: u32, end_mem: u32) {

@@ -1,13 +1,24 @@
-#![allow(dead_code)]
+use core::ops::{Deref, DerefMut};
 
-use crate::{mm::MemorySpace, sync::KernelCell};
+use crate::{
+    mm::{MemorySpace, PAGE_SIZE, PhysFrame},
+    sync::KernelCell,
+};
 
+/// Process Control Block (PCB) for a task.
+///
+/// Contains the process identifier and interior-mutable fields wrapped in
+/// [`KernelCell`] to allow mutation through shared references in a
+/// single-threaded kernel context.
 pub struct TaskControlBlock {
     pub pid: u32,
-    // mutable fields
     inner: KernelCell<TaskControlBlockInner>,
 }
 
+/// Mutable fields of the process control block.
+///
+/// This struct holds all the mutable state of a task, separated from the
+/// immutable `pid` to enable interior mutability via [`KernelCell`].
 pub struct TaskControlBlockInner {
     pub sched: TaskSchedInfo,
     pub memory_space: MemorySpace,
@@ -15,9 +26,40 @@ pub struct TaskControlBlockInner {
     pub tss: TaskStateSegment,
 }
 
+/// Memory layout of a task page (4KB aligned).
+///
+/// Each task struct occupies exactly one physical page (4096 bytes). The page is organized
+/// with the Process Control Block ([`TaskControlBlock`]) at the low address,
+/// and the remaining space used as the kernel stack.
+///
+/// # Memory Layout
+///
+/// ```text
+///  base + 4096 ──►┌──────────────────┐ ◄─ ESP0 (stack top)
+///                 │   Kernel Stack   │ ▲
+///                 │       ↓          │ │ grows downward
+///                 ├──────────────────┤
+///                 │ TaskControlBlock │
+///  base + 0    ──►└──────────────────┘
+/// ```
+///
+/// The kernel stack pointer (ESP0 in TSS) should point to `base + 4096`.
+#[repr(C, align(4096))]
+pub struct TaskPage {
+    pub pcb: TaskControlBlock,
+
+    stack: [u8; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+}
+
+/// An owned task that holds ownership of its underlying physical frame.
+///
+/// This struct wraps a [`PhysFrame`] and implements [`Deref`] and [`DerefMut`]
+/// to provide transparent access to the [`TaskPage`] stored within the frame.
+/// When a `Task` is dropped, the physical frame is automatically deallocated.
+pub struct Task(PhysFrame);
+
 /// x87 FPU (Math Coprocessor) state structure.
 #[repr(C)]
-#[derive(Debug, Default)]
 pub struct I387Struct {
     /// Control word
     pub cwd: u32,
@@ -42,7 +84,6 @@ pub struct I387Struct {
 /// The TSS is a hardware-defined structure used by the x86 processor
 /// for hardware task switching. Each task has its own TSS.
 #[repr(C)]
-#[derive(Debug, Default)]
 pub struct TaskStateSegment {
     /// Back link to previous task's TSS selector (16 high bits zero)
     pub back_link: u32,
@@ -105,7 +146,7 @@ pub struct TaskStateSegment {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
     Running = 0,
     Interruptible = 1,
@@ -118,4 +159,20 @@ pub struct TaskSchedInfo {
     pub state: TaskState,
     pub counter: u32,
     pub priority: u32,
+}
+
+impl Deref for Task {
+    type Target = TaskPage;
+
+    fn deref(&self) -> &Self::Target {
+        let addr = self.0.ppn.0 << 12;
+        unsafe { &*(addr as *const TaskPage) }
+    }
+}
+
+impl DerefMut for Task {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let addr = self.0.ppn.0 << 12;
+        unsafe { &mut *(addr as *mut TaskPage) }
+    }
 }
