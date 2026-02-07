@@ -7,7 +7,7 @@
 use core::arch::{asm, naked_asm};
 use log::{error, info};
 
-/// Trap stack frame built by the common entry assembly stubs.
+/// Exception stack frame built by the common entry assembly stubs.
 ///
 /// ```text
 /// +--------------------+ <- High address
@@ -21,15 +21,15 @@ use log::{error, info};
 /// | ...                | <- Pushed manually
 /// +--------------------+
 /// | Error Code         | <- Saved by our entry code
-/// +--------------------+ <- &TrapFrame (ESP)
+/// +--------------------+ <- &ExceptionFrame (ESP)
 /// ```
 ///
 /// `user_esp` / `user_ss` are not part of this struct because they only exist
-/// on privilege-level transitions. Use [`TrapFrame::user_stack`] to read them
+/// on privilege-level transitions. Use [`ExceptionFrame::user_stack`] to read them
 /// when present.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct TrapFrame {
+pub struct ExceptionFrame {
     pub error_code: u32,
     pub fs: u32,
     pub es: u32,
@@ -46,7 +46,7 @@ pub struct TrapFrame {
     pub eflags: u32,
 }
 
-impl TrapFrame {
+impl ExceptionFrame {
     #[inline]
     fn is_from_user_mode(&self) -> bool {
         (self.cs & 0x3) == 0x3
@@ -71,7 +71,7 @@ impl TrapFrame {
 /// Common entry path for exceptions **without** a CPU error code.
 ///
 /// On entry the stub has pushed the handler address onto the stack.
-/// This code builds a [`TrapFrame`] (with `error_code = 0`) and calls
+/// This code builds a [`ExceptionFrame`] (with `error_code = 0`) and calls
 /// the handler via `call *%eax`.
 #[naked]
 extern "C" fn common_no_error_entry() {
@@ -88,7 +88,7 @@ extern "C" fn common_no_error_entry() {
             "pushl %es",
             "pushl %fs",
             "pushl $0",   // error_code = 0 (no CPU error code)
-            "pushl %esp", // arg: &TrapFrame
+            "pushl %esp", // arg: &ExceptionFrame
             "movl $0x10, %edx",
             "movw %dx, %ds",
             "movw %dx, %es",
@@ -115,7 +115,7 @@ extern "C" fn common_no_error_entry() {
 ///
 /// On entry the stub has pushed the handler address on top of the CPU error
 /// code. Two `xchgl` instructions extract both values into registers while
-/// saving the original EAX/EBX in their place, then builds a [`TrapFrame`].
+/// saving the original EAX/EBX in their place, then builds a [`ExceptionFrame`].
 #[naked]
 extern "C" fn common_with_error_entry() {
     unsafe {
@@ -131,7 +131,7 @@ extern "C" fn common_with_error_entry() {
             "pushl %es",
             "pushl %fs",
             "pushl %eax", // error_code (the real CPU value)
-            "pushl %esp", // arg: &TrapFrame
+            "pushl %esp", // arg: &ExceptionFrame
             "movl $0x10, %eax",
             "movw %ax, %ds",
             "movw %ax, %es",
@@ -191,7 +191,7 @@ macro_rules! trap_stub_with_error {
 /// Print exception info and halt the system.
 ///
 /// In Linux 0.11 this eventually exits the current task. For now we halt.
-fn die(message: &str, frame: &TrapFrame) -> ! {
+fn die(message: &str, frame: &ExceptionFrame) -> ! {
     error!("{}: {:04x}", message, frame.error_code & 0xffff);
     match frame.user_stack() {
         Some((user_esp, user_ss)) => {
@@ -214,15 +214,15 @@ fn die(message: &str, frame: &TrapFrame) -> ! {
     }
 }
 
-extern "C" fn do_divide_error(frame: &TrapFrame) {
+extern "C" fn do_divide_error(frame: &ExceptionFrame) {
     die("divide error", frame);
 }
 
-extern "C" fn do_nmi(frame: &TrapFrame) {
+extern "C" fn do_nmi(frame: &ExceptionFrame) {
     die("nmi", frame);
 }
 
-extern "C" fn do_int3(frame: &TrapFrame) {
+extern "C" fn do_int3(frame: &ExceptionFrame) {
     let tr: u32;
     unsafe { asm!("str {0:x}", out(reg) tr, options(nomem, nostack, att_syntax)) }
 
@@ -247,39 +247,39 @@ extern "C" fn do_int3(frame: &TrapFrame) {
     );
 }
 
-extern "C" fn do_overflow(frame: &TrapFrame) {
+extern "C" fn do_overflow(frame: &ExceptionFrame) {
     die("overflow", frame);
 }
 
-extern "C" fn do_bounds(frame: &TrapFrame) {
+extern "C" fn do_bounds(frame: &ExceptionFrame) {
     die("bounds", frame);
 }
 
-extern "C" fn do_invalid_op(frame: &TrapFrame) {
+extern "C" fn do_invalid_op(frame: &ExceptionFrame) {
     die("invalid operand", frame);
 }
 
-extern "C" fn do_reserved(frame: &TrapFrame) {
+extern "C" fn do_reserved(frame: &ExceptionFrame) {
     die("reserved (15,17-47) error", frame);
 }
 
-extern "C" fn do_double_fault(frame: &TrapFrame) {
+extern "C" fn do_double_fault(frame: &ExceptionFrame) {
     die("double fault", frame);
 }
 
-extern "C" fn do_invalid_tss(frame: &TrapFrame) {
+extern "C" fn do_invalid_tss(frame: &ExceptionFrame) {
     die("invalid TSS", frame);
 }
 
-extern "C" fn do_segment_not_present(frame: &TrapFrame) {
+extern "C" fn do_segment_not_present(frame: &ExceptionFrame) {
     die("segment not present", frame);
 }
 
-extern "C" fn do_stack_segment(frame: &TrapFrame) {
+extern "C" fn do_stack_segment(frame: &ExceptionFrame) {
     die("stack segment", frame);
 }
 
-extern "C" fn do_general_protection(frame: &TrapFrame) {
+extern "C" fn do_general_protection(frame: &ExceptionFrame) {
     die("general protection", frame);
 }
 
