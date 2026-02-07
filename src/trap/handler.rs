@@ -7,13 +7,26 @@
 use core::arch::{asm, naked_asm};
 use log::{error, info};
 
-/// Trap stack frame passed from common entry assembly.
+/// Trap stack frame built by the common entry assembly stubs.
 ///
-/// Layout (low to high address):
-/// `error_code, fs, es, ds, ebp, esi, edi, edx, ecx, ebx, eax, eip, cs, eflags`.
+/// ```text
+/// +--------------------+ <- High address
+/// | SS  (if CPL change)|
+/// | ESP (if CPL change)|
+/// | EFLAGS             |
+/// | CS                 |
+/// | EIP                | <- Pushed by CPU
+/// +--------------------+
+/// | GP & segment regs  |
+/// | ...                | <- Pushed manually
+/// +--------------------+
+/// | Error Code         | <- Saved by our entry code
+/// +--------------------+ <- &TrapFrame (ESP)
+/// ```
 ///
-/// `user_esp/user_ss` are not embedded because they only exist when the trap
-/// transitions from ring 3 to ring 0.
+/// `user_esp` / `user_ss` are not part of this struct because they only exist
+/// on privilege-level transitions. Use [`TrapFrame::user_stack`] to read them
+/// when present.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TrapFrame {
@@ -55,12 +68,15 @@ impl TrapFrame {
     }
 }
 
+/// Common entry path for exceptions **without** a CPU error code.
+///
+/// On entry the stub has pushed the handler address onto the stack.
+/// This code builds a [`TrapFrame`] (with `error_code = 0`) and calls
+/// the handler via `call *%eax`.
 #[naked]
 extern "C" fn common_no_error_entry() {
     unsafe {
         naked_asm!(
-            // Entry stack:
-            // [handler][eip][cs][eflags][opt user_esp][opt user_ss]
             "xchgl %eax, (%esp)", // eax <- handler, [esp] <- saved eax
             "pushl %ebx",
             "pushl %ecx",
@@ -71,8 +87,8 @@ extern "C" fn common_no_error_entry() {
             "pushl %ds",
             "pushl %es",
             "pushl %fs",
-            "pushl $0",   // normalize error_code
-            "pushl %esp", // arg: &TrapFrame (points to error_code)
+            "pushl $0",   // error_code = 0 (no CPU error code)
+            "pushl %esp", // arg: &TrapFrame
             "movl $0x10, %edx",
             "movw %dx, %ds",
             "movw %dx, %es",
@@ -95,14 +111,17 @@ extern "C" fn common_no_error_entry() {
     }
 }
 
+/// Common entry path for exceptions **with** a CPU error code.
+///
+/// On entry the stub has pushed the handler address on top of the CPU error
+/// code. Two `xchgl` instructions extract both values into registers while
+/// saving the original EAX/EBX in their place, then builds a [`TrapFrame`].
 #[naked]
 extern "C" fn common_with_error_entry() {
     unsafe {
         naked_asm!(
-            // Entry stack:
-            // [handler][cpu_error][eip][cs][eflags][opt user_esp][opt user_ss]
-            "xchgl %eax, 4(%esp)", // eax <- error_code, [4] <- saved eax
-            "xchgl %ebx, (%esp)",  // ebx <- handler, [0] <- saved ebx
+            "xchgl %eax, 4(%esp)", // eax <- error_code, [esp+4] <- saved eax
+            "xchgl %ebx, (%esp)",  // ebx <- handler,    [esp]   <- saved ebx
             "pushl %ecx",
             "pushl %edx",
             "pushl %edi",
@@ -111,8 +130,8 @@ extern "C" fn common_with_error_entry() {
             "pushl %ds",
             "pushl %es",
             "pushl %fs",
-            "pushl %eax", // normalized error_code
-            "pushl %esp", // arg: &TrapFrame (points to error_code)
+            "pushl %eax", // error_code (the real CPU value)
+            "pushl %esp", // arg: &TrapFrame
             "movl $0x10, %eax",
             "movw %ax, %ds",
             "movw %ax, %es",
@@ -199,10 +218,6 @@ extern "C" fn do_divide_error(frame: &TrapFrame) {
     die("divide error", frame);
 }
 
-extern "C" fn do_debug(frame: &TrapFrame) {
-    die("debug", frame);
-}
-
 extern "C" fn do_nmi(frame: &TrapFrame) {
     die("nmi", frame);
 }
@@ -269,7 +284,7 @@ extern "C" fn do_general_protection(frame: &TrapFrame) {
 }
 
 trap_stub_no_error!(divide_error => do_divide_error);
-trap_stub_no_error!(debug => do_debug);
+trap_stub_no_error!(debug => do_int3);
 trap_stub_no_error!(nmi => do_nmi);
 trap_stub_no_error!(int3 => do_int3);
 trap_stub_no_error!(overflow => do_overflow);
