@@ -19,6 +19,7 @@ mod syscall;
 mod task;
 mod time;
 mod trap;
+mod user_lib;
 
 use core::arch::global_asm;
 
@@ -46,10 +47,9 @@ pub extern "C" fn rust_main() -> ! {
 
     sync::sti();
     sync::move_to_user_mode();
-    // Verify: executing privileged instruction in user mode should trigger GPF
-    unsafe {
-        core::arch::asm!("int $0x80", options(att_syntax));
-    }
+    // Test the syscall.
+    _ = user_lib::syscall::test(123);
+    println!("test syscall completed");
 
     #[allow(clippy::empty_loop)]
     loop {}
