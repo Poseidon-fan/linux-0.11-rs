@@ -2,11 +2,13 @@ use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
 use lazy_static::lazy_static;
+use log::debug;
 
 use crate::{
     mm::{frame::PAGE_SIZE, space::MemorySpace},
     segment::selectors::{self, KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
+    syscall::{EAGAIN, SyscallContext},
     task::task_struct::*,
 };
 
@@ -37,7 +39,7 @@ impl TaskManager {
     ///
     /// Returns the slot index on success (`self.last_pid` holds the new PID).
     /// Returns `None` if no empty slot is available.
-    pub fn find_empty_process(&mut self) -> Option<usize> {
+    fn find_empty_process(&mut self) -> Option<usize> {
         // Step 1: find a unique PID not used by any existing task.
         'retry: loop {
             self.last_pid = self.last_pid.wrapping_add(1);
@@ -54,6 +56,70 @@ impl TaskManager {
 
         // Step 2: find an empty slot in tasks[1..].
         (1..TASK_NUM).find(|&i| self.tasks[i].is_none())
+    }
+
+    pub fn current(&self) -> &Task {
+        self.tasks[self.current]
+            .as_ref()
+            .expect("get current task failed")
+    }
+
+    pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
+        debug!("fork: {:?}", ctx);
+        // 1. Find a free slot in task array.
+        let slot = TASK_MANAGER
+            .with_mut(|manager| manager.find_empty_process())
+            .ok_or(EAGAIN)?;
+
+        // 2. Allocate a new task page.
+        let mut new_task = Task::new().ok_or(EAGAIN)?;
+
+        // 3. Initialize PCB: copy parent task's PCB and reset some fields.
+        let parent_inner = self.current().pcb.inner.borrow();
+        new_task.pcb = TaskControlBlock {
+            pid: self.last_pid,
+            inner: KernelCell::new(TaskControlBlockInner {
+                sched: TaskSchedInfo {
+                    state: TaskState::Uninterruptible,
+                    counter: parent_inner.sched.priority,
+                    priority: parent_inner.sched.priority,
+                },
+                memory_space: MemorySpace::new(), // empty mem space, will copy soon
+                exit_code: 0,
+                ldt: parent_inner.ldt.clone(),
+                tss: TaskStateSegment {
+                    back_link: 0,
+                    esp0: new_task.stack_top(),
+                    ss0: KERNEL_DS.as_u32(),
+                    esp1: 0,
+                    ss1: 0,
+                    esp2: 0,
+                    ss2: 0,
+                    cr3: unsafe { &pg_dir as *const u8 as u32 },
+                    eip: ctx.eip,
+                    eflags: ctx.eflags,
+                    eax: 0, // child returns 0 from fork
+                    ecx: ctx.ecx,
+                    edx: ctx.edx,
+                    ebx: ctx.ebx,
+                    esp: ctx.user_esp,
+                    ebp: ctx.ebp,
+                    esi: ctx.esi,
+                    edi: ctx.edi,
+                    es: ctx.es & 0xffff,
+                    cs: ctx.cs & 0xffff,
+                    ss: ctx.user_ss & 0xffff,
+                    ds: ctx.ds & 0xffff,
+                    fs: ctx.fs & 0xffff,
+                    gs: ctx.gs & 0xffff,
+                    ldt: selectors::ldt_selector(slot as u16).as_u32(),
+                    trace_bitmap: 0x8000_0000,
+                    i387: I387Struct::empty(),
+                },
+            }),
+        };
+
+        todo!()
     }
 }
 

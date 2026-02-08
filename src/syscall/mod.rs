@@ -6,7 +6,8 @@ use core::arch::global_asm;
 
 use log::debug;
 
-use crate::syscall::{context::SyscallContext, error::ENOSYS, handler::SYSCALL_TABLE};
+pub use context::SyscallContext;
+pub use error::*;
 pub use handler::*;
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));

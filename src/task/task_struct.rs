@@ -71,6 +71,10 @@ impl TaskPage {
             stack: [0; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
         }
     }
+
+    pub fn stack_top(&self) -> u32 {
+        self as *const TaskPage as u32 + PAGE_SIZE
+    }
 }
 
 /// An owned task that holds ownership of its underlying physical frame.
@@ -118,6 +122,7 @@ impl Task {
 /// - Entry 1: User code segment
 /// - Entry 2: User data segment
 #[repr(C)]
+#[derive(Clone)]
 pub struct LocalDescriptorTable {
     pub entries: [u64; 3],
 }
@@ -270,6 +275,11 @@ impl LocalDescriptorTable {
                 Self::user_data_segment(base, limit),
             ],
         }
+    }
+
+    /// Create an empty LDT.
+    pub const fn empty() -> Self {
+        Self { entries: [0; 3] }
     }
 
     /// Create a user code segment descriptor.

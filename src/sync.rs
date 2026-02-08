@@ -107,6 +107,7 @@ pub extern "C" fn move_to_user_mode() {
 ///
 /// Panics if a borrow conflict occurs (e.g., nested mutable borrows).
 /// This indicates a bug in the kernel code.
+#[derive(Clone)]
 pub struct KernelCell<T> {
     inner: RefCell<T>,
 }
