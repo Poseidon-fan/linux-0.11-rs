@@ -34,12 +34,6 @@ SECTIONS
         KEEP(*(SORT(linkme_SYSCALL_TABLE*)))
     }
 
-    /* Optional but recommended: keep dupcheck section used by linkme. */
-    linkm2_SYSCALL_TABLE :
-    {
-        KEEP(*(linkm2_SYSCALL_TABLE*))
-    }
-
     .data :
     {
         *(.data .data.*)
