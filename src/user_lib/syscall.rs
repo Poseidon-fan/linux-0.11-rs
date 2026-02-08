@@ -4,10 +4,10 @@
 //! calls from user mode (ring 3) via `int $0x80`. It is structured in three
 //! layers:
 //!
-//! 1. **`NR_*` constants** — system call numbers (0–73).
+//! 1. **`NR_*` constants** — system call numbers (`u32`).
 //! 2. **`raw_syscall0` .. `raw_syscall3`** — low-level inline-assembly
 //!    functions that issue `int $0x80` and convert the raw i32 return into
-//!    `Result<usize, usize>` (negative → `Err(errno)`).
+//!    `Result<u32, u32>` (negative → `Err(errno)`).
 //! 3. **`define_syscall!` macro** — generates typed `pub fn` wrappers using
 //!    a function-signature-like syntax:
 //!    `define_syscall!(NR_XXX => fn_name(arg: Type, ...) -> RetType)`.
@@ -42,7 +42,7 @@ use crate::syscall::NR_TEST;
 ///
 /// Returns `Ok(retval)` on success or `Err(errno)` on failure.
 #[inline(always)]
-fn raw_syscall0(nr: usize) -> Result<usize, usize> {
+fn raw_syscall0(nr: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -52,15 +52,15 @@ fn raw_syscall0(nr: usize) -> Result<usize, usize> {
         );
     }
     if ret >= 0 {
-        Ok(ret as usize)
+        Ok(ret as u32)
     } else {
-        Err((-ret) as usize)
+        Err((-ret) as u32)
     }
 }
 
 /// Issue a system call with **one argument** (in `EBX`).
 #[inline(always)]
-fn raw_syscall1(nr: usize, arg1: usize) -> Result<usize, usize> {
+fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -71,15 +71,15 @@ fn raw_syscall1(nr: usize, arg1: usize) -> Result<usize, usize> {
         );
     }
     if ret >= 0 {
-        Ok(ret as usize)
+        Ok(ret as u32)
     } else {
-        Err((-ret) as usize)
+        Err((-ret) as u32)
     }
 }
 
 /// Issue a system call with **two arguments** (in `EBX`, `ECX`).
 #[inline(always)]
-fn raw_syscall2(nr: usize, arg1: usize, arg2: usize) -> Result<usize, usize> {
+fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -91,15 +91,15 @@ fn raw_syscall2(nr: usize, arg1: usize, arg2: usize) -> Result<usize, usize> {
         );
     }
     if ret >= 0 {
-        Ok(ret as usize)
+        Ok(ret as u32)
     } else {
-        Err((-ret) as usize)
+        Err((-ret) as u32)
     }
 }
 
 /// Issue a system call with **three arguments** (in `EBX`, `ECX`, `EDX`).
 #[inline(always)]
-fn raw_syscall3(nr: usize, arg1: usize, arg2: usize, arg3: usize) -> Result<usize, usize> {
+fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -112,9 +112,9 @@ fn raw_syscall3(nr: usize, arg1: usize, arg2: usize, arg3: usize) -> Result<usiz
         );
     }
     if ret >= 0 {
-        Ok(ret as usize)
+        Ok(ret as u32)
     } else {
-        Err((-ret) as usize)
+        Err((-ret) as u32)
     }
 }
 
@@ -122,12 +122,12 @@ fn raw_syscall3(nr: usize, arg1: usize, arg2: usize, arg3: usize) -> Result<usiz
 //
 // A single macro with four match arms (0–3 arguments). Each arm generates
 // an `#[inline(always)] pub fn` that forwards to `raw_syscallN`, casting
-// every argument to `usize` and the success value to `RetType`.
+// every argument to `u32` and the success value to `RetType`.
 macro_rules! define_syscall {
     // 0 arguments
     ($nr:expr => $name:ident() -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name() -> Result<$ret, usize> {
+        pub fn $name() -> Result<$ret, u32> {
             raw_syscall0($nr).map(|v| v as $ret)
         }
     };
@@ -135,8 +135,8 @@ macro_rules! define_syscall {
     // 1 argument
     ($nr:expr => $name:ident($a:ident : $atype:ty) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype) -> Result<$ret, usize> {
-            raw_syscall1($nr, $a as usize).map(|v| v as $ret)
+        pub fn $name($a: $atype) -> Result<$ret, u32> {
+            raw_syscall1($nr, $a as u32).map(|v| v as $ret)
         }
     };
 
@@ -146,8 +146,8 @@ macro_rules! define_syscall {
         $b:ident : $btype:ty
     ) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype, $b: $btype) -> Result<$ret, usize> {
-            raw_syscall2($nr, $a as usize, $b as usize).map(|v| v as $ret)
+        pub fn $name($a: $atype, $b: $btype) -> Result<$ret, u32> {
+            raw_syscall2($nr, $a as u32, $b as u32).map(|v| v as $ret)
         }
     };
 
@@ -158,10 +158,10 @@ macro_rules! define_syscall {
         $c:ident : $ctype:ty
     ) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype, $b: $btype, $c: $ctype) -> Result<$ret, usize> {
-            raw_syscall3($nr, $a as usize, $b as usize, $c as usize).map(|v| v as $ret)
+        pub fn $name($a: $atype, $b: $btype, $c: $ctype) -> Result<$ret, u32> {
+            raw_syscall3($nr, $a as u32, $b as u32, $c as u32).map(|v| v as $ret)
         }
     };
 }
 
-define_syscall!(NR_TEST => test(param: u32) -> usize);
+define_syscall!(NR_TEST => test(param: u32) -> u32);

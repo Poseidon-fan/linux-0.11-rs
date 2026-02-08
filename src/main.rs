@@ -57,7 +57,8 @@ pub extern "C" fn rust_main() -> ! {
 
 #[inline]
 pub fn ext_mem_k() -> u16 {
-    const EXT_MEM_K_ADDR: usize = 0x90002;
+    /// BIOS extended memory info address (set up by setup.s).
+    const EXT_MEM_K_ADDR: u32 = 0x90002;
     unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
 }
 
