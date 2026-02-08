@@ -32,7 +32,7 @@
 
 use core::arch::asm;
 
-use crate::syscall::NR_TEST;
+use crate::syscall::process::NR_FORK;
 
 // ===========================================================================
 // Low-level syscall primitives — thin wrappers around `int $0x80`
@@ -118,12 +118,12 @@ fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
     }
 }
 
-// Syntax:  define_syscall!(NR_XXX => fn_name(arg: Type, ...) -> RetType)
+// Syntax:  use_syscall!(NR_XXX => fn_name(arg: Type, ...) -> RetType)
 //
 // A single macro with four match arms (0–3 arguments). Each arm generates
 // an `#[inline(always)] pub fn` that forwards to `raw_syscallN`, casting
 // every argument to `u32` and the success value to `RetType`.
-macro_rules! define_syscall {
+macro_rules! use_syscall {
     // 0 arguments
     ($nr:expr => $name:ident() -> $ret:ty) => {
         #[inline(always)]
@@ -164,4 +164,4 @@ macro_rules! define_syscall {
     };
 }
 
-define_syscall!(NR_TEST => test(param: u32) -> u32);
+use_syscall!(NR_FORK => fork() -> u32);

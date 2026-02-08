@@ -31,7 +31,7 @@ SECTIONS
     . = ALIGN(4);
     linkme_SYSCALL_TABLE :
     {
-        KEEP(*(linkme_SYSCALL_TABLE*))
+        KEEP(*(SORT(linkme_SYSCALL_TABLE*)))
     }
 
     /* Optional but recommended: keep dupcheck section used by linkme. */

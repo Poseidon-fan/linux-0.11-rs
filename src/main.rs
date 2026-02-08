@@ -47,9 +47,9 @@ pub extern "C" fn rust_main() -> ! {
 
     sync::sti();
     sync::move_to_user_mode();
-    // Test the syscall.
-    _ = user_lib::syscall::test(123);
-    println!("test syscall completed");
+    (user_lib::fork().unwrap() != 0).then(|| {
+        user_lib::init();
+    });
 
     #[allow(clippy::empty_loop)]
     loop {}
