@@ -3,13 +3,18 @@ pub mod task_struct;
 
 use core::arch::asm;
 
-use crate::segment::{self, Descriptor, selectors};
+use crate::{
+    segment::{self, Descriptor, selectors},
+    trap::set_system_gate,
+};
 
 pub use manager::{TASK_MANAGER, TASK_NUM};
 
 unsafe extern "C" {
     /// GDT defined in head.s
     static mut gdt: [u64; 256];
+    /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
+    fn system_call();
 }
 
 /// Initialize the scheduler and task system.
@@ -57,6 +62,13 @@ pub fn init() {
 
     // Load LDT Register with task 0's LDT selector
     segment::lldt(selectors::ldt_selector(0));
+
+    // Safety: system_call is the assembly entry point in syscall_entry.s.
+    // It must be cast because extern functions declared in `unsafe extern`
+    // blocks are typed as `unsafe extern "C" fn()`, while Handler is safe.
+    set_system_gate(0x80, unsafe {
+        core::mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(system_call)
+    });
 }
 
 /// Clear GDT entries for tasks 1 to TASK_NUM-1.

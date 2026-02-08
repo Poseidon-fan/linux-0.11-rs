@@ -28,7 +28,6 @@ use log::{error, info};
 /// on privilege-level transitions. Use [`ExceptionFrame::user_stack`] to read them
 /// when present.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
 pub struct ExceptionFrame {
     pub error_code: u32,
     pub fs: u32,

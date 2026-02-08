@@ -3,6 +3,7 @@
 #![feature(alloc_error_handler)]
 #![feature(naked_functions)]
 #![feature(asm_goto)]
+#![feature(used_with_arg)]
 #![allow(dead_code)]
 
 extern crate alloc;
@@ -14,6 +15,7 @@ mod panic;
 mod pmio;
 mod segment;
 mod sync;
+mod syscall;
 mod task;
 mod time;
 mod trap;
@@ -46,9 +48,8 @@ pub extern "C" fn rust_main() -> ! {
     sync::move_to_user_mode();
     // Verify: executing privileged instruction in user mode should trigger GPF
     unsafe {
-        core::arch::asm!("cli", options(att_syntax)); // privileged instruction
+        core::arch::asm!("int $0x80", options(att_syntax));
     }
-    println!("ERROR: still in kernel mode!");
 
     #[allow(clippy::empty_loop)]
     loop {}

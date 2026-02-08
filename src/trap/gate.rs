@@ -29,7 +29,7 @@ pub fn set_system_gate(n: usize, handler: Handler) {
 /// - Trap Gate
 ///
 /// We'll not use task gate, so the following struct describes interrupt gate and trap gate.
-#[repr(C, packed)]
+#[repr(C)]
 struct InterruptDescriptor {
     offset_low: u16,
     selector: u16,

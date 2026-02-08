@@ -8,4 +8,5 @@ edition = "2024"
 bitflags = "2.10.0"
 buddy_system_allocator = "0.11.0"
 lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
+linkme = { version = "0.3", features = ["used_linker"] }
 log = "0.4.29"
