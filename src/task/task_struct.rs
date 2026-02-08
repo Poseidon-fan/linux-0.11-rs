@@ -1,7 +1,10 @@
 use core::ops::{Deref, DerefMut};
 
 use crate::{
-    mm::{MemorySpace, PAGE_SIZE, PhysFrame},
+    mm::{
+        frame::{self, PAGE_SIZE, PhysFrame},
+        space::MemorySpace,
+    },
     sync::KernelCell,
 };
 
@@ -89,10 +92,22 @@ impl Task {
     /// - Lives for the entire kernel lifetime (static allocation)
     /// - Is located below 1MB (so frame allocator won't try to free it)
     pub unsafe fn from_static_addr(addr: u32) -> Self {
-        use crate::mm::PhysPageNum;
+        use crate::mm::address::PhysPageNum;
         Self(PhysFrame {
             ppn: PhysPageNum(addr >> 12),
         })
+    }
+
+    /// Allocate a new task backed by a fresh physical page.
+    ///
+    /// The page is zeroed by the frame allocator. The caller is responsible
+    /// for initializing the [`TaskPage`] contents (PCB fields, kernel stack)
+    /// before the task is scheduled.
+    ///
+    /// Returns `None` if no free physical frame is available.
+    pub fn new() -> Option<Self> {
+        let frame = frame::alloc()?;
+        Some(Self(frame))
     }
 }
 

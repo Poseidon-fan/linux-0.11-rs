@@ -1,5 +1,5 @@
-/// System call context — the register frame built on the kernel stack
-/// by `syscall_entry.s` before calling into Rust.
+/// System call context — the complete register frame built on the kernel
+/// stack by `syscall_entry.s` before calling into Rust.
 ///
 /// Since system calls are always issued from user mode (`int 0x80` with
 /// DPL = 3), a privilege-level transition (ring 3 → ring 0) is guaranteed.
@@ -10,25 +10,39 @@
 ///
 /// ```text
 /// +--------------------+ <- ESP when Rust is called (= &SyscallContext)
-/// | EAX (syscall nr)   |  0x00
-/// | EBX (arg1)         |  0x04
-/// | ECX (arg2)         |  0x08
-/// | EDX (arg3)         |  0x0C
-/// | FS                 |  0x10
-/// | ES                 |  0x14
-/// | DS                 |  0x18
+/// | GS                 |  0x00
+/// | ESI                |  0x04
+/// | EDI                |  0x08
+/// | EBP                |  0x0C
+/// | EAX (syscall nr)   |  0x10
+/// | EBX (arg1)         |  0x14
+/// | ECX (arg2)         |  0x18
+/// | EDX (arg3)         |  0x1C
+/// | FS                 |  0x20
+/// | ES                 |  0x24
+/// | DS                 |  0x28
 /// +--------------------+
-/// | EIP                |  0x1C  ← pushed by CPU
-/// | CS                 |  0x20
-/// | EFLAGS             |  0x24
-/// | ESP (user)         |  0x28  ← pushed by CPU (privilege change)
-/// | SS  (user)         |  0x2C
+/// | EIP                |  0x2C  ← pushed by CPU
+/// | CS                 |  0x30
+/// | EFLAGS             |  0x34
+/// | ESP (user)         |  0x38  ← pushed by CPU (privilege change)
+/// | SS  (user)         |  0x3C
 /// +--------------------+ <- High address
 /// ```
 #[repr(C)]
 #[derive(Debug)]
 pub struct SyscallContext {
-    // --- pushed by our assembly stub (low address first) ---
+    // --- callee-saved registers, captured for fork/exec child TSS setup ---
+    /// GS segment selector (user mode value).
+    pub gs: u32,
+    /// Source index register.
+    pub esi: u32,
+    /// Destination index register.
+    pub edi: u32,
+    /// Base pointer register.
+    pub ebp: u32,
+
+    // --- syscall number and arguments ---
     /// Syscall number on entry; overwritten with the return value before `iret`.
     pub eax: u32,
     /// First argument (Linux 0.11 convention: arg1 in EBX).

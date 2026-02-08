@@ -4,7 +4,7 @@ use core::ptr::addr_of_mut;
 use lazy_static::lazy_static;
 
 use crate::{
-    mm::{MemorySpace, PAGE_SIZE},
+    mm::{frame::PAGE_SIZE, space::MemorySpace},
     segment::selectors::{self, KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
     task::task_struct::*,
@@ -25,15 +25,45 @@ static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 pub struct TaskManager {
     pub tasks: [Option<Task>; TASK_NUM],
     pub current: usize,
+    pub last_pid: u32,
+}
+
+impl TaskManager {
+    /// Find an unused PID and an empty slot in the task table.
+    ///
+    /// Increments `last_pid` (wrapping to 1 on overflow) until a PID is
+    /// found that no existing task uses, then scans `tasks[1..]` for the
+    /// first empty slot.
+    ///
+    /// Returns the slot index on success (`self.last_pid` holds the new PID).
+    /// Returns `None` if no empty slot is available.
+    pub fn find_empty_process(&mut self) -> Option<usize> {
+        // Step 1: find a unique PID not used by any existing task.
+        'retry: loop {
+            self.last_pid = self.last_pid.wrapping_add(1);
+            if self.last_pid == 0 {
+                self.last_pid = 1;
+            }
+            for task in self.tasks.iter().flatten() {
+                if task.pcb.pid == self.last_pid {
+                    continue 'retry;
+                }
+            }
+            break;
+        }
+
+        // Step 2: find an empty slot in tasks[1..].
+        (1..TASK_NUM).find(|&i| self.tasks[i].is_none())
+    }
 }
 
 lazy_static! {
     pub static ref TASK_MANAGER: KernelCell<TaskManager> = unsafe {
-        // Initialize the static memory for task 0
+        // Initialize the static memory for task 0.
         let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
         let init_task_addr = init_task_ptr as u32;
 
-        // Write the initial task 0 data
+        // Write the initial task 0 data.
         init_task_ptr.write(TaskPage::new(
             TaskControlBlock::new(
                 0, // pid = 0
@@ -79,13 +109,13 @@ lazy_static! {
             ),
         ));
 
-        // Create Task from the static address
+        // Create Task from the static address.
         let task0 = Task::from_static_addr(init_task_addr);
 
-        // Initialize task array with task 0
+        // Initialize task array with task 0.
         let mut tasks: [Option<Task>; TASK_NUM] = [const { None }; TASK_NUM];
         tasks[0] = Some(task0);
 
-        KernelCell::new(TaskManager { tasks, current: 0 })
+        KernelCell::new(TaskManager { tasks, current: 0, last_pid: 0 })
     };
 }

@@ -5,7 +5,7 @@
 
 use core::ptr::addr_of_mut;
 
-use crate::mm::PAGE_SIZE;
+use crate::mm::frame::PAGE_SIZE;
 
 /// Initial kernel stack used by head.s during boot.
 ///

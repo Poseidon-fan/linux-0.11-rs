@@ -1,6 +1,6 @@
 //! This module defines Memory Address structures.
 
-use crate::mm::PAGE_SIZE;
+use crate::mm::frame::PAGE_SIZE;
 
 /// Linear address after segment translation.
 ///

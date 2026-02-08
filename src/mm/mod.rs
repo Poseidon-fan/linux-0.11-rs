@@ -1,12 +1,8 @@
-mod address;
-mod frame;
+pub mod address;
+pub mod frame;
 mod heap;
 mod page;
-mod space;
-
-pub use address::PhysPageNum;
-pub use frame::{PAGE_SIZE, PhysFrame};
-pub use space::MemorySpace;
+pub mod space;
 
 pub fn init(start_mem: u32, end_mem: u32) {
     heap::init();
