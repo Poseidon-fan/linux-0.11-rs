@@ -133,7 +133,14 @@ impl TaskManager {
             let code_base = parent_inner.ldt.code_segment().base();
             assert_eq!(old_base, code_base, "separate I&D not supported");
 
+            let code_limit = parent_inner.ldt.code_segment().byte_limit();
             let data_limit = parent_inner.ldt.data_segment().byte_limit();
+            assert!(
+                data_limit >= code_limit,
+                "bad data_limit: data < code (0x{:x} < 0x{:x})",
+                data_limit,
+                code_limit
+            );
 
             // Set the child's LDT segment base to its linear address slot.
             let new_base = slot as u32 * TASK_LINEAR_SIZE;
