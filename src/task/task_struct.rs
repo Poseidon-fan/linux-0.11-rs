@@ -34,7 +34,7 @@ impl TaskControlBlock {
 /// immutable `pid` to enable interior mutability via [`KernelCell`].
 pub struct TaskControlBlockInner {
     pub sched: TaskSchedInfo,
-    pub memory_space: MemorySpace,
+    pub memory_space: Option<MemorySpace>,
     pub exit_code: i32,
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
@@ -278,13 +278,6 @@ impl LocalDescriptorTable {
         }
     }
 
-    /// Create an empty LDT.
-    pub const fn empty() -> Self {
-        Self {
-            entries: [Descriptor::null(); 3],
-        }
-    }
-
     /// Get the user code segment descriptor (LDT[1]).
     pub const fn code_segment(&self) -> Descriptor {
         self.entries[1]
@@ -296,12 +289,6 @@ impl LocalDescriptorTable {
     }
 
     /// Set the base address of both user code and data segments.
-    ///
-    /// Equivalent to the original Linux 0.11:
-    /// ```c
-    /// set_base(p->ldt[1], new_code_base);
-    /// set_base(p->ldt[2], new_data_base);
-    /// ```
     pub fn set_base(&mut self, base: u32) {
         self.entries[1] = self.entries[1].with_base(base);
         self.entries[2] = self.entries[2].with_base(base);

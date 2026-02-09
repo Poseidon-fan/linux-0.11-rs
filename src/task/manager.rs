@@ -5,7 +5,10 @@ use lazy_static::lazy_static;
 use log::debug;
 
 use crate::{
-    mm::{frame::PAGE_SIZE, space::MemorySpace},
+    mm::{
+        frame::PAGE_SIZE,
+        space::{MemorySpace, TASK_LINEAR_SIZE},
+    },
     segment::{
         self,
         selectors::{self, KERNEL_DS, USER_CS, USER_DS},
@@ -85,7 +88,7 @@ impl TaskManager {
                     counter: parent_inner.sched.priority,
                     priority: parent_inner.sched.priority,
                 },
-                memory_space: MemorySpace::new(), // empty mem space, will copy soon
+                memory_space: None, // empty, will be replaced by cow_copy
                 exit_code: 0,
                 ldt: parent_inner.ldt.clone(),
                 tss: TaskStateSegment {
@@ -120,11 +123,32 @@ impl TaskManager {
             }),
         };
 
-        // We must drop the parent borrow before we borrow the child's inner.
+        // We must drop the parent borrow before we mutably borrow below.
         drop(parent_inner);
 
-        // 4. Copy memory space from parent to child.
-        // TODO: copy_mem implementation deferred for now.
+        // 4. Copy memory space from parent to child (COW).
+        {
+            let mut parent_inner = self.current().pcb.inner.borrow_mut();
+            let old_base = parent_inner.ldt.data_segment().base();
+            let code_base = parent_inner.ldt.code_segment().base();
+            assert_eq!(old_base, code_base, "separate I&D not supported");
+
+            let data_limit = parent_inner.ldt.data_segment().byte_limit();
+
+            // Set the child's LDT segment base to its linear address slot.
+            let new_base = slot as u32 * TASK_LINEAR_SIZE;
+            let mut child_inner = new_task.pcb.inner.borrow_mut();
+            child_inner.ldt.set_base(new_base);
+
+            // Perform the COW page table copy.
+            let child_space = parent_inner
+                .memory_space
+                .as_mut()
+                .expect("parent memory space is none, unexpected error")
+                .cow_copy(slot, data_limit)
+                .map_err(|_| EAGAIN)?;
+            child_inner.memory_space = Some(child_space);
+        }
 
         // 5. Install TSS and LDT descriptors in GDT for the new task.
         {
@@ -159,7 +183,7 @@ lazy_static! {
                         counter: 15,
                         priority: 15,
                     },
-                    memory_space: MemorySpace::new(),
+                    memory_space: Some(MemorySpace::new(0)), // task 0
                     exit_code: 0,
                     ldt: LocalDescriptorTable::new(0, 0x9f),
                     tss: TaskStateSegment {

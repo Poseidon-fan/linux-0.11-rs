@@ -7,7 +7,13 @@ use crate::{
 };
 
 pub const PAGE_SIZE: u32 = 4096;
-const LOW_MEM: u32 = 0x100000;
+
+/// Physical addresses below LOW_MEM belong to the kernel / BIOS and are
+/// identity-mapped.  They are never tracked by the frame allocator's
+/// reference-counting `mem_map`, so operations like `share()` and the
+/// `Drop` impl on [`PhysFrame`] silently skip them.
+pub const LOW_MEM: u32 = 0x100000;
+
 const PAGING_MEMORY: u32 = 15 * 1024 * 1024;
 const PAGING_PAGES: u32 = PAGING_MEMORY >> 12;
 const UNPAGED_PAGES: u32 = LOW_MEM >> 12;
@@ -19,10 +25,37 @@ pub fn init(start_mem: u32, end_mem: u32) {
     frame_test();
 }
 
+/// Allocate a fresh physical page frame (zeroed).
+///
+/// Returns `None` if no free frames remain.  The page's reference count
+/// in `mem_map` is set to 1.
 pub fn alloc() -> Option<PhysFrame> {
     FRAME_ALLOCATOR.with_mut(|allocator| allocator.alloc())
 }
 
+/// Create a shared reference to an existing physical page frame.
+///
+/// Increments the reference count in `mem_map` and returns a new
+/// [`PhysFrame`] handle pointing to the same physical page.  When both
+/// the original and the shared handle are dropped, each `Drop`
+/// decrements the count, so the page is freed only when the last
+/// reference is gone.
+///
+/// # Panics
+///
+/// Panics if `ppn` refers to a page that is not currently allocated
+/// (i.e. `mem_map` entry is 0).
+pub fn share(ppn: PhysPageNum) -> PhysFrame {
+    FRAME_ALLOCATOR.with_mut(|allocator| allocator.share(ppn))
+}
+
+/// An owned handle to a physical page frame.
+///
+/// Represents one reference-counted ownership stake in a physical page.
+/// Dropping a `PhysFrame` decrements the page's reference count in
+/// `mem_map`; the underlying memory is only truly freed when the count
+/// reaches zero.  Frames below [`LOW_MEM`] are never freed (they belong
+/// to the kernel's identity-mapped region).
 pub struct PhysFrame {
     pub ppn: PhysPageNum,
 }
@@ -69,9 +102,13 @@ impl FrameAllocator {
         self.mem_map[(ppn.0 - UNPAGED_PAGES) as usize] -= 1;
     }
 
-    #[allow(unused)]
-    fn clone_page(&mut self) {
-        todo!("clone shared page and increase reference count")
+    /// Increment the reference count for an existing page and return a
+    /// new [`PhysFrame`] handle to the same physical page.
+    fn share(&mut self, ppn: PhysPageNum) -> PhysFrame {
+        let idx = (ppn.0 - UNPAGED_PAGES) as usize;
+        assert!(self.mem_map[idx] > 0, "Sharing a free page (ppn {})", ppn.0);
+        self.mem_map[idx] += 1;
+        PhysFrame { ppn }
     }
 }
 

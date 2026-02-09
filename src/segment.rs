@@ -194,21 +194,33 @@ unsafe extern "C" {
     static mut gdt: [u64; 256];
 }
 
-/// x86 System Segment Descriptor (64-bit).
+/// x86 Segment Descriptor (64-bit).
 ///
-/// # Format
+/// A unified type for all segment descriptors stored in the GDT or LDT.
+/// Different descriptor kinds (TSS, LDT, user code/data) share the same
+/// binary layout and differ only in the access byte and flags nibble.
+///
+/// # Byte layout
 ///
 /// ```text
-/// 63       56 55   52 51   48 47       40 39       32
-/// ┌──────────┬───────┬───────┬──────────┬──────────┐
-/// │ Base     │ Flags │ Limit │ Access   │ Base     │
-/// │ [31:24]  │ G D 0 │[19:16]│ P DPL S T│ [23:16]  │
-/// └──────────┴───────┴───────┴──────────┴──────────┘
-/// 31                  16 15                       0
-/// ┌─────────────────────┬─────────────────────────┐
-/// │   Base [15:0]       │     Limit [15:0]        │
-/// └─────────────────────┴─────────────────────────┘
+/// Byte:  7        6        5        4        3        2        1        0
+///     ┌────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+///     │Base    │Flags:4 │Access  │Base    │  Base [15:0]    │   Limit [15:0]  │
+///     │[31:24] │Lim:4   │  Byte  │[23:16] │                 │                 │
+///     └────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+///
+///   Access byte (byte 5):  P(1) DPL(2) S(1) Type(4)
+///   Flags nibble (byte 6 high):  G(1) D/B(1) L(1) AVL(1)
 /// ```
+///
+/// # Descriptor kinds
+///
+/// | Kind            | Where  | Access | Flags | S bit |
+/// |-----------------|--------|--------|-------|-------|
+/// | TSS descriptor  | GDT    | 0x89   | 0x0   | 0     |
+/// | LDT descriptor  | GDT    | 0x82   | 0x0   | 0     |
+/// | User code seg   | LDT    | 0xFA   | 0xC   | 1     |
+/// | User data seg   | LDT    | 0xF2   | 0xC   | 1     |
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct Descriptor(u64);
@@ -221,24 +233,11 @@ impl Descriptor {
 
     /// Build a segment descriptor from base, limit, access byte, and flags nibble.
     ///
-    /// This is the general constructor used by both system-segment and
-    /// user-segment helpers.
-    ///
     /// # Arguments
     /// - `base`:   32-bit segment base address
     /// - `limit`:  20-bit segment limit
     /// - `access`: Access byte (P, DPL, S, Type)
     /// - `flags`:  High nibble of byte 6 (G, D/B, L, AVL)
-    ///
-    /// # Descriptor byte layout
-    ///
-    /// ```text
-    /// Byte:  7        6        5        4        3        2        1        0
-    ///     ┌────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
-    ///     │Base    │Flags:4 │Access  │Base    │  Base [15:0]    │   Limit [15:0]  │
-    ///     │[31:24] │Lim:4   │  Byte  │[23:16] │                 │                 │
-    ///     └────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┘
-    /// ```
     pub const fn new(base: u32, limit: u32, access: u8, flags: u8) -> Self {
         let limit_low = (limit & 0xFFFF) as u64;
         let limit_high = ((limit >> 16) & 0xF) as u64;
@@ -303,10 +302,25 @@ impl Descriptor {
     /// Extract the 20-bit segment limit from this descriptor.
     ///
     /// Returns the raw limit value (before granularity scaling).
-    pub const fn limit(self) -> u32 {
+    const fn limit(self) -> u32 {
         let lo = (self.0 & 0xFFFF) as u32; // byte[0..1]
         let hi = ((self.0 >> 48) & 0xF) as u32; // byte[6] low nibble
         lo | (hi << 16)
+    }
+
+    /// Get the byte-granular segment limit (maximum valid offset).
+    ///
+    /// If the G (Granularity) bit is set (byte 6, bit 7), the raw 20-bit
+    /// limit is scaled by 4KB: `(raw_limit << 12) | 0xFFF`.
+    /// Otherwise the raw limit is returned as-is.
+    ///
+    /// Note: this returns the *maximum offset*, not the segment *size*.
+    /// To get the size, add 1 to the result.
+    pub const fn byte_limit(self) -> u32 {
+        let raw = self.limit();
+        // G bit is bit 55 of the descriptor (byte 6, bit 7).
+        let g_bit = ((self.0 >> 55) & 1) as u32;
+        if g_bit == 1 { (raw << 12) | 0xFFF } else { raw }
     }
 
     /// Return a new descriptor with the base address changed.
