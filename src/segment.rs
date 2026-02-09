@@ -219,13 +219,27 @@ impl Descriptor {
         Self(0)
     }
 
-    /// Create a system segment descriptor (TSS or LDT).
+    /// Build a segment descriptor from base, limit, access byte, and flags nibble.
+    ///
+    /// This is the general constructor used by both system-segment and
+    /// user-segment helpers.
     ///
     /// # Arguments
-    /// - `base`: Linear address of the segment
-    /// - `limit`: Segment limit (size - 1), up to 20 bits
-    /// - `access`: Access byte (type, DPL, present bit, etc.)
-    const fn system_segment(base: u32, limit: u32, access: u8) -> Self {
+    /// - `base`:   32-bit segment base address
+    /// - `limit`:  20-bit segment limit
+    /// - `access`: Access byte (P, DPL, S, Type)
+    /// - `flags`:  High nibble of byte 6 (G, D/B, L, AVL)
+    ///
+    /// # Descriptor byte layout
+    ///
+    /// ```text
+    /// Byte:  7        6        5        4        3        2        1        0
+    ///     ┌────────┬────────┬────────┬────────┬────────┬────────┬────────┬────────┐
+    ///     │Base    │Flags:4 │Access  │Base    │  Base [15:0]    │   Limit [15:0]  │
+    ///     │[31:24] │Lim:4   │  Byte  │[23:16] │                 │                 │
+    ///     └────────┴────────┴────────┴────────┴────────┴────────┴────────┴────────┘
+    /// ```
+    pub const fn new(base: u32, limit: u32, access: u8, flags: u8) -> Self {
         let limit_low = (limit & 0xFFFF) as u64;
         let limit_high = ((limit >> 16) & 0xF) as u64;
         let base_low = (base & 0xFFFF) as u64;
@@ -238,23 +252,78 @@ impl Descriptor {
                 | (base_mid << 32)
                 | ((access as u64) << 40)
                 | (limit_high << 48)
-                // flags = 0 (byte granularity, 16-bit for system segments)
+                | ((flags as u64 & 0xF) << 52)
                 | (base_high << 56),
         )
     }
 
     /// Create a TSS (Task State Segment) descriptor.
     ///
-    /// Access byte = 0x89: Present, DPL=0, System, Type=9 (Available 32-bit TSS)
+    /// Access byte = 0x89: Present, DPL=0, System, Type=9 (Available 32-bit TSS).
+    /// Flags = 0 (byte granularity).
     pub const fn tss(base: u32, limit: u32) -> Self {
-        Self::system_segment(base, limit, 0x89)
+        Self::new(base, limit, 0x89, 0x0)
     }
 
     /// Create an LDT (Local Descriptor Table) descriptor.
     ///
-    /// Access byte = 0x82: Present, DPL=0, System, Type=2 (LDT)
+    /// Access byte = 0x82: Present, DPL=0, System, Type=2 (LDT).
+    /// Flags = 0 (byte granularity).
     pub const fn ldt(base: u32, limit: u32) -> Self {
-        Self::system_segment(base, limit, 0x82)
+        Self::new(base, limit, 0x82, 0x0)
+    }
+
+    /// Create a user code segment descriptor.
+    ///
+    /// Access = 0xFA: Present, DPL=3, non-system, Code, Execute/Read.
+    /// Flags  = 0xC:  4KB granularity, 32-bit operand size.
+    pub const fn user_code(base: u32, limit: u32) -> Self {
+        Self::new(base, limit, 0xFA, 0xC)
+    }
+
+    /// Create a user data segment descriptor.
+    ///
+    /// Access = 0xF2: Present, DPL=3, non-system, Data, Read/Write.
+    /// Flags  = 0xC:  4KB granularity, 32-bit operand size.
+    pub const fn user_data(base: u32, limit: u32) -> Self {
+        Self::new(base, limit, 0xF2, 0xC)
+    }
+
+    /// Extract the 32-bit base address from this descriptor.
+    ///
+    /// Reassembles the base from the three fields scattered across the
+    /// descriptor (see byte layout diagram above).
+    pub const fn base(self) -> u32 {
+        let lo = ((self.0 >> 16) & 0xFFFF) as u32; // byte[2..3]
+        let mid = ((self.0 >> 32) & 0xFF) as u32; // byte[4]
+        let hi = ((self.0 >> 56) & 0xFF) as u32; // byte[7]
+        lo | (mid << 16) | (hi << 24)
+    }
+
+    /// Extract the 20-bit segment limit from this descriptor.
+    ///
+    /// Returns the raw limit value (before granularity scaling).
+    pub const fn limit(self) -> u32 {
+        let lo = (self.0 & 0xFFFF) as u32; // byte[0..1]
+        let hi = ((self.0 >> 48) & 0xF) as u32; // byte[6] low nibble
+        lo | (hi << 16)
+    }
+
+    /// Return a new descriptor with the base address changed.
+    ///
+    /// All other fields (limit, access, flags) are preserved.
+    pub const fn with_base(self, base: u32) -> Self {
+        let base_low = (base & 0xFFFF) as u64;
+        let base_mid = ((base >> 16) & 0xFF) as u64;
+        let base_high = ((base >> 24) & 0xFF) as u64;
+
+        // Clear old base bits, then set new ones.
+        let cleared = self.0
+            & !(0xFFFF << 16)       // clear base[15:0]  in byte[2..3]
+            & !(0xFF << 32)         // clear base[23:16] in byte[4]
+            & !(0xFF << 56); // clear base[31:24] in byte[7]
+
+        Self(cleared | (base_low << 16) | (base_mid << 32) | (base_high << 56))
     }
 
     /// Get the raw 64-bit value.

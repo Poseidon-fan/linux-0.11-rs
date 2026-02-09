@@ -5,6 +5,7 @@ use crate::{
         frame::{self, PAGE_SIZE, PhysFrame},
         space::MemorySpace,
     },
+    segment::Descriptor,
     sync::KernelCell,
 };
 
@@ -124,7 +125,7 @@ impl Task {
 #[repr(C)]
 #[derive(Clone)]
 pub struct LocalDescriptorTable {
-    pub entries: [u64; 3],
+    pub entries: [Descriptor; 3],
 }
 
 /// x87 FPU (Math Coprocessor) state structure.
@@ -270,49 +271,40 @@ impl LocalDescriptorTable {
     pub const fn new(base: u32, limit: u32) -> Self {
         Self {
             entries: [
-                0, // Null descriptor
-                Self::user_code_segment(base, limit),
-                Self::user_data_segment(base, limit),
+                Descriptor::null(),
+                Descriptor::user_code(base, limit),
+                Descriptor::user_data(base, limit),
             ],
         }
     }
 
     /// Create an empty LDT.
     pub const fn empty() -> Self {
-        Self { entries: [0; 3] }
+        Self {
+            entries: [Descriptor::null(); 3],
+        }
     }
 
-    /// Create a user code segment descriptor.
+    /// Get the user code segment descriptor (LDT[1]).
+    pub const fn code_segment(&self) -> Descriptor {
+        self.entries[1]
+    }
+
+    /// Get the user data segment descriptor (LDT[2]).
+    pub const fn data_segment(&self) -> Descriptor {
+        self.entries[2]
+    }
+
+    /// Set the base address of both user code and data segments.
     ///
-    /// Access: 0xFA = Present, DPL=3, Code, Execute/Read
-    /// Flags: 0xC = 4KB granularity, 32-bit
-    const fn user_code_segment(base: u32, limit: u32) -> u64 {
-        Self::segment_descriptor(base, limit, 0xFA, 0xC)
-    }
-
-    /// Create a user data segment descriptor.
-    ///
-    /// Access: 0xF2 = Present, DPL=3, Data, Read/Write
-    /// Flags: 0xC = 4KB granularity, 32-bit
-    const fn user_data_segment(base: u32, limit: u32) -> u64 {
-        Self::segment_descriptor(base, limit, 0xF2, 0xC)
-    }
-
-    /// Build a segment descriptor from components.
-    const fn segment_descriptor(base: u32, limit: u32, access: u8, flags: u8) -> u64 {
-        let limit_low = (limit & 0xFFFF) as u64;
-        let limit_high = ((limit >> 16) & 0xF) as u64;
-        let base_low = (base & 0xFFFF) as u64;
-        let base_mid = ((base >> 16) & 0xFF) as u64;
-        let base_high = ((base >> 24) & 0xFF) as u64;
-
-        limit_low
-            | (base_low << 16)
-            | (base_mid << 32)
-            | ((access as u64) << 40)
-            | (limit_high << 48)
-            | ((flags as u64) << 52)
-            | (base_high << 56)
+    /// Equivalent to the original Linux 0.11:
+    /// ```c
+    /// set_base(p->ldt[1], new_code_base);
+    /// set_base(p->ldt[2], new_data_base);
+    /// ```
+    pub fn set_base(&mut self, base: u32) {
+        self.entries[1] = self.entries[1].with_base(base);
+        self.entries[2] = self.entries[2].with_base(base);
     }
 
     /// Get the address of the LDT for use in GDT LDT descriptor.
