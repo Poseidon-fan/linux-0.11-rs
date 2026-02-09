@@ -37,39 +37,6 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
-    /// Find an unused PID and an empty slot in the task table.
-    ///
-    /// Increments `last_pid` (wrapping to 1 on overflow) until a PID is
-    /// found that no existing task uses, then scans `tasks[1..]` for the
-    /// first empty slot.
-    ///
-    /// Returns the slot index on success (`self.last_pid` holds the new PID).
-    /// Returns `None` if no empty slot is available.
-    fn find_empty_process(&mut self) -> Option<usize> {
-        // Step 1: find a unique PID not used by any existing task.
-        'retry: loop {
-            self.last_pid = self.last_pid.wrapping_add(1);
-            if self.last_pid == 0 {
-                self.last_pid = 1;
-            }
-            for task in self.tasks.iter().flatten() {
-                if task.pcb.pid == self.last_pid {
-                    continue 'retry;
-                }
-            }
-            break;
-        }
-
-        // Step 2: find an empty slot in tasks[1..].
-        (1..TASK_NUM).find(|&i| self.tasks[i].is_none())
-    }
-
-    pub fn current(&self) -> &Task {
-        self.tasks[self.current]
-            .as_ref()
-            .expect("get current task failed")
-    }
-
     pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
         debug!("fork ctx: {:?}", ctx);
         // 1. Find a free slot in task array.
@@ -171,6 +138,39 @@ impl TaskManager {
         self.tasks[slot] = Some(new_task);
 
         Ok(self.last_pid)
+    }
+
+    pub fn current(&self) -> &Task {
+        self.tasks[self.current]
+            .as_ref()
+            .expect("get current task failed")
+    }
+
+    /// Find an unused PID and an empty slot in the task table.
+    ///
+    /// Increments `last_pid` (wrapping to 1 on overflow) until a PID is
+    /// found that no existing task uses, then scans `tasks[1..]` for the
+    /// first empty slot.
+    ///
+    /// Returns the slot index on success (`self.last_pid` holds the new PID).
+    /// Returns `None` if no empty slot is available.
+    fn find_empty_process(&mut self) -> Option<usize> {
+        // Step 1: find a unique PID not used by any existing task.
+        'retry: loop {
+            self.last_pid = self.last_pid.wrapping_add(1);
+            if self.last_pid == 0 {
+                self.last_pid = 1;
+            }
+            for task in self.tasks.iter().flatten() {
+                if task.pcb.pid == self.last_pid {
+                    continue 'retry;
+                }
+            }
+            break;
+        }
+
+        // Step 2: find an empty slot in tasks[1..].
+        (1..TASK_NUM).find(|&i| self.tasks[i].is_none())
     }
 }
 

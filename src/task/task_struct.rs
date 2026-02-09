@@ -19,15 +19,6 @@ pub struct TaskControlBlock {
     pub inner: KernelCell<TaskControlBlockInner>,
 }
 
-impl TaskControlBlock {
-    pub fn new(pid: u32, inner: TaskControlBlockInner) -> Self {
-        Self {
-            pid,
-            inner: KernelCell::new(inner),
-        }
-    }
-}
-
 /// Mutable fields of the process control block.
 ///
 /// This struct holds all the mutable state of a task, separated from the
@@ -65,19 +56,6 @@ pub struct TaskPage {
     stack: [u8; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
 }
 
-impl TaskPage {
-    pub fn new(pcb: TaskControlBlock) -> Self {
-        Self {
-            pcb,
-            stack: [0; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
-        }
-    }
-
-    pub fn stack_top(&self) -> u32 {
-        self as *const TaskPage as u32 + PAGE_SIZE
-    }
-}
-
 /// An owned task that holds ownership of its underlying physical frame.
 ///
 /// This struct wraps a [`PhysFrame`] and implements [`Deref`] and [`DerefMut`]
@@ -87,34 +65,6 @@ impl TaskPage {
 /// For task 0 (idle process), the frame is statically allocated in kernel
 /// memory (below 1MB), so drop is a no-op (FrameAllocator ignores it).
 pub struct Task(PhysFrame);
-
-impl Task {
-    /// Create a Task from a statically allocated TaskPage address.
-    ///
-    /// # Safety
-    ///
-    /// The address must point to a valid, page-aligned TaskPage that:
-    /// - Lives for the entire kernel lifetime (static allocation)
-    /// - Is located below 1MB (so frame allocator won't try to free it)
-    pub unsafe fn from_static_addr(addr: u32) -> Self {
-        use crate::mm::address::PhysPageNum;
-        Self(PhysFrame {
-            ppn: PhysPageNum(addr >> 12),
-        })
-    }
-
-    /// Allocate a new task backed by a fresh physical page.
-    ///
-    /// The page is zeroed by the frame allocator. The caller is responsible
-    /// for initializing the [`TaskPage`] contents (PCB fields, kernel stack)
-    /// before the task is scheduled.
-    ///
-    /// Returns `None` if no free physical frame is available.
-    pub fn new() -> Option<Self> {
-        let frame = frame::alloc()?;
-        Some(Self(frame))
-    }
-}
 
 /// Local Descriptor Table (LDT) for a task.
 ///
@@ -215,21 +165,6 @@ pub struct TaskStateSegment {
     pub i387: I387Struct,
 }
 
-impl I387Struct {
-    pub const fn empty() -> Self {
-        Self {
-            cwd: 0,
-            swd: 0,
-            twd: 0,
-            fip: 0,
-            fcs: 0,
-            foo: 0,
-            fos: 0,
-            st_space: [0; 20],
-        }
-    }
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
@@ -259,6 +194,71 @@ impl DerefMut for Task {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let addr = self.0.ppn.0 << 12;
         unsafe { &mut *(addr as *mut TaskPage) }
+    }
+}
+
+impl TaskControlBlock {
+    pub fn new(pid: u32, inner: TaskControlBlockInner) -> Self {
+        Self {
+            pid,
+            inner: KernelCell::new(inner),
+        }
+    }
+}
+
+impl TaskPage {
+    pub fn new(pcb: TaskControlBlock) -> Self {
+        Self {
+            pcb,
+            stack: [0; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+        }
+    }
+
+    pub fn stack_top(&self) -> u32 {
+        self as *const TaskPage as u32 + PAGE_SIZE
+    }
+}
+
+impl Task {
+    /// Create a Task from a statically allocated TaskPage address.
+    ///
+    /// # Safety
+    ///
+    /// The address must point to a valid, page-aligned TaskPage that:
+    /// - Lives for the entire kernel lifetime (static allocation)
+    /// - Is located below 1MB (so frame allocator won't try to free it)
+    pub unsafe fn from_static_addr(addr: u32) -> Self {
+        use crate::mm::address::PhysPageNum;
+        Self(PhysFrame {
+            ppn: PhysPageNum(addr >> 12),
+        })
+    }
+
+    /// Allocate a new task backed by a fresh physical page.
+    ///
+    /// The page is zeroed by the frame allocator. The caller is responsible
+    /// for initializing the [`TaskPage`] contents (PCB fields, kernel stack)
+    /// before the task is scheduled.
+    ///
+    /// Returns `None` if no free physical frame is available.
+    pub fn new() -> Option<Self> {
+        let frame = frame::alloc()?;
+        Some(Self(frame))
+    }
+}
+
+impl I387Struct {
+    pub const fn empty() -> Self {
+        Self {
+            cwd: 0,
+            swd: 0,
+            twd: 0,
+            fip: 0,
+            fcs: 0,
+            foo: 0,
+            fos: 0,
+            st_space: [0; 20],
+        }
     }
 }
 

@@ -26,6 +26,20 @@ use core::arch::asm;
 #[repr(transparent)]
 pub struct SegmentSelector(u16);
 
+/// CPU Privilege Level (Ring 0-3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PrivilegeLevel {
+    /// Ring 0 - Kernel mode (highest privilege)
+    Ring0 = 0,
+    /// Ring 1 - Unused
+    Ring1 = 1,
+    /// Ring 2 - Unused
+    Ring2 = 2,
+    /// Ring 3 - User mode (lowest privilege)
+    Ring3 = 3,
+}
+
 impl SegmentSelector {
     /// Create a new segment selector.
     ///
@@ -76,20 +90,6 @@ impl SegmentSelector {
             _ => PrivilegeLevel::Ring3,
         }
     }
-}
-
-/// CPU Privilege Level (Ring 0-3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PrivilegeLevel {
-    /// Ring 0 - Kernel mode (highest privilege)
-    Ring0 = 0,
-    /// Ring 1 - Unused
-    Ring1 = 1,
-    /// Ring 2 - Unused
-    Ring2 = 2,
-    /// Ring 3 - User mode (lowest privilege)
-    Ring3 = 3,
 }
 
 /// Well-known segment selectors used in the kernel.
@@ -175,15 +175,6 @@ pub const FIRST_TSS_ENTRY: u16 = 4;
 
 /// First LDT descriptor entry index in GDT.
 pub const FIRST_LDT_ENTRY: u16 = 5;
-
-/// Get the current task number from Task Register.
-///
-/// Calculates which task is current based on the TSS selector in TR.
-#[inline]
-pub fn current_task_nr() -> u16 {
-    let selector = str();
-    (selector.index() - FIRST_TSS_ENTRY) >> 1
-}
 
 // ============================================================================
 // Descriptor operations
