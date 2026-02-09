@@ -6,7 +6,10 @@ use log::debug;
 
 use crate::{
     mm::{frame::PAGE_SIZE, space::MemorySpace},
-    segment::selectors::{self, KERNEL_DS, USER_CS, USER_DS},
+    segment::{
+        self,
+        selectors::{self, KERNEL_DS, USER_CS, USER_DS},
+    },
     sync::KernelCell,
     syscall::{EAGAIN, SyscallContext},
     task::task_struct::*,
@@ -65,11 +68,9 @@ impl TaskManager {
     }
 
     pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
-        debug!("fork: {:?}", ctx);
+        debug!("fork ctx: {:?}", ctx);
         // 1. Find a free slot in task array.
-        let slot = TASK_MANAGER
-            .with_mut(|manager| manager.find_empty_process())
-            .ok_or(EAGAIN)?;
+        let slot = self.find_empty_process().ok_or(EAGAIN)?;
 
         // 2. Allocate a new task page.
         let mut new_task = Task::new().ok_or(EAGAIN)?;
@@ -119,7 +120,26 @@ impl TaskManager {
             }),
         };
 
-        todo!()
+        // We must drop the parent borrow before we borrow the child's inner.
+        drop(parent_inner);
+
+        // 4. Copy memory space from parent to child.
+        // TODO: copy_mem implementation deferred for now.
+
+        // 5. Install TSS and LDT descriptors in GDT for the new task.
+        {
+            let inner = new_task.pcb.inner.borrow();
+            let tss_addr = &inner.tss as *const TaskStateSegment as u32;
+            let ldt_addr = inner.ldt.as_ptr();
+            segment::set_tss_desc(slot as u16, tss_addr);
+            segment::set_ldt_desc(slot as u16, ldt_addr);
+        }
+
+        // 6. Mark the child as runnable and insert into the task table.
+        new_task.pcb.inner.borrow_mut().sched.state = TaskState::Running;
+        self.tasks[slot] = Some(new_task);
+
+        Ok(self.last_pid)
     }
 }
 
