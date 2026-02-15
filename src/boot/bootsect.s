@@ -1,11 +1,11 @@
 	.code16
 # rewrite with AT&T syntax by falcon <wuzhangjin@gmail.com> at 081012
 #
-# SYS_SIZE is the number of clicks (16 bytes) to be loaded.
-# 0x3000 is 0x30000 bytes = 196kB, more than enough for current
-# versions of linux
+# SYSSIZE is the number of 16-byte clicks to be loaded.
+# 0x8000 clicks = 0x80000 bytes = 512 KiB, which is the current
+# maximum allowed by the boot memory layout (SYSSEG..INITSEG).
 #
-	.equ SYSSIZE, 0x3000
+	.equ SYSSIZE, 0x8000
 #
 #	bootsect.s		(C) 1991 Linus Torvalds
 #

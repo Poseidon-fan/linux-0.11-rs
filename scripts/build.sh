@@ -9,9 +9,10 @@ system=$3
 IMAGE=$4
 root_dev=$5
 
-# Set the biggest sys_size
-# Changes from 0x20000 to 0x30000 by tigercn to avoid oversized code.
-SYS_SIZE=$((0x3000*16))
+# Set the biggest system image size in bytes.
+# Keep this value in sync with SYSSIZE in src/boot/bootsect.s.
+# 0x8000 clicks * 16 bytes/click = 0x80000 bytes (512 KiB).
+SYS_SIZE=$((0x8000*16))
 
 # set the default "device" file for root image file
 if [ -z "$root_dev" ]; then
