@@ -5,7 +5,8 @@
             "type": "lldb",
             "request": "launch",
             "processCreateCommands": [
-                "gdb-remote localhost:1234"
+                "gdb-remote localhost:1234",
+                "target modules load --file linux_rs --slide 0x0"
             ],
             "initCommands": [
                 "process handle SIGTRAP -s false"
