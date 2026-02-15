@@ -30,6 +30,14 @@ unsafe extern "C" {
 /// won't try to free it when the Task is dropped.
 static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 
+/// Dedicated kernel stack for task 0 (idle process).
+///
+/// Task 0's TSS.esp0 points here so we have enough stack in debug builds.
+/// The default task page only provides (4KB − PCB) for stack, which can
+/// overflow with the fork.
+const TASK0_KERNEL_STACK_SIZE: usize = 16 * 1024;
+static mut TASK0_KERNEL_STACK: [u8; TASK0_KERNEL_STACK_SIZE] = [0; TASK0_KERNEL_STACK_SIZE];
+
 pub struct TaskManager {
     pub tasks: [Option<Task>; TASK_NUM],
     pub current: usize,
@@ -180,10 +188,10 @@ lazy_static! {
         let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
         let init_task_addr = init_task_ptr as u32;
 
-        // Zero the whole task page first to avoid constructing a full 4KB TaskPage on stack.
+        // Zero the whole task page.
         write_bytes(init_task_ptr.cast::<u8>(), 0, PAGE_SIZE as usize);
 
-        // Then initialize only the PCB fields needed for task 0.
+        // Then initialize only the PCB.
         addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new(
             0, // pid = 0
             TaskControlBlockInner {
@@ -197,7 +205,9 @@ lazy_static! {
                 ldt: LocalDescriptorTable::new(0, 0x9f),
                 tss: TaskStateSegment {
                     back_link: 0,
-                    esp0: init_task_addr + PAGE_SIZE,
+                    esp0: addr_of_mut!(TASK0_KERNEL_STACK)
+                        .cast::<u8>()
+                        .add(TASK0_KERNEL_STACK_SIZE) as u32,
                     ss0: KERNEL_DS.as_u32(),
                     esp1: 0,
                     ss1: 0,

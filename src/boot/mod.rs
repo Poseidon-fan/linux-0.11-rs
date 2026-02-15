@@ -9,8 +9,10 @@ use crate::mm::frame::PAGE_SIZE;
 
 /// Initial kernel stack used by head.s during boot.
 ///
-/// Sized as PAGE_SIZE / 4 = 1024 entries of u32 (one full page).
-static mut USER_STACK: [u32; (PAGE_SIZE >> 2) as usize] = [0; (PAGE_SIZE >> 2) as usize];
+/// The original Linux 0.11 used only 4KB (one page). Here we use 8KB because
+/// Rust debug builds use more stack space, so 4KB can overflow.
+const BOOT_STACK_WORDS: usize = (PAGE_SIZE >> 2) as usize * 2;
+static mut USER_STACK: [u32; BOOT_STACK_WORDS] = [0; BOOT_STACK_WORDS];
 
 /// Stack pointer and segment selector for initial kernel stack.
 /// Referenced by `lss stack_start,%esp` in head.s.
@@ -23,10 +25,6 @@ struct StackStart {
 
 #[unsafe(export_name = "stack_start")]
 static mut STACK_START: StackStart = StackStart {
-    sp: unsafe {
-        addr_of_mut!(USER_STACK)
-            .cast::<u32>()
-            .add((PAGE_SIZE >> 2) as usize)
-    },
+    sp: unsafe { addr_of_mut!(USER_STACK).cast::<u32>().add(BOOT_STACK_WORDS) },
     ss: 0x10,
 };
