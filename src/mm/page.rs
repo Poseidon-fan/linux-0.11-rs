@@ -185,20 +185,45 @@ impl PageTable {
 // We access it via raw volatile pointers.
 
 /// Read a page directory entry by index (0..1023).
+///
+/// The page directory lives at physical address 0, so entry 0 is at
+/// address 0x0.  We use inline assembly instead of `ptr::read_volatile`
+/// because Rust's UB precondition checks reject null pointers — but
+/// address 0 is a valid physical address in this bare-metal kernel.
 #[inline]
 pub fn read_pde(index: usize) -> PageDirectoryEntry {
     debug_assert!(index < ENTRIES_PER_TABLE);
-    let ptr = (index * 4) as *const u32;
-    let raw = unsafe { core::ptr::read_volatile(ptr) };
+    let addr = index * 4;
+    let raw: u32;
+    unsafe {
+        asm!(
+            "mov ({addr}), {out}",
+            addr = in(reg) addr,
+            out = out(reg) raw,
+            options(att_syntax, readonly, nostack, preserves_flags),
+        );
+    }
     PageDirectoryEntry::from(raw)
 }
 
 /// Write a page directory entry by index (0..1023).
+///
+/// Uses inline assembly for the same reason as [`read_pde`]: the page
+/// directory starts at physical address 0, which Rust considers a null
+/// pointer.
 #[inline]
 pub fn write_pde(index: usize, pde: PageDirectoryEntry) {
     debug_assert!(index < ENTRIES_PER_TABLE);
-    let ptr = (index * 4) as *mut u32;
-    unsafe { core::ptr::write_volatile(ptr, pde.into()) }
+    let addr = index * 4;
+    let val: u32 = pde.into();
+    unsafe {
+        asm!(
+            "mov {val}, ({addr})",
+            addr = in(reg) addr,
+            val = in(reg) val,
+            options(att_syntax, nostack, preserves_flags),
+        );
+    }
 }
 
 /// Flush the entire TLB by reloading CR3 with 0.
