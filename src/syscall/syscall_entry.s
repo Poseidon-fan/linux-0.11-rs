@@ -41,8 +41,8 @@ system_call:
     addl $4, %esp           # clean up the pushed argument
 
     # Overwrite saved EAX with the return value so popl %eax picks it up.
-    # EAX slot is at offset 12 from ESP (skip gs, esi, edi, ebp = 4×4).
-    movl %eax, 12(%esp)
+    # EAX slot is at offset 16 from ESP (skip gs, esi, edi, ebp = 4×4).
+    movl %eax, 16(%esp)
 
     # Restore registers & return to user mode.
     # Skip gs/esi/edi/ebp — they are callee-saved and still hold the
