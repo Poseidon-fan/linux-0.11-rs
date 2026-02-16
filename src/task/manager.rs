@@ -128,6 +128,53 @@ impl TaskManager {
         Ok(self.last_pid)
     }
 
+    pub fn schedule(&mut self) {
+        loop {
+            // Pick a runnable non-idle task with the largest counter.
+            // For equal counters, prefer the higher slot index.
+            let candidate = self
+                .tasks
+                .iter()
+                .enumerate()
+                .skip(1)
+                .filter_map(|(idx, task)| {
+                    let task = task.as_ref()?;
+                    let inner = task.pcb.inner.borrow();
+                    (inner.sched.state == TaskState::Running).then_some((idx, inner.sched.counter))
+                })
+                .max_by_key(|&(idx, counter)| (counter, idx));
+
+            match candidate {
+                Some((next, counter)) if counter > 0 => {
+                    if self.current != next {
+                        self.current = next;
+                    }
+                    return;
+                }
+                None => {
+                    if self.current != 0 {
+                        self.current = 0;
+                    }
+                    return;
+                }
+                Some(_) => {
+                    self.tasks.iter().skip(1).flatten().for_each(|task| {
+                        let mut inner = task.pcb.inner.borrow_mut();
+                        inner.sched.counter = (inner.sched.counter >> 1) + inner.sched.priority;
+                    });
+                }
+            }
+        }
+    }
+
+    pub fn try_schedule(&mut self) {
+        let current_task = self.current().pcb.inner.borrow();
+        if current_task.sched.state != TaskState::Running || current_task.sched.counter == 0 {
+            drop(current_task);
+            self.schedule();
+        }
+    }
+
     pub fn current(&self) -> &Task {
         self.tasks[self.current]
             .as_ref()
