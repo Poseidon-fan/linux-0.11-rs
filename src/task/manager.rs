@@ -4,10 +4,7 @@ use core::ptr::{addr_of_mut, write_bytes};
 use lazy_static::lazy_static;
 
 use crate::{
-    mm::{
-        frame::PAGE_SIZE,
-        space::{MemorySpace, TASK_LINEAR_SIZE},
-    },
+    mm::space::{MemorySpace, TASK_LINEAR_SIZE},
     segment::{
         self,
         selectors::{self, KERNEL_DS, USER_CS, USER_DS},
@@ -107,14 +104,14 @@ impl TaskManager {
         let mut child_inner = new_task.pcb.inner.borrow_mut();
         child_inner.ldt.set_base(new_base);
 
-        // Perform the COW page table copy.
-        let child_space = parent_inner
-            .memory_space
-            .as_ref()
-            .expect("parent memory space is none, unexpected error")
-            .cow_copy(slot, data_limit)
-            .map_err(|_| EAGAIN)?;
-        child_inner.memory_space = Some(child_space);
+        child_inner.memory_space = Some(
+            parent_inner
+                .memory_space
+                .as_ref()
+                .expect("parent memory space is none, unexpected error")
+                .cow_copy(slot, data_limit)
+                .map_err(|_| EAGAIN)?,
+        );
 
         // 5. Install TSS and LDT descriptors in GDT for the new task.
         let tss_addr = &child_inner.tss as *const TaskStateSegment as u32;
@@ -172,7 +169,7 @@ lazy_static! {
         let init_task_addr = init_task_ptr as u32;
 
         // Zero the whole task page.
-        write_bytes(init_task_ptr.cast::<u8>(), 0, PAGE_SIZE as usize);
+        write_bytes(init_task_ptr.cast::<u8>(), 0, TASK_PAGE_SIZE as usize);
 
         // Then initialize only the PCB.
         addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new(
@@ -188,7 +185,7 @@ lazy_static! {
                 ldt: LocalDescriptorTable::new(0, 0x9f),
                 tss: TaskStateSegment {
                     back_link: 0,
-                    esp0: init_task_addr + PAGE_SIZE,
+                    esp0: init_task_addr + TASK_PAGE_SIZE,
                     ss0: KERNEL_DS.as_u32(),
                     esp1: 0,
                     ss1: 0,

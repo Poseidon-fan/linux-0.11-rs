@@ -2,12 +2,18 @@ use core::ops::{Deref, DerefMut};
 
 use crate::{
     mm::{
-        frame::{self, PAGE_SIZE, PhysFrame},
+        frame::{self, PAGE_SIZE, PhysFrameRange},
         space::MemorySpace,
     },
     segment::Descriptor,
     sync::KernelCell,
 };
+
+/// Number of physical pages reserved for each task's PCB + kernel stack block.
+pub const TASK_PAGE_FRAMES: usize = 2;
+
+/// Total bytes reserved for one task's PCB + kernel stack block.
+pub const TASK_PAGE_SIZE: u32 = PAGE_SIZE * TASK_PAGE_FRAMES as u32;
 
 /// Process Control Block (PCB) for a task.
 ///
@@ -31,16 +37,16 @@ pub struct TaskControlBlockInner {
     pub tss: TaskStateSegment,
 }
 
-/// Memory layout of a task page (4KB aligned).
+/// Memory layout of a task page block (4KB aligned).
 ///
-/// Each task struct occupies exactly one physical page (4096 bytes). The page is organized
+/// Each task occupies two contiguous physical pages (8192 bytes). The block is organized
 /// with the Process Control Block ([`TaskControlBlock`]) at the low address,
 /// and the remaining space used as the kernel stack.
 ///
 /// # Memory Layout
 ///
 /// ```text
-///  base + 4096 ──►┌──────────────────┐ ◄─ ESP0 (stack top)
+///  base + 8192 ──►┌──────────────────┐ ◄─ ESP0 (stack top)
 ///                 │   Kernel Stack   │ ▲
 ///                 │       ↓          │ │ grows downward
 ///                 ├──────────────────┤
@@ -48,23 +54,23 @@ pub struct TaskControlBlockInner {
 ///  base + 0    ──►└──────────────────┘
 /// ```
 ///
-/// The kernel stack pointer (ESP0 in TSS) should point to `base + 4096`.
+/// The kernel stack pointer (ESP0 in TSS) should point to `base + 8192`.
 #[repr(C, align(4096))]
 pub struct TaskPage {
     pub pcb: TaskControlBlock,
 
-    stack: [u8; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+    stack: [u8; TASK_PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
 }
 
-/// An owned task that holds ownership of its underlying physical frame.
+/// An owned task that holds ownership of its underlying physical frame range.
 ///
-/// This struct wraps a [`PhysFrame`] and implements [`Deref`] and [`DerefMut`]
+/// This struct wraps a [`PhysFrameRange`] and implements [`Deref`] and [`DerefMut`]
 /// to provide transparent access to the [`TaskPage`] stored within the frame.
-/// When a `Task` is dropped, the physical frame is automatically deallocated.
+/// When a `Task` is dropped, the physical frames are automatically deallocated.
 ///
-/// For task 0 (idle process), the frame is statically allocated in kernel
-/// memory (below 1MB), so drop is a no-op (FrameAllocator ignores it).
-pub struct Task(PhysFrame);
+/// For task 0 (idle process), the frames are statically allocated in kernel
+/// memory (below 1MB), so drop is a no-op (FrameAllocator ignores them).
+pub struct Task(PhysFrameRange);
 
 /// Local Descriptor Table (LDT) for a task.
 ///
@@ -185,14 +191,14 @@ impl Deref for Task {
     type Target = TaskPage;
 
     fn deref(&self) -> &Self::Target {
-        let addr = self.0.ppn.0 << 12;
+        let addr = self.0.phys_addr();
         unsafe { &*(addr as *const TaskPage) }
     }
 }
 
 impl DerefMut for Task {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let addr = self.0.ppn.0 << 12;
+        let addr = self.0.phys_addr();
         unsafe { &mut *(addr as *mut TaskPage) }
     }
 }
@@ -210,12 +216,12 @@ impl TaskPage {
     pub fn new(pcb: TaskControlBlock) -> Self {
         Self {
             pcb,
-            stack: [0; PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+            stack: [0; TASK_PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
         }
     }
 
     pub fn stack_top(&self) -> u32 {
-        self as *const TaskPage as u32 + PAGE_SIZE
+        self as *const TaskPage as u32 + TASK_PAGE_SIZE
     }
 }
 
@@ -229,21 +235,22 @@ impl Task {
     /// - Is located below 1MB (so frame allocator won't try to free it)
     pub unsafe fn from_static_addr(addr: u32) -> Self {
         use crate::mm::address::PhysPageNum;
-        Self(PhysFrame {
-            ppn: PhysPageNum(addr >> 12),
+        Self(PhysFrameRange {
+            start_ppn: PhysPageNum(addr >> 12),
+            page_count: TASK_PAGE_FRAMES,
         })
     }
 
-    /// Allocate a new task backed by a fresh physical page.
+    /// Allocate a new task backed by a fresh contiguous frame range.
     ///
-    /// The page is zeroed by the frame allocator. The caller is responsible
+    /// The pages are zeroed by the frame allocator. The caller is responsible
     /// for initializing the [`TaskPage`] contents (PCB fields, kernel stack)
     /// before the task is scheduled.
     ///
-    /// Returns `None` if no free physical frame is available.
+    /// Returns `None` if no contiguous range is available.
     pub fn new() -> Option<Self> {
-        let frame = frame::alloc()?;
-        Some(Self(frame))
+        let frame_range = frame::alloc_contiguous(TASK_PAGE_FRAMES)?;
+        Some(Self(frame_range))
     }
 }
 
