@@ -24,6 +24,21 @@ LDFLAGS := -m elf_i386 -Ttext 0
 OBJCOPY_BOOT_FLAGS := -R .pdr -R .comment -R.note -S -O binary
 OBJCOPY_KERNEL_FLAGS := -O binary -R .note -R .comment
 
+RUN_MODE ?= release
+VALID_RUN_MODES := debug release
+RUN_MODE_FROM_GOAL := $(filter $(VALID_RUN_MODES),$(word 2,$(MAKECMDGOALS)))
+
+# Support `make run debug` and `make run release` as shorthand.
+ifneq ($(RUN_MODE_FROM_GOAL),)
+RUN_MODE := $(RUN_MODE_FROM_GOAL)
+$(RUN_MODE_FROM_GOAL):
+	@:
+endif
+
+ifeq ($(filter $(RUN_MODE),$(VALID_RUN_MODES)),)
+$(error RUN_MODE must be one of: $(VALID_RUN_MODES))
+endif
+
 all: Image-release
 
 Image-%: $(BOOT_DIR)/bootsect $(BOOT_DIR)/setup
@@ -41,8 +56,8 @@ $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 	@$(LD) $(LDFLAGS) -o $(TARGET_DIR)/$* $(TARGET_DIR)/$*.o
 	@$(OBJCOPY) $(OBJCOPY_BOOT_FLAGS) $(TARGET_DIR)/$* $(TARGET_DIR)/$*
 
-run: Image-release
-	@qemu-system-i386 -m 16M -boot a -fda Image-release -display curses
+run: Image-$(RUN_MODE)
+	@qemu-system-i386 -m 16M -boot a -fda Image-$(RUN_MODE) -display curses
 
 dbg: Image-debug
 	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -fda Image-debug -display curses -s -S
