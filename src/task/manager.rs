@@ -2,7 +2,6 @@ use core::mem::MaybeUninit;
 use core::ptr::{addr_of_mut, write_bytes};
 
 use lazy_static::lazy_static;
-use log::debug;
 
 use crate::{
     mm::{
@@ -30,14 +29,6 @@ unsafe extern "C" {
 /// won't try to free it when the Task is dropped.
 static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 
-/// Dedicated kernel stack for task 0 (idle process).
-///
-/// Task 0's TSS.esp0 points here so we have enough stack in debug builds.
-/// The default task page only provides (4KB − PCB) for stack, which can
-/// overflow with the fork.
-const TASK0_KERNEL_STACK_SIZE: usize = 16 * 1024;
-static mut TASK0_KERNEL_STACK: [u8; TASK0_KERNEL_STACK_SIZE] = [0; TASK0_KERNEL_STACK_SIZE];
-
 pub struct TaskManager {
     pub tasks: [Option<Task>; TASK_NUM],
     pub current: usize,
@@ -46,7 +37,6 @@ pub struct TaskManager {
 
 impl TaskManager {
     pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
-        debug!("fork ctx: {:?}", ctx);
         // 1. Find a free slot in task array.
         let slot = self.find_empty_process().ok_or(EAGAIN)?;
 
@@ -98,51 +88,44 @@ impl TaskManager {
             }),
         };
 
-        // We must drop the parent borrow before we mutably borrow below.
-        drop(parent_inner);
-
         // 4. Copy memory space from parent to child (COW).
-        {
-            let mut parent_inner = self.current().pcb.inner.borrow_mut();
-            let old_base = parent_inner.ldt.data_segment().base();
-            let code_base = parent_inner.ldt.code_segment().base();
-            assert_eq!(old_base, code_base, "separate I&D not supported");
+        let old_base = parent_inner.ldt.data_segment().base();
+        let code_base = parent_inner.ldt.code_segment().base();
+        assert_eq!(old_base, code_base, "separate I&D not supported");
 
-            let code_limit = parent_inner.ldt.code_segment().byte_limit();
-            let data_limit = parent_inner.ldt.data_segment().byte_limit();
-            assert!(
-                data_limit >= code_limit,
-                "bad data_limit: data < code (0x{:x} < 0x{:x})",
-                data_limit,
-                code_limit
-            );
+        let code_limit = parent_inner.ldt.code_segment().byte_limit();
+        let data_limit = parent_inner.ldt.data_segment().byte_limit();
+        assert!(
+            data_limit >= code_limit,
+            "bad data_limit: data < code (0x{:x} < 0x{:x})",
+            data_limit,
+            code_limit
+        );
 
-            // Set the child's LDT segment base to its linear address slot.
-            let new_base = slot as u32 * TASK_LINEAR_SIZE;
-            let mut child_inner = new_task.pcb.inner.borrow_mut();
-            child_inner.ldt.set_base(new_base);
+        // Set the child's LDT segment base to its linear address slot.
+        let new_base = slot as u32 * TASK_LINEAR_SIZE;
+        let mut child_inner = new_task.pcb.inner.borrow_mut();
+        child_inner.ldt.set_base(new_base);
 
-            // Perform the COW page table copy.
-            let child_space = parent_inner
-                .memory_space
-                .as_mut()
-                .expect("parent memory space is none, unexpected error")
-                .cow_copy(slot, data_limit)
-                .map_err(|_| EAGAIN)?;
-            child_inner.memory_space = Some(child_space);
-        }
+        // Perform the COW page table copy.
+        let child_space = parent_inner
+            .memory_space
+            .as_ref()
+            .expect("parent memory space is none, unexpected error")
+            .cow_copy(slot, data_limit)
+            .map_err(|_| EAGAIN)?;
+        child_inner.memory_space = Some(child_space);
 
         // 5. Install TSS and LDT descriptors in GDT for the new task.
-        {
-            let inner = new_task.pcb.inner.borrow();
-            let tss_addr = &inner.tss as *const TaskStateSegment as u32;
-            let ldt_addr = inner.ldt.as_ptr();
-            segment::set_tss_desc(slot as u16, tss_addr);
-            segment::set_ldt_desc(slot as u16, ldt_addr);
-        }
+        let tss_addr = &child_inner.tss as *const TaskStateSegment as u32;
+        let ldt_addr = child_inner.ldt.as_ptr();
+        segment::set_tss_desc(slot as u16, tss_addr);
+        segment::set_ldt_desc(slot as u16, ldt_addr);
 
         // 6. Mark the child as runnable and insert into the task table.
-        new_task.pcb.inner.borrow_mut().sched.state = TaskState::Running;
+        child_inner.sched.state = TaskState::Running;
+        drop(parent_inner);
+        drop(child_inner);
         self.tasks[slot] = Some(new_task);
 
         Ok(self.last_pid)
@@ -205,9 +188,7 @@ lazy_static! {
                 ldt: LocalDescriptorTable::new(0, 0x9f),
                 tss: TaskStateSegment {
                     back_link: 0,
-                    esp0: addr_of_mut!(TASK0_KERNEL_STACK)
-                        .cast::<u8>()
-                        .add(TASK0_KERNEL_STACK_SIZE) as u32,
+                    esp0: init_task_addr + PAGE_SIZE,
                     ss0: KERNEL_DS.as_u32(),
                     esp1: 0,
                     ss1: 0,

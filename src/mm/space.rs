@@ -87,7 +87,7 @@ impl MemorySpace {
     /// page table frame could not be allocated.  On failure, any partially
     /// built state is cleaned up automatically when the returned
     /// `MemorySpace` is dropped.
-    pub fn cow_copy(&mut self, child_nr: usize, data_limit: u32) -> Result<MemorySpace, ()> {
+    pub fn cow_copy(&self, child_nr: usize, data_limit: u32) -> Result<MemorySpace, ()> {
         let parent_pde_start = self.pde_base;
         let child_pde_start = child_nr * PDES_PER_PROCESS;
         let is_task0 = parent_pde_start == 0;

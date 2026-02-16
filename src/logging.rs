@@ -5,7 +5,7 @@ use core::{
     ptr,
 };
 
-use log::{Level, LevelFilter, Log, Metadata};
+use log::{LevelFilter, Log, Metadata};
 
 pub fn init() {
     // Clear the screen.
@@ -92,19 +92,7 @@ impl Log for KernelLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let color = match record.level() {
-            Level::Error => 31, // Red
-            Level::Warn => 93,  // BrightYellow
-            Level::Info => 34,  // Blue
-            Level::Debug => 32, // Green
-            Level::Trace => 90, // BrightBlack
-        };
-        println!(
-            "\u{1B}[{}m[{:>5}] {}\u{1B}[0m",
-            color,
-            record.level(),
-            record.args(),
-        );
+        println!("[{:>5}] {}", record.level(), record.args());
     }
 
     fn flush(&self) {}
