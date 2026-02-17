@@ -130,7 +130,12 @@ impl TaskManager {
         Ok(self.last_pid)
     }
 
-    pub fn schedule(&mut self) {
+    /// Select the next task and update `current` if a switch is needed.
+    ///
+    /// Returns:
+    /// - `Some(next)` if `current` changed and caller should perform a hardware switch.
+    /// - `None` if current task remains unchanged.
+    pub fn select_next(&mut self) -> Option<usize> {
         loop {
             // Pick a runnable non-idle task with the largest counter.
             // For equal counters, prefer the higher slot index.
@@ -150,14 +155,16 @@ impl TaskManager {
                 Some((next, counter)) if counter > 0 => {
                     if self.current != next {
                         self.current = next;
+                        return Some(next);
                     }
-                    return;
+                    return None;
                 }
                 None => {
                     if self.current != 0 {
                         self.current = 0;
+                        return Some(0);
                     }
-                    return;
+                    return None;
                 }
                 Some(_) => {
                     self.tasks.iter().skip(1).flatten().for_each(|task| {
@@ -169,11 +176,17 @@ impl TaskManager {
         }
     }
 
-    pub fn try_schedule(&mut self) {
+    /// Check whether current task still has runnable time slice.
+    ///
+    /// If the current task is not runnable or its counter is exhausted,
+    /// picks a new task and returns it for hardware switching.
+    pub fn select_next_if_needed(&mut self) -> Option<usize> {
         let current_task = self.current().pcb.inner.borrow();
         if current_task.sched.state != TaskState::Running || current_task.sched.counter == 0 {
             drop(current_task);
-            self.schedule();
+            self.select_next()
+        } else {
+            None
         }
     }
 

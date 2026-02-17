@@ -62,7 +62,7 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
     // Send End-Of-Interrupt to master 8259A PIC.
     outb(0x20, 0x20);
 
-    TASK_MANAGER.with_mut(|manager| {
+    let should_schedule = TASK_MANAGER.with_mut(|manager| {
         let mut should_schedule = false;
 
         {
@@ -83,8 +83,10 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
             }
         }
 
-        if should_schedule {
-            manager.schedule();
-        }
+        should_schedule
     });
+
+    if should_schedule {
+        super::schedule();
+    }
 }

@@ -22,6 +22,53 @@ unsafe extern "C" {
 pub const HZ: u32 = 100;
 const LATCH: u16 = (1193180 / HZ) as u16;
 
+/// Wrapper scheduler entry: select next task and perform hardware switch.
+#[inline]
+pub fn schedule() {
+    let next = TASK_MANAGER.with_mut(|manager| manager.select_next());
+    if let Some(next) = next {
+        switch_to(next);
+    }
+}
+
+/// Syscall-return scheduling point: switch only when current task should yield.
+#[inline]
+pub fn try_schedule() {
+    let next = TASK_MANAGER.with_mut(|manager| manager.select_next_if_needed());
+    if let Some(next) = next {
+        switch_to(next);
+    }
+}
+
+/// Perform a hardware task switch to task `next` using its TSS selector.
+///
+/// This function may not return immediately; execution can resume later when
+/// the old task is scheduled again.
+#[inline]
+fn switch_to(next: usize) {
+    /// 32-bit far pointer used by `ljmp m16:32`.
+    #[repr(C, packed)]
+    struct FarPointer {
+        offset: u32,
+        selector: u16,
+    }
+
+    debug_assert!(next < TASK_NUM);
+    let target = FarPointer {
+        // For hardware task switching, only the selector is used.
+        offset: 0,
+        selector: selectors::tss_selector(next as u16).as_u16(),
+    };
+
+    unsafe {
+        asm!(
+            "ljmp *({ptr})",
+            ptr = in(reg) (&target as *const FarPointer),
+            options(att_syntax),
+        );
+    }
+}
+
 /// Initialize the scheduler and task system.
 pub fn init() {
     // Access the TASK_MANAGER to trigger lazy initialization of task 0

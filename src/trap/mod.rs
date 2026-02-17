@@ -21,6 +21,8 @@ pub fn init() {
     set_system_gate(4, overflow);
     set_system_gate(5, bounds);
     set_trap_gate(6, invalid_op);
+    set_trap_gate(7, device_not_available);
+    set_trap_gate(9, coprocessor_segment_overrun);
 
     // Exceptions with error code
     set_trap_gate(8, double_fault);
@@ -28,10 +30,14 @@ pub fn init() {
     set_trap_gate(11, segment_not_present);
     set_trap_gate(12, stack_segment);
     set_trap_gate(13, general_protection);
+    set_trap_gate(14, page_fault);
+    set_trap_gate(16, coprocessor_error);
 
     // Reserved vectors
     set_trap_gate(15, reserved);
     for i in 17..48 {
         set_trap_gate(i, reserved);
     }
+    set_trap_gate(39, parallel_interrupt);
+    set_trap_gate(45, irq13);
 }

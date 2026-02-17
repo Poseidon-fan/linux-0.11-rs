@@ -8,7 +8,7 @@ pub use context::SyscallContext;
 pub use error::*;
 pub use handler::*;
 
-use crate::task::TASK_MANAGER;
+use crate::task;
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
 
@@ -23,7 +23,7 @@ pub extern "C" fn syscall_rust_entry(ctx: &SyscallContext) -> i32 {
     let result = handler(ctx);
 
     // Schedule if possible.
-    TASK_MANAGER.with_mut(|manager| manager.try_schedule());
+    task::try_schedule();
 
     match result {
         Ok(value) => value as i32,

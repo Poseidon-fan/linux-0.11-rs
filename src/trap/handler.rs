@@ -282,6 +282,38 @@ extern "C" fn do_general_protection(frame: &ExceptionFrame) {
     die("general protection", frame);
 }
 
+/// Temporary handler for vectors that are not implemented yet.
+///
+/// Prints the vector number first, then halts with the common trap dump.
+fn fake_unimplemented_vector(vector: u8, frame: &ExceptionFrame) -> ! {
+    error!("unimplemented trap vector: {}", vector);
+    die("unimplemented trap", frame);
+}
+
+extern "C" fn do_device_not_available(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(7, frame);
+}
+
+extern "C" fn do_coprocessor_segment_overrun(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(9, frame);
+}
+
+extern "C" fn do_page_fault(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(14, frame);
+}
+
+extern "C" fn do_coprocessor_error(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(16, frame);
+}
+
+extern "C" fn do_parallel_interrupt(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(39, frame);
+}
+
+extern "C" fn do_irq13(frame: &ExceptionFrame) {
+    fake_unimplemented_vector(45, frame);
+}
+
 trap_stub_no_error!(divide_error => do_divide_error);
 trap_stub_no_error!(debug => do_int3);
 trap_stub_no_error!(nmi => do_nmi);
@@ -289,9 +321,15 @@ trap_stub_no_error!(int3 => do_int3);
 trap_stub_no_error!(overflow => do_overflow);
 trap_stub_no_error!(bounds => do_bounds);
 trap_stub_no_error!(invalid_op => do_invalid_op);
+trap_stub_no_error!(device_not_available => do_device_not_available);
+trap_stub_no_error!(coprocessor_segment_overrun => do_coprocessor_segment_overrun);
 trap_stub_with_error!(double_fault => do_double_fault);
 trap_stub_with_error!(invalid_tss => do_invalid_tss);
 trap_stub_with_error!(segment_not_present => do_segment_not_present);
 trap_stub_with_error!(stack_segment => do_stack_segment);
 trap_stub_with_error!(general_protection => do_general_protection);
+trap_stub_with_error!(page_fault => do_page_fault);
+trap_stub_no_error!(coprocessor_error => do_coprocessor_error);
+trap_stub_no_error!(parallel_interrupt => do_parallel_interrupt);
+trap_stub_no_error!(irq13 => do_irq13);
 trap_stub_no_error!(reserved => do_reserved);
