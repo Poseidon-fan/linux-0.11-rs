@@ -49,6 +49,8 @@ impl TaskManager {
                     state: TaskState::Uninterruptible,
                     counter: parent_inner.sched.priority,
                     priority: parent_inner.sched.priority,
+                    utime: 0,
+                    stime: 0,
                 },
                 memory_space: None, // empty, will be replaced by cow_copy
                 exit_code: 0,
@@ -226,6 +228,8 @@ lazy_static! {
                     state: TaskState::Running,
                     counter: 15,
                     priority: 15,
+                    utime: 0,
+                    stime: 0,
                 },
                 memory_space: Some(MemorySpace::new(0)), // task 0
                 exit_code: 0,

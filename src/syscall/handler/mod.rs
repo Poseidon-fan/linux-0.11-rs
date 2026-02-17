@@ -22,3 +22,11 @@ macro_rules! define_syscall_handler {
         fn $fn_name($ctx: &SyscallContext) -> $ret $body
     };
 }
+
+define_syscall_handler!(
+    NR_TEST = 3,
+    fn sys_test(_ctx: &SyscallContext) -> Result<u32, u32> {
+        crate::println!("from child task");
+        Ok(0)
+    }
+);

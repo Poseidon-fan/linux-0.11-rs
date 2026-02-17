@@ -1,11 +1,13 @@
 mod manager;
 pub mod task_struct;
+mod timer;
 
-use core::arch::asm;
+use core::{arch::asm, mem};
 
 use crate::{
+    pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
-    trap::set_system_gate,
+    trap::{set_intr_gate, set_system_gate},
 };
 
 pub use manager::{TASK_MANAGER, TASK_NUM};
@@ -17,16 +19,10 @@ unsafe extern "C" {
     fn system_call();
 }
 
+pub const HZ: u32 = 100;
+const LATCH: u16 = (1193180 / HZ) as u16;
+
 /// Initialize the scheduler and task system.
-///
-/// This corresponds to `sched_init()` in the original Linux 0.11 kernel.
-/// It performs the following:
-/// 1. Set up TSS and LDT descriptors in GDT for task 0
-/// 2. Clear GDT entries for other tasks
-/// 3. Clear NT flag in EFLAGS
-/// 4. Load Task Register and LDT Register
-///
-/// Timer initialization is not handled now.
 pub fn init() {
     // Access the TASK_MANAGER to trigger lazy initialization of task 0
     let manager = TASK_MANAGER.borrow();
@@ -63,11 +59,14 @@ pub fn init() {
     // Load LDT Register with task 0's LDT selector
     segment::lldt(selectors::ldt_selector(0));
 
-    // Safety: system_call is the assembly entry point in syscall_entry.s.
-    // It must be cast because extern functions declared in `unsafe extern`
-    // blocks are typed as `unsafe extern "C" fn()`, while Handler is safe.
+    outb_p(0x36, 0x43);
+    outb_p((LATCH & 0xff) as u8, 0x40);
+    outb_p((LATCH >> 8) as u8, 0x40);
+    set_intr_gate(0x20, timer::timer_interrupt);
+    outb(inb_p(0x21) & !0x01, 0x21);
+
     set_system_gate(0x80, unsafe {
-        core::mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(system_call)
+        mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(system_call)
     });
 }
 

@@ -165,3 +165,4 @@ macro_rules! use_syscall {
 }
 
 use_syscall!(NR_FORK => fork() -> u32);
+use_syscall!(crate::syscall::NR_TEST => test() -> u32);

@@ -50,6 +50,7 @@ pub extern "C" fn rust_main() -> ! {
     (user_lib::fork().unwrap() != 0).then(|| {
         user_lib::init();
     });
+    crate::println!("from father task");
 
     #[allow(clippy::empty_loop)]
     loop {}

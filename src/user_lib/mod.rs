@@ -5,4 +5,6 @@ mod syscall;
 
 pub use syscall::*;
 
-pub fn init() {}
+pub fn init() {
+    test().unwrap();
+}

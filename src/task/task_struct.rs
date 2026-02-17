@@ -182,9 +182,16 @@ pub enum TaskState {
 }
 
 pub struct TaskSchedInfo {
+    /// Scheduling state (runnable/sleeping/etc.).
     pub state: TaskState,
+    /// Remaining time slice in timer ticks.
     pub counter: u32,
+    /// Static priority used to refill `counter`.
     pub priority: u32,
+    /// User-mode CPU time in timer ticks.
+    pub utime: u32,
+    /// Kernel-mode CPU time in timer ticks.
+    pub stime: u32,
 }
 
 impl Deref for Task {
