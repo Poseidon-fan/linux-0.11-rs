@@ -47,10 +47,9 @@ pub extern "C" fn rust_main() -> ! {
 
     sync::sti();
     sync::move_to_user_mode();
-    (user_lib::fork().unwrap() == 0).then(|| {
-        user_lib::init();
-    });
-    println!("from father task");
+    (user_lib::fork().unwrap() == 0).then(|| user_lib::init());
+
+    user_lib::test(true).unwrap();
 
     #[allow(clippy::empty_loop)]
     loop {}

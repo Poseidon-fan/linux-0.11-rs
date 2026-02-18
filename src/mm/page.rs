@@ -15,7 +15,7 @@ use core::arch::asm;
 use bitflags::bitflags;
 
 use crate::mm::{
-    address::PhysPageNum,
+    address::{PhysAddr, PhysPageNum},
     frame::{self, PhysFrame},
 };
 
@@ -70,9 +70,9 @@ pub trait PageEntry: From<u32> + Into<u32> + Copy {
     }
 
     /// Extract the physical address (page-aligned, i.e. PPN << 12).
-    fn phys_addr(self) -> u32 {
+    fn phys_addr(self) -> PhysAddr {
         let raw: u32 = self.into();
-        raw & 0xFFFFF000
+        PhysAddr(raw & 0xFFFFF000)
     }
 
     /// Extract the flags.

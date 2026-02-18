@@ -59,6 +59,14 @@ pub fn share(ppn: PhysPageNum) -> PhysFrame {
     FRAME_ALLOCATOR.with_mut(|allocator| allocator.share(ppn))
 }
 
+/// Return the current reference count of a physical page frame.
+///
+/// For frames below [`LOW_MEM`], the allocator does not track reference
+/// counts, so this function returns `u8::MAX` as a stable sentinel.
+pub fn ref_count(ppn: PhysPageNum) -> u8 {
+    FRAME_ALLOCATOR.with_mut(|allocator| allocator.ref_count(ppn))
+}
+
 /// An owned handle to a physical page frame.
 ///
 /// Represents one reference-counted ownership stake in a physical page.
@@ -189,6 +197,14 @@ impl FrameAllocator {
         assert!(self.mem_map[idx] > 0, "Sharing a free page (ppn {})", ppn.0);
         self.mem_map[idx] += 1;
         PhysFrame { ppn }
+    }
+
+    /// Get a page's current reference count from `mem_map`.
+    fn ref_count(&self, ppn: PhysPageNum) -> u8 {
+        if ppn.0 < UNPAGED_PAGES {
+            return u8::MAX;
+        }
+        self.mem_map[(ppn.0 - UNPAGED_PAGES) as usize]
     }
 
     #[inline]

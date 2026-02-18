@@ -7,6 +7,8 @@
 use core::arch::{asm, naked_asm};
 use log::{error, info};
 
+use crate::mm::page_fault;
+
 /// Exception stack frame built by the common entry assembly stubs.
 ///
 /// ```text
@@ -282,6 +284,24 @@ extern "C" fn do_general_protection(frame: &ExceptionFrame) {
     die("general protection", frame);
 }
 
+extern "C" fn do_page_fault(frame: &ExceptionFrame) {
+    let fault_addr: u32;
+    unsafe {
+        asm!(
+            "movl %cr2, {fault_addr:e}",
+            fault_addr = out(reg) fault_addr,
+            options(att_syntax, nomem, nostack, preserves_flags),
+        );
+    }
+
+    let error_code = frame.error_code;
+    if error_code & 0x1 == 0 {
+        page_fault::handle_no_page(error_code, fault_addr);
+    } else {
+        page_fault::handle_wp_page(fault_addr);
+    }
+}
+
 /// Temporary handler for vectors that are not implemented yet.
 ///
 /// Prints the vector number first, then halts with the common trap dump.
@@ -296,10 +316,6 @@ extern "C" fn do_device_not_available(frame: &ExceptionFrame) {
 
 extern "C" fn do_coprocessor_segment_overrun(frame: &ExceptionFrame) {
     fake_unimplemented_vector(9, frame);
-}
-
-extern "C" fn do_page_fault(frame: &ExceptionFrame) {
-    fake_unimplemented_vector(14, frame);
 }
 
 extern "C" fn do_coprocessor_error(frame: &ExceptionFrame) {

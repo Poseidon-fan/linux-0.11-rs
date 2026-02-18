@@ -9,11 +9,15 @@
 //! corresponding page directory entries in the shared page directory.
 
 use alloc::collections::btree_map::BTreeMap;
+use core::ptr;
 
 use crate::mm::{
-    address::LinPageNum,
+    address::{LinAddr, LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
-    page::{self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageTable, PageTableEntry},
+    page::{
+        self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable,
+        PageTableEntry,
+    },
 };
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
@@ -55,6 +59,68 @@ impl MemorySpace {
             page_tables: [const { None }; PDES_PER_PROCESS],
             data_frames: BTreeMap::new(),
             pde_base: task_nr * PDES_PER_PROCESS,
+        }
+    }
+
+    /// Handle a write-protect page fault for this process address space.
+    ///
+    /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
+    /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
+    pub fn handle_wp_fault(&mut self, fault_addr: LinAddr) {
+        let pte = self.find_pte(fault_addr.floor()).expect("find pte failed");
+        let old_phys_addr = pte.phys_addr();
+        let old_ppn = old_phys_addr.into();
+        if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
+            let new_flag = pte.flags().union(PageFlags::WRITABLE);
+            *pte = PageTableEntry::new(old_ppn, new_flag);
+            page::invalidate_tlb();
+            return;
+        }
+        let Some(new_frame) = frame::alloc() else {
+            todo!("oom")
+        };
+        let new_ppn = new_frame.ppn;
+        *pte = PageTableEntry::new(
+            new_ppn,
+            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
+        );
+        // debug_assert!(self.data_frames.contains_key(&fault_addr.floor()));
+        self.data_frames.insert(fault_addr.floor(), new_frame);
+        page::invalidate_tlb();
+        Self::copy_page(old_ppn, new_ppn);
+    }
+
+    /// Find the mutable PTE for a linear page.
+    ///
+    /// Returns `None` when the page is outside this memory space range or
+    /// when the corresponding PDE is not present.
+    fn find_pte(&mut self, page: LinPageNum) -> Option<&mut PageTableEntry> {
+        let pde_index = page.pde_index();
+        if !(self.pde_base..self.pde_base + PDES_PER_PROCESS).contains(&pde_index) {
+            return None;
+        }
+
+        let pde = page::read_pde(pde_index);
+        if !pde.is_present() {
+            return None;
+        }
+
+        let page_table_phys: PhysAddr = pde.ppn().into();
+        let page_table =
+            unsafe { &mut *page_table_phys.as_mut_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>() };
+        Some(&mut page_table[page.pte_index()])
+    }
+
+    /// Copy one 4KB page from `src_page` to `dst_page`.
+    fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
+        let src_phys: PhysAddr = src_page.into();
+        let dst_phys: PhysAddr = dst_page.into();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                src_phys.as_ptr::<u8>(),
+                dst_phys.as_mut_ptr::<u8>(),
+                PAGE_SIZE as usize,
+            )
         }
     }
 
@@ -103,7 +169,7 @@ impl MemorySpace {
                 continue;
             }
 
-            assert!(
+            debug_assert!(
                 !page::read_pde(child_pde_start + i).is_present(),
                 "cow_copy: child PDE {} already present",
                 child_pde_start + i
@@ -113,7 +179,9 @@ impl MemorySpace {
 
             // Interpret the parent's page table as a PTE slice.
             let parent_ptes = unsafe {
-                &mut *(parent_pde.phys_addr() as *mut [PageTableEntry; ENTRIES_PER_TABLE])
+                &mut *(parent_pde
+                    .phys_addr()
+                    .as_mut_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>())
             };
 
             // Task 0 special case: only copy first 640KB.
@@ -135,15 +203,20 @@ impl MemorySpace {
                 *child_pte = cow_pte;
 
                 // Pages >= LOW_MEM participate in COW reference counting.
-                let phys = parent_pte.phys_addr();
-                if phys >= LOW_MEM {
+                let parent_ppn = parent_pte.ppn();
+                let parent_phys: PhysAddr = parent_ppn.into();
+                if parent_phys.as_u32() >= LOW_MEM {
                     *parent_pte = cow_pte;
-                    let lin_page = LinPageNum::from(
-                        (child_pde_start + i) as u32 * ENTRIES_PER_TABLE as u32 + j as u32,
+                    let parent_lin_page = LinPageNum::from_indices(parent_pde_start + i, j);
+                    assert!(
+                        self.data_frames.contains_key(&parent_lin_page),
+                        "cow_copy invariant broken: parent missing frame handle for lin_page={} phys={:#x} pde_base={}",
+                        parent_lin_page.as_u32(),
+                        parent_phys.as_u32(),
+                        self.pde_base
                     );
-                    child
-                        .data_frames
-                        .insert(lin_page, frame::share((phys / PAGE_SIZE).into()));
+                    let lin_page = LinPageNum::from_indices(child_pde_start + i, j);
+                    child.data_frames.insert(lin_page, frame::share(parent_ppn));
                 }
             }
 

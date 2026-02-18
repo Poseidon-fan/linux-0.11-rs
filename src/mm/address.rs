@@ -121,12 +121,118 @@ impl From<PhysAddr> for PhysPageNum {
     }
 }
 
+impl From<LinAddr> for LinPageNum {
+    fn from(value: LinAddr) -> Self {
+        value.floor()
+    }
+}
+
+impl From<LinPageNum> for LinAddr {
+    fn from(value: LinPageNum) -> Self {
+        value.addr()
+    }
+}
+
+impl From<PhysPageNum> for PhysAddr {
+    fn from(value: PhysPageNum) -> Self {
+        value.addr()
+    }
+}
+
+impl LinAddr {
+    /// Return this linear address as raw `u32`.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Round this linear address down to the nearest page boundary.
+    pub fn align_down(self) -> Self {
+        Self(self.0 & !(PAGE_SIZE - 1))
+    }
+
+    /// Return the linear page number containing this address.
+    pub fn floor(self) -> LinPageNum {
+        LinPageNum(self.0 / PAGE_SIZE)
+    }
+
+    /// Return the byte offset within the 4KB page.
+    pub fn page_offset(self) -> u32 {
+        self.0 & (PAGE_SIZE - 1)
+    }
+
+    /// Return the page-directory index (top 10 bits).
+    pub fn pde_index(self) -> usize {
+        ((self.0 >> 22) & 0x3FF) as usize
+    }
+
+    /// Return the page-table index (middle 10 bits).
+    pub fn pte_index(self) -> usize {
+        ((self.0 >> 12) & 0x3FF) as usize
+    }
+}
+
 impl PhysAddr {
+    /// Return this physical address as raw `u32`.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
     pub fn floor(&self) -> PhysPageNum {
         PhysPageNum(self.0 / PAGE_SIZE)
     }
 
     pub fn page_offset(&self) -> u32 {
         self.0 & (PAGE_SIZE - 1)
+    }
+
+    /// View this physical address as a typed const pointer.
+    pub fn as_ptr<T>(self) -> *const T {
+        self.0 as *const T
+    }
+
+    /// View this physical address as a typed mut pointer.
+    pub fn as_mut_ptr<T>(self) -> *mut T {
+        self.0 as *mut T
+    }
+}
+
+impl PhysPageNum {
+    /// Return this physical page number as raw `u32`.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Convert this page number to its page-aligned physical address.
+    pub fn addr(self) -> PhysAddr {
+        PhysAddr(self.0 * PAGE_SIZE)
+    }
+}
+
+impl LinPageNum {
+    /// Return this linear page number as raw `u32`.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Build a linear page number from `(pde_index, pte_index)`.
+    pub fn from_indices(pde_index: usize, pte_index: usize) -> Self {
+        debug_assert!(pde_index < 1024);
+        debug_assert!(pte_index < 1024);
+        Self(((pde_index as u32) << 10) | pte_index as u32)
+    }
+
+    /// Return the global page-directory index of this linear page.
+    pub fn pde_index(self) -> usize {
+        (self.0 >> 10) as usize
+    }
+
+    /// Return the page-table index within the selected page directory entry.
+    pub fn pte_index(self) -> usize {
+        (self.0 & 0x3FF) as usize
+    }
+
+    /// Convert this linear page number to the page-aligned linear address.
+    pub fn addr(self) -> LinAddr {
+        LinAddr(self.0 * PAGE_SIZE)
     }
 }

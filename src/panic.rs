@@ -8,14 +8,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
                 "[kernel] Panicked at {}:{} {}",
                 location.file(),
                 location.line(),
-                info.message().as_str().ok_or("unknown panic msg").unwrap()
+                info.message()
             );
         }
         None => {
-            println!(
-                "[kernel] Panicked: {}",
-                info.message().as_str().ok_or("unknown panic msg").unwrap()
-            );
+            println!("[kernel] Panicked: {}", info.message());
         }
     }
     loop {}

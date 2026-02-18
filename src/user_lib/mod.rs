@@ -5,6 +5,8 @@ mod syscall;
 
 pub use syscall::*;
 
-pub fn init() {
-    test().unwrap();
+pub fn init() -> ! {
+    test(false).unwrap();
+    #[allow(clippy::empty_loop)]
+    loop {}
 }

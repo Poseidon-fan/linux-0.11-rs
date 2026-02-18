@@ -2,6 +2,7 @@ pub mod address;
 pub mod frame;
 mod heap;
 mod page;
+pub(crate) mod page_fault;
 pub mod space;
 
 pub fn init(start_mem: u32, end_mem: u32) {
