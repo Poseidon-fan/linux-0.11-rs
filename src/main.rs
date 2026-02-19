@@ -51,8 +51,9 @@ pub extern "C" fn rust_main() -> ! {
 
     user_lib::test(true).unwrap();
 
-    #[allow(clippy::empty_loop)]
-    loop {}
+    loop {
+        user_lib::pause().unwrap();
+    }
 }
 
 #[inline]
