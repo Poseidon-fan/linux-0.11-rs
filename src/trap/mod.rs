@@ -1,4 +1,3 @@
-#![allow(unused)]
 //! Trap (Exception/Interrupt) handling.
 
 mod gate;
@@ -6,7 +5,6 @@ mod handler;
 
 pub use gate::{set_intr_gate, set_system_gate, set_trap_gate};
 use handler::*;
-use log::info;
 
 /// Initialize trap handlers.
 ///

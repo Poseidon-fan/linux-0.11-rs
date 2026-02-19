@@ -15,7 +15,6 @@
 //! If data is accessed by both syscall handlers and interrupt handlers,
 //! you must manually use [`cli`]/[`sti`] to protect critical sections.
 
-#![allow(dead_code)]
 use core::{
     arch::{asm, naked_asm},
     cell::{Ref, RefCell, RefMut},

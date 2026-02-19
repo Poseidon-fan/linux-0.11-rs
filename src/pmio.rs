@@ -4,7 +4,6 @@ use core::arch::asm;
 
 /// Write a byte to the specified I/O port.
 #[inline]
-#[allow(dead_code)]
 pub fn outb(value: u8, port: u16) {
     unsafe {
         asm!(
@@ -18,7 +17,6 @@ pub fn outb(value: u8, port: u16) {
 
 /// Read a byte from the specified I/O port.
 #[inline]
-#[allow(dead_code)]
 pub fn inb(port: u16) -> u8 {
     unsafe {
         let value: u8;
