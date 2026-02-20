@@ -1,6 +1,7 @@
 mod manager;
 pub mod task_struct;
 mod timer;
+pub mod wait_queue;
 
 use core::{arch::asm, mem};
 
