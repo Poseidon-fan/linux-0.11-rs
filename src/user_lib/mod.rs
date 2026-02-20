@@ -7,6 +7,9 @@ pub use syscall::*;
 
 pub fn init() -> ! {
     test(false).unwrap();
+    if fork().unwrap() == 0 {
+        test(false).unwrap();
+    }
     #[allow(clippy::empty_loop)]
     loop {}
 }

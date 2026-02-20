@@ -10,10 +10,12 @@
 //! - Non-preemptive kernel: kernel code won't be preempted by scheduler
 //! - Runtime borrow checking: `RefCell` panics on conflicting borrows
 //!
-//! # Note
+//! # Interrupt protection
 //!
-//! If data is accessed by both syscall handlers and interrupt handlers,
-//! you must manually use [`cli`]/[`sti`] to protect critical sections.
+//! If data is accessed by both normal kernel paths and interrupt handlers,
+//! use [`KernelCell::irq_session`] or [`save_irq`] to protect the critical
+//! section.  Code running inside an interrupt gate (where hardware has
+//! already masked interrupts) can use the plain [`KernelCell::session`].
 
 use core::{
     arch::{asm, naked_asm},
@@ -35,6 +37,39 @@ pub fn sti() {
 pub fn cli() {
     unsafe {
         asm!("cli", options(att_syntax));
+    }
+}
+
+/// RAII guard that restores saved EFLAGS (and therefore the interrupt
+/// state) when dropped.
+pub struct IrqGuard {
+    saved_flags: u32,
+}
+
+impl Drop for IrqGuard {
+    fn drop(&mut self) {
+        restore_irq(self.saved_flags);
+    }
+}
+
+/// Save the current EFLAGS and disable interrupts.
+///
+/// Returns an [`IrqGuard`] whose [`Drop`] impl restores the original
+/// interrupt state, making this safe to nest.
+#[inline]
+pub fn save_irq() -> IrqGuard {
+    let flags: u32;
+    unsafe {
+        asm!("pushfl", "popl {0}", "cli", out(reg) flags, options(att_syntax));
+    }
+    IrqGuard { saved_flags: flags }
+}
+
+/// Manually restore previously saved EFLAGS (interrupt state).
+#[inline]
+pub fn restore_irq(flags: u32) {
+    unsafe {
+        asm!("pushl {0}", "popfl", in(reg) flags, options(att_syntax));
     }
 }
 
@@ -138,6 +173,19 @@ impl<T> KernelCell<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
+        f(&mut *self.borrow_mut())
+    }
+
+    /// Like [`with_mut`](Self::with_mut), but disables interrupts for the
+    /// duration of the closure and restores the previous interrupt state
+    /// afterwards.  Use this when the protected data may also be accessed
+    /// from an interrupt handler.
+    #[inline]
+    pub fn with_mut_irqsave<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let _guard = save_irq();
         f(&mut *self.borrow_mut())
     }
 }

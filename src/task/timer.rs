@@ -62,9 +62,9 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
     // Send End-Of-Interrupt to master 8259A PIC.
     outb(0x20, 0x20);
 
-    let should_schedule = TASK_MANAGER.with_mut(|manager| {
-        let mut should_schedule = false;
-
+    // Interrupts are already masked by the interrupt gate, so plain
+    // `session` is sufficient here.
+    let next = TASK_MANAGER.with_mut(|manager| {
         {
             let mut current = manager.current().pcb.inner.borrow_mut();
 
@@ -78,15 +78,15 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
                 current.sched.counter -= 1;
             }
 
-            if current.sched.counter == 0 && cpl != 0 {
-                should_schedule = true;
+            if current.sched.counter > 0 || cpl == 0 {
+                return None;
             }
         }
 
-        should_schedule
+        manager.schedule()
     });
 
-    if should_schedule {
-        super::schedule();
+    if let Some(next) = next {
+        super::switch_to(next);
     }
 }

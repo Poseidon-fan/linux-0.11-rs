@@ -8,7 +8,7 @@ pub use context::SyscallContext;
 pub use error::*;
 pub use handler::*;
 
-use crate::task;
+use crate::task::{self, TASK_MANAGER, task_struct::TaskState};
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
 
@@ -22,8 +22,19 @@ pub extern "C" fn syscall_rust_entry(ctx: &SyscallContext) -> i32 {
     let handler = SYSCALL_TABLE[ctx.syscall_nr() as usize];
     let result = handler(ctx);
 
-    // Schedule if possible.
-    task::try_schedule();
+    // Schedule if needed.
+    let next = TASK_MANAGER.with_mut_irqsave(|m| {
+        let current = m.current().pcb.inner.borrow();
+        if current.sched.state != TaskState::Running || current.sched.counter == 0 {
+            drop(current);
+            m.schedule()
+        } else {
+            None
+        }
+    });
+    if let Some(next) = next {
+        task::switch_to(next);
+    }
 
     match result {
         Ok(value) => value as i32,
