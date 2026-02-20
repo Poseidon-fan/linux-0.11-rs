@@ -63,7 +63,7 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
     outb(0x20, 0x20);
 
     // Interrupts are already masked by the interrupt gate, so plain
-    // `session` is sufficient here.
+    // `with_mut` is sufficient here.
     let next = TASK_MANAGER.with_mut(|manager| {
         {
             let mut current = manager.current().pcb.inner.borrow_mut();
