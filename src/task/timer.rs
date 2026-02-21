@@ -69,9 +69,9 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
             let mut current = manager.current().pcb.inner.borrow_mut();
 
             if cpl != 0 {
-                current.sched.utime = current.sched.utime.wrapping_add(1);
+                current.acct.utime = current.acct.utime.wrapping_add(1);
             } else {
-                current.sched.stime = current.sched.stime.wrapping_add(1);
+                current.acct.stime = current.acct.stime.wrapping_add(1);
             }
 
             if current.sched.counter > 0 {

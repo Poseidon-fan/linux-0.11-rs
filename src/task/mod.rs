@@ -8,6 +8,7 @@ use core::{arch::asm, mem};
 use crate::{
     pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
+    task::task_struct::TaskState,
     trap::{set_intr_gate, set_system_gate},
 };
 
@@ -56,6 +57,53 @@ pub fn switch_to(next: usize) {
     }
 }
 
+/// Terminate the current task and switch to another runnable task.
+///
+/// Interrupt handling:
+/// - The critical section is wrapped by `with_mut_irqsave`, preventing IRQ
+///   re-entry while `TASK_MANAGER` is mutably borrowed.
+pub fn do_exit(code: i32) -> ! {
+    let next = TASK_MANAGER.with_mut_irqsave(|manager| {
+        let current_slot = manager.current;
+        assert_ne!(current_slot, 0, "task[0] cannot exit");
+
+        let current_task = manager.tasks[current_slot]
+            .as_ref()
+            .expect("do_exit: current task missing");
+        let current_pid = current_task.pcb.pid;
+
+        // Re-parent all direct children to task 1.
+        manager
+            .tasks
+            .iter()
+            .enumerate()
+            .filter(|(slot, _)| *slot != current_slot)
+            .filter_map(|(_, task)| task.as_ref())
+            .for_each(|task| {
+                let mut inner = task.pcb.inner.borrow_mut();
+                if inner.relation.father == current_pid {
+                    inner.relation.father = 1;
+                }
+            });
+
+        let mut current_inner = current_task.pcb.inner.borrow_mut();
+
+        // Setting `memory_space` to `None` releases owned page tables and data frames.
+        current_inner.memory_space = None;
+        current_inner.sched.state = TaskState::Zombie;
+        current_inner.exit_code = code;
+        drop(current_inner);
+
+        manager.schedule()
+    });
+
+    if let Some(next) = next {
+        switch_to(next);
+    }
+
+    panic!("do_exit returned unexpectedly");
+}
+
 /// Initialize the scheduler and task system.
 pub fn init() {
     // Access the TASK_MANAGER to trigger lazy initialization of task 0
@@ -75,7 +123,19 @@ pub fn init() {
 
     // Clear GDT entries for tasks 1 to TASK_NUM-1
     // Each task uses 2 GDT entries (TSS and LDT descriptor)
-    clear_gdt_entries_for_tasks();
+    for i in 1..TASK_NUM {
+        let n = i as u16;
+        // TSS entry index: FIRST_TSS_ENTRY + n * 2
+        // LDT entry index: FIRST_LDT_ENTRY + n * 2
+        let tss_index = (segment::FIRST_TSS_ENTRY + n * 2) as usize;
+        let ldt_index = (segment::FIRST_LDT_ENTRY + n * 2) as usize;
+
+        // Clear TSS and LDT descriptors
+        unsafe {
+            core::ptr::write_volatile(&mut gdt[tss_index], Descriptor::null().as_u64());
+            core::ptr::write_volatile(&mut gdt[ldt_index], Descriptor::null().as_u64());
+        }
+    }
 
     // Clear NT (Nested Task) flag in EFLAGS to prevent issues with task switching
     unsafe {
@@ -102,24 +162,4 @@ pub fn init() {
     set_system_gate(0x80, unsafe {
         mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(system_call)
     });
-}
-
-/// Clear GDT entries for tasks 1 to TASK_NUM-1.
-///
-/// Each task has 2 GDT entries (TSS descriptor and LDT descriptor).
-/// We set them all to null descriptors.
-fn clear_gdt_entries_for_tasks() {
-    for i in 1..TASK_NUM {
-        let n = i as u16;
-        // TSS entry index: FIRST_TSS_ENTRY + n * 2
-        // LDT entry index: FIRST_LDT_ENTRY + n * 2
-        let tss_index = (segment::FIRST_TSS_ENTRY + n * 2) as usize;
-        let ldt_index = (segment::FIRST_LDT_ENTRY + n * 2) as usize;
-
-        // Clear TSS and LDT descriptors
-        unsafe {
-            core::ptr::write_volatile(&mut gdt[tss_index], Descriptor::null().as_u64());
-            core::ptr::write_volatile(&mut gdt[ldt_index], Descriptor::null().as_u64());
-        }
-    }
 }

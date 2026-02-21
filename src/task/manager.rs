@@ -41,7 +41,9 @@ impl TaskManager {
         let mut new_task = Task::new().ok_or(EAGAIN)?;
 
         // 3. Initialize PCB: copy parent task's PCB and reset some fields.
-        let parent_inner = self.current().pcb.inner.borrow();
+        let parent = self.current();
+        let parent_pid = parent.pcb.pid;
+        let parent_inner = parent.pcb.inner.borrow();
         new_task.pcb = TaskControlBlock {
             pid: self.last_pid,
             inner: KernelCell::new(TaskControlBlockInner {
@@ -49,8 +51,16 @@ impl TaskManager {
                     state: TaskState::Uninterruptible,
                     counter: parent_inner.sched.priority,
                     priority: parent_inner.sched.priority,
+                },
+                relation: TaskRelationInfo {
+                    father: parent_pid,
+                    pgrp: parent_inner.relation.pgrp,
+                },
+                acct: TaskAcctInfo {
                     utime: 0,
                     stime: 0,
+                    cutime: 0,
+                    cstime: 0,
                 },
                 memory_space: None, // empty, will be replaced by cow_copy
                 exit_code: 0,
@@ -227,8 +237,13 @@ lazy_static! {
                     state: TaskState::Running,
                     counter: 15,
                     priority: 15,
+                },
+                relation: TaskRelationInfo { father: 0, pgrp: 0 },
+                acct: TaskAcctInfo {
                     utime: 0,
                     stime: 0,
+                    cutime: 0,
+                    cstime: 0,
                 },
                 memory_space: Some(MemorySpace::new(0)), // task 0
                 exit_code: 0,

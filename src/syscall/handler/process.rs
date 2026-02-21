@@ -7,6 +7,13 @@ use crate::{
 };
 
 define_syscall_handler!(
+    NR_EXIT = 1,
+    fn sys_exit(_ctx: &SyscallContext) -> Result<u32, u32> {
+        task::do_exit(0)
+    }
+);
+
+define_syscall_handler!(
     NR_FORK = 2,
     fn sys_fork(ctx: &SyscallContext) -> Result<u32, u32> {
         TASK_MANAGER.with_mut_irqsave(|manager| manager.fork(ctx))

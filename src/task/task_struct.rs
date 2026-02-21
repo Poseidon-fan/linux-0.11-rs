@@ -31,6 +31,8 @@ pub struct TaskControlBlock {
 /// immutable `pid` to enable interior mutability via [`KernelCell`].
 pub struct TaskControlBlockInner {
     pub sched: TaskSchedInfo,
+    pub relation: TaskRelationInfo,
+    pub acct: TaskAcctInfo,
     pub memory_space: Option<MemorySpace>,
     pub exit_code: i32,
     pub ldt: LocalDescriptorTable,
@@ -188,10 +190,26 @@ pub struct TaskSchedInfo {
     pub counter: u32,
     /// Static priority used to refill `counter`.
     pub priority: u32,
+}
+
+/// Process relationship fields from Linux 0.11 task_struct.
+pub struct TaskRelationInfo {
+    /// Parent process id.
+    pub father: u32,
+    /// Process group id.
+    pub pgrp: u32,
+}
+
+/// CPU accounting fields from Linux 0.11 task_struct.
+pub struct TaskAcctInfo {
     /// User-mode CPU time in timer ticks.
     pub utime: u32,
     /// Kernel-mode CPU time in timer ticks.
     pub stime: u32,
+    /// Aggregated waited child user-mode CPU ticks.
+    pub cutime: u32,
+    /// Aggregated waited child kernel-mode CPU ticks.
+    pub cstime: u32,
 }
 
 impl Deref for Task {
