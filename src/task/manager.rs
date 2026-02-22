@@ -1,5 +1,6 @@
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of_mut, write_bytes};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use lazy_static::lazy_static;
 
@@ -29,13 +30,13 @@ static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 pub struct TaskManager {
     pub tasks: [Option<Task>; TASK_NUM],
     pub current: usize,
-    pub last_pid: u32,
+    pub last_pid: AtomicU32,
 }
 
 impl TaskManager {
     pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
         // 1. Find a free slot in task array.
-        let slot = self.find_empty_process().ok_or(EAGAIN)?;
+        let (slot, pid) = self.find_empty_process().ok_or(EAGAIN)?;
 
         // 2. Allocate a new task page.
         let mut new_task = Task::new().ok_or(EAGAIN)?;
@@ -45,7 +46,7 @@ impl TaskManager {
         let parent_pid = parent.pcb.pid;
         let parent_inner = parent.pcb.inner.borrow();
         new_task.pcb = TaskControlBlock {
-            pid: self.last_pid,
+            pid,
             inner: KernelCell::new(TaskControlBlockInner {
                 sched: TaskSchedInfo {
                     state: TaskState::Uninterruptible,
@@ -137,7 +138,7 @@ impl TaskManager {
         drop(child_inner);
         self.tasks[slot] = Some(new_task);
 
-        Ok(self.last_pid)
+        Ok(pid)
     }
 
     /// Pick the best runnable task and update `current`.
@@ -198,25 +199,31 @@ impl TaskManager {
     /// found that no existing task uses, then scans `tasks[1..]` for the
     /// first empty slot.
     ///
-    /// Returns the slot index on success (`self.last_pid` holds the new PID).
+    /// Returns `(slot, pid)` on success.
     /// Returns `None` if no empty slot is available.
-    fn find_empty_process(&mut self) -> Option<usize> {
+    fn find_empty_process(&self) -> Option<(usize, u32)> {
         // Step 1: find a unique PID not used by any existing task.
-        'retry: loop {
-            self.last_pid = self.last_pid.wrapping_add(1);
-            if self.last_pid == 0 {
-                self.last_pid = 1;
-            }
+        let pid = 'retry: loop {
+            let previous = self
+                .last_pid
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+                    Some(last.wrapping_add(1).max(1))
+                })
+                .expect("fetch_update with unconditional update should never fail");
+            let next_pid = previous.wrapping_add(1).max(1);
+
             for task in self.tasks.iter().flatten() {
-                if task.pcb.pid == self.last_pid {
+                if task.pcb.pid == next_pid {
                     continue 'retry;
                 }
             }
-            break;
-        }
+            break next_pid;
+        };
 
         // Step 2: find an empty slot in tasks[1..].
-        (1..TASK_NUM).find(|&i| self.tasks[i].is_none())
+        (1..TASK_NUM)
+            .find(|&i| self.tasks[i].is_none())
+            .map(|slot| (slot, pid))
     }
 }
 
@@ -287,6 +294,10 @@ lazy_static! {
         let mut tasks: [Option<Task>; TASK_NUM] = [const { None }; TASK_NUM];
         tasks[0] = Some(task0);
 
-        KernelCell::new(TaskManager { tasks, current: 0, last_pid: 0 })
+        KernelCell::new(TaskManager {
+            tasks,
+            current: 0,
+            last_pid: AtomicU32::new(0),
+        })
     };
 }
