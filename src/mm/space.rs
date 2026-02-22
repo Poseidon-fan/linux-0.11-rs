@@ -12,7 +12,7 @@ use alloc::collections::btree_map::BTreeMap;
 use core::ptr;
 
 use crate::mm::{
-    address::{LinAddr, LinPageNum, PhysAddr, PhysPageNum},
+    address::{LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
     page::{
         self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable,
@@ -62,12 +62,12 @@ impl MemorySpace {
         }
     }
 
-    /// Handle a write-protect page fault for this process address space.
+    /// Ensure the faulting page mapping becomes writable.
     ///
     /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
     /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
-    pub fn handle_wp_fault(&mut self, fault_addr: LinAddr) {
-        let pte = self.find_pte(fault_addr.floor()).expect("find pte failed");
+    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) {
+        let pte = self.find_pte(fault_page).expect("find pte failed");
         let old_phys_addr = pte.phys_addr();
         let old_ppn = old_phys_addr.into();
         if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
@@ -84,8 +84,8 @@ impl MemorySpace {
             new_ppn,
             PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
         );
-        // debug_assert!(self.data_frames.contains_key(&fault_addr.floor()));
-        self.data_frames.insert(fault_addr.floor(), new_frame);
+        // debug_assert!(self.data_frames.contains_key(&fault_page));
+        self.data_frames.insert(fault_page, new_frame);
         page::invalidate_tlb();
         Self::copy_page(old_ppn, new_ppn);
     }

@@ -3,7 +3,10 @@
 //! These handlers are called from the trap layer with the minimal fault
 //! context needed by memory management logic.
 
-use crate::{mm::address::LinAddr, task::TASK_MANAGER};
+use crate::{
+    mm::address::{LinAddr, LinPageNum},
+    task::TASK_MANAGER,
+};
 
 /// Handle a not-present page fault (`P=0` in the CPU error code).
 ///
@@ -21,13 +24,16 @@ pub fn handle_no_page(error_code: u32, address: u32) {
 /// # Arguments
 /// - `address`: Faulting linear address from CR2.
 pub fn handle_wp_page(address: u32) {
+    // Convert raw CR2 value to typed linear address, then derive
+    // the target page through typed paging-index helpers.
     let fault_addr = LinAddr::from(address);
+    let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
     TASK_MANAGER.with_mut_irqsave(|manager| {
         let mut inner = manager.current().pcb.inner.borrow_mut();
         inner
             .memory_space
             .as_mut()
             .expect("handle_wp_page: current task has no memory space")
-            .handle_wp_fault(fault_addr)
+            .ensure_page_writable(fault_page)
     });
 }
