@@ -4,7 +4,6 @@ pub mod task_struct;
 mod timer;
 pub mod wait_queue;
 
-use alloc::sync::Arc;
 use core::{arch::asm, mem};
 
 use crate::{
@@ -14,10 +13,7 @@ use crate::{
     trap::{set_intr_gate, set_system_gate},
 };
 
-use self::{
-    current::{init_current_task, set_current_task},
-    task_struct::Task,
-};
+use self::current::{init_current_task, set_current_task};
 
 pub use current::{current_slot, current_task};
 pub use manager::{TASK_MANAGER, TASK_NUM};
@@ -32,18 +28,21 @@ unsafe extern "C" {
 pub const HZ: u32 = 100;
 const LATCH: u16 = (1193180 / HZ) as u16;
 
-/// Perform a hardware task switch to `next` using its TSS selector.
+/// Select and switch to the next runnable task.
 ///
-/// This function may not return immediately; execution can resume later
-/// when the old task is scheduled again.
+/// If no better task exists, this function returns without switching.
 #[inline]
-pub fn switch_to(next: Arc<Task>) {
+pub fn schedule() {
     /// 32-bit far pointer used by `ljmp m16:32`.
     #[repr(C, packed)]
     struct FarPointer {
         offset: u32,
         selector: u16,
     }
+
+    let Some(next) = TASK_MANAGER.exclusive(|manager| manager.select_next_task()) else {
+        return;
+    };
 
     let next_slot = next.pcb.slot;
     debug_assert!(next_slot < TASK_NUM);
@@ -70,7 +69,7 @@ pub fn switch_to(next: Arc<Task>) {
 /// - The critical section is wrapped by `KernelCell::exclusive`, preventing
 ///   IRQ re-entry while task state is mutably borrowed.
 pub fn do_exit(code: i32) -> ! {
-    let next = TASK_MANAGER.exclusive(|manager| {
+    TASK_MANAGER.exclusive(|manager| {
         let current = current_task();
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] cannot exit");
@@ -99,13 +98,8 @@ pub fn do_exit(code: i32) -> ! {
                 current_inner.exit_code = code;
             });
         }
-
-        manager.schedule()
     });
-
-    if let Some(next) = next {
-        switch_to(next);
-    }
+    schedule();
 
     panic!("do_exit returned unexpectedly");
 }

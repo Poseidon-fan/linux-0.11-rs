@@ -150,12 +150,12 @@ impl TaskManager {
         Ok(pid)
     }
 
-    /// Pick the best runnable task.
+    /// Select the best runnable task.
     ///
     /// Returns:
     /// - `Some(next)` if caller should perform a hardware switch.
     /// - `None` if current task remains unchanged.
-    pub fn schedule(&mut self) -> Option<Arc<Task>> {
+    pub(super) fn select_next_task(&self) -> Option<Arc<Task>> {
         let current_slot = task::current_slot();
         loop {
             // Pick a runnable non-idle task with the largest counter.
@@ -180,7 +180,7 @@ impl TaskManager {
                         return Some(
                             self.tasks[next]
                                 .as_ref()
-                                .expect("schedule: candidate task missing")
+                                .expect("select_next_task: candidate task missing")
                                 .clone(),
                         );
                     }
@@ -191,7 +191,7 @@ impl TaskManager {
                         return Some(
                             self.tasks[0]
                                 .as_ref()
-                                .expect("schedule: task0 missing")
+                                .expect("select_next_task: task0 missing")
                                 .clone(),
                         );
                     }

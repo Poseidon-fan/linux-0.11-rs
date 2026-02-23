@@ -11,7 +11,7 @@
 use alloc::sync::{Arc, Weak};
 
 use super::{
-    TASK_MANAGER, current_task, switch_to,
+    TASK_MANAGER, current_task, schedule,
     task_struct::{Task, TaskState, TaskState::Running},
 };
 
@@ -28,7 +28,7 @@ impl WaitQueue {
 
     /// Put current task into uninterruptible sleep.
     pub fn sleep_on(queue: &mut WaitQueue) {
-        let (next_slot, handoff_slot) = TASK_MANAGER.exclusive(|manager| {
+        let handoff_slot = TASK_MANAGER.exclusive(|_| {
             let current = current_task();
             let current_slot = current.pcb.slot;
             assert_ne!(current_slot, 0, "task[0] trying to sleep");
@@ -43,12 +43,10 @@ impl WaitQueue {
                 .inner
                 .exclusive(|inner| inner.sched.state = TaskState::Uninterruptible);
 
-            (manager.schedule(), handoff_slot)
+            handoff_slot
         });
 
-        if let Some(next) = next_slot {
-            switch_to(next);
-        }
+        schedule();
 
         // Resume the previous waiter captured before we slept.
         // Each sleeper wakes the one that used to be in the queue slot.
@@ -64,7 +62,7 @@ impl WaitQueue {
     pub fn interruptible_sleep_on(queue: &mut WaitQueue) {
         let current = current_task();
         let current_slot = current.pcb.slot;
-        let (handoff_slot, mut next_slot) = TASK_MANAGER.exclusive(|manager| {
+        let handoff_slot = TASK_MANAGER.exclusive(|_| {
             assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
             // Same handoff capture as `sleep_on`, but this path may retry.
@@ -74,20 +72,18 @@ impl WaitQueue {
                 .inner
                 .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
 
-            (handoff_slot, manager.schedule())
+            handoff_slot
         });
 
         loop {
-            if let Some(next) = next_slot {
-                switch_to(next);
-            }
+            schedule();
 
             match queue.slot.as_ref().and_then(Weak::upgrade) {
                 Some(task) if task.pcb.slot != current_slot => {
                     // Another task replaced our queue slot while we slept.
                     // Wake that task first, then mark ourselves interruptible
                     // again and schedule once more until our slot settles.
-                    next_slot = TASK_MANAGER.exclusive(|manager| {
+                    TASK_MANAGER.exclusive(|_| {
                         task.pcb
                             .inner
                             .exclusive(|inner| inner.sched.state = Running);
@@ -95,7 +91,6 @@ impl WaitQueue {
                             .pcb
                             .inner
                             .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
-                        manager.schedule()
                     });
                 }
                 _ => {

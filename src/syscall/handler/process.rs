@@ -27,10 +27,7 @@ define_syscall_handler!(
             .pcb
             .inner
             .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
-        let next = TASK_MANAGER.exclusive(|manager| manager.schedule());
-        if let Some(next) = next {
-            task::switch_to(next);
-        }
+        task::schedule();
         Ok(0)
     }
 );

@@ -4,7 +4,7 @@ use core::{arch::naked_asm, ptr};
 
 use crate::{
     pmio::outb,
-    task::{TASK_MANAGER, current_task},
+    task::{self, current_task},
 };
 
 /// Number of timer ticks since boot.
@@ -83,15 +83,7 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
         })
     };
 
-    // Safety: IRQ0 runs through an interrupt gate, so hardware already
-    // masked interrupts on entry. The schedule path also uses unchecked API.
-    let next = if should_schedule {
-        unsafe { TASK_MANAGER.exclusive_unchecked(|manager| manager.schedule()) }
-    } else {
-        None
-    };
-
-    if let Some(next) = next {
-        super::switch_to(next);
+    if should_schedule {
+        task::schedule();
     }
 }
