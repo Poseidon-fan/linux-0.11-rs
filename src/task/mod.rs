@@ -1,8 +1,10 @@
+pub mod current;
 mod manager;
 pub mod task_struct;
 mod timer;
 pub mod wait_queue;
 
+use alloc::sync::Arc;
 use core::{arch::asm, mem};
 
 use crate::{
@@ -12,6 +14,12 @@ use crate::{
     trap::{set_intr_gate, set_system_gate},
 };
 
+use self::{
+    current::{init_current_task, set_current_task},
+    task_struct::Task,
+};
+
+pub use current::{current_slot, current_task};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 
 unsafe extern "C" {
@@ -24,16 +32,12 @@ unsafe extern "C" {
 pub const HZ: u32 = 100;
 const LATCH: u16 = (1193180 / HZ) as u16;
 
-/// Perform a hardware task switch to task `next` using its TSS selector.
-///
-/// This must be called **after** `TaskManager::schedule()` has updated
-/// `current` and the `TASK_MANAGER` borrow has been released, so that
-/// interrupt handlers can safely re-borrow the manager.
+/// Perform a hardware task switch to `next` using its TSS selector.
 ///
 /// This function may not return immediately; execution can resume later
 /// when the old task is scheduled again.
 #[inline]
-pub fn switch_to(next: usize) {
+pub fn switch_to(next: Arc<Task>) {
     /// 32-bit far pointer used by `ljmp m16:32`.
     #[repr(C, packed)]
     struct FarPointer {
@@ -41,11 +45,14 @@ pub fn switch_to(next: usize) {
         selector: u16,
     }
 
-    debug_assert!(next < TASK_NUM);
+    let next_slot = next.pcb.slot;
+    debug_assert!(next_slot < TASK_NUM);
+    // Publish software-visible current task before hardware task switch.
+    set_current_task(&next);
     let target = FarPointer {
         // For hardware task switching, only the selector is used.
         offset: 0,
-        selector: selectors::tss_selector(next as u16).as_u16(),
+        selector: selectors::tss_selector(next_slot as u16).as_u16(),
     };
 
     unsafe {
@@ -60,17 +67,14 @@ pub fn switch_to(next: usize) {
 /// Terminate the current task and switch to another runnable task.
 ///
 /// Interrupt handling:
-/// - The critical section is wrapped by `with_mut_irqsave`, preventing IRQ
-///   re-entry while `TASK_MANAGER` is mutably borrowed.
+/// - The critical section is wrapped by `KernelCell::exclusive`, preventing
+///   IRQ re-entry while task state is mutably borrowed.
 pub fn do_exit(code: i32) -> ! {
-    let next = TASK_MANAGER.with_mut_irqsave(|manager| {
-        let current_slot = manager.current;
+    let next = TASK_MANAGER.exclusive(|manager| {
+        let current = current_task();
+        let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] cannot exit");
-
-        let current_task = manager.tasks[current_slot]
-            .as_ref()
-            .expect("do_exit: current task missing");
-        let current_pid = current_task.pcb.pid;
+        let current_pid = current.pcb.pid;
 
         // Re-parent all direct children to task 1.
         manager
@@ -79,20 +83,22 @@ pub fn do_exit(code: i32) -> ! {
             .enumerate()
             .filter(|(slot, _)| *slot != current_slot)
             .filter_map(|(_, task)| task.as_ref())
-            .for_each(|task| {
-                let mut inner = task.pcb.inner.borrow_mut();
-                if inner.relation.father == current_pid {
-                    inner.relation.father = 1;
-                }
+            .for_each(|task| unsafe {
+                task.pcb.inner.exclusive_unchecked(|inner| {
+                    if inner.relation.father == current_pid {
+                        inner.relation.father = 1;
+                    }
+                });
             });
 
-        let mut current_inner = current_task.pcb.inner.borrow_mut();
-
-        // Setting `memory_space` to `None` releases owned page tables and data frames.
-        current_inner.memory_space = None;
-        current_inner.sched.state = TaskState::Zombie;
-        current_inner.exit_code = code;
-        drop(current_inner);
+        unsafe {
+            current.pcb.inner.exclusive_unchecked(|current_inner| {
+                // Setting `memory_space` to `None` releases owned page tables and data frames.
+                current_inner.memory_space = None;
+                current_inner.sched.state = TaskState::Zombie;
+                current_inner.exit_code = code;
+            });
+        }
 
         manager.schedule()
     });
@@ -106,16 +112,24 @@ pub fn do_exit(code: i32) -> ! {
 
 /// Initialize the scheduler and task system.
 pub fn init() {
-    // Access the TASK_MANAGER to trigger lazy initialization of task 0
-    let manager = TASK_MANAGER.borrow();
-    let task0 = manager.tasks[0].as_ref().expect("task 0 should exist");
-
-    // Get addresses of task 0's TSS and LDT
-    let task0_inner = task0.pcb.inner.borrow();
-    let tss_addr = &task0_inner.tss as *const _ as u32;
-    let ldt_addr = &task0_inner.ldt as *const _ as u32;
-    drop(task0_inner);
-    drop(manager);
+    // Access TASK_MANAGER before TR is initialized.
+    // Safety: boot path is single-flow and no IRQ-driven re-entry can contend here.
+    let (task0, tss_addr, ldt_addr) = unsafe {
+        TASK_MANAGER.exclusive_unchecked(|manager| {
+            let task0 = manager.tasks[0]
+                .as_ref()
+                .expect("task 0 should exist")
+                .clone();
+            let (tss_addr, ldt_addr) = task0.pcb.inner.exclusive_unchecked(|task0_inner| {
+                (
+                    &task0_inner.tss as *const _ as u32,
+                    &task0_inner.ldt as *const _ as u32,
+                )
+            });
+            (task0, tss_addr, ldt_addr)
+        })
+    };
+    init_current_task(&task0);
 
     // Set TSS and LDT descriptors for task 0 in GDT
     segment::set_tss_desc(0, tss_addr);

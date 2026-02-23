@@ -21,7 +21,11 @@ const BITMAP_WORD_BITS: usize = u32::BITS as usize;
 const FREE_BITMAP_WORDS: usize = (PAGING_PAGES as usize).div_ceil(BITMAP_WORD_BITS);
 
 pub fn init(start_mem: u32, end_mem: u32) {
-    FRAME_ALLOCATOR.with_mut(|a| a.init(start_mem, end_mem));
+    // Safety: frame allocator bootstrap runs before task::init in a single
+    // boot flow, so no re-entrant access can contend here.
+    unsafe {
+        FRAME_ALLOCATOR.exclusive_unchecked(|a| a.init(start_mem, end_mem));
+    }
 
     #[cfg(debug_assertions)]
     frame_test();
@@ -32,7 +36,7 @@ pub fn init(start_mem: u32, end_mem: u32) {
 /// Returns `None` if no free frames remain.  The page's reference count
 /// in `mem_map` is set to 1.
 pub fn alloc() -> Option<PhysFrame> {
-    FRAME_ALLOCATOR.with_mut(|allocator| allocator.alloc())
+    FRAME_ALLOCATOR.exclusive(|allocator| allocator.alloc())
 }
 
 /// Allocate a contiguous run of fresh physical page frames (zeroed).
@@ -40,7 +44,7 @@ pub fn alloc() -> Option<PhysFrame> {
 /// Returns `None` if no free run of `page_count` contiguous frames exists.
 /// Every page in the returned run has reference count 1.
 pub fn alloc_contiguous(page_count: usize) -> Option<PhysFrameRange> {
-    FRAME_ALLOCATOR.with_mut(|allocator| allocator.alloc_contiguous(page_count))
+    FRAME_ALLOCATOR.exclusive(|allocator| allocator.alloc_contiguous(page_count))
 }
 
 /// Create a shared reference to an existing physical page frame.
@@ -56,7 +60,7 @@ pub fn alloc_contiguous(page_count: usize) -> Option<PhysFrameRange> {
 /// Panics if `ppn` refers to a page that is not currently allocated
 /// (i.e. `mem_map` entry is 0).
 pub fn share(ppn: PhysPageNum) -> PhysFrame {
-    FRAME_ALLOCATOR.with_mut(|allocator| allocator.share(ppn))
+    FRAME_ALLOCATOR.exclusive(|allocator| allocator.share(ppn))
 }
 
 /// Return the current reference count of a physical page frame.
@@ -64,7 +68,7 @@ pub fn share(ppn: PhysPageNum) -> PhysFrame {
 /// For frames below [`LOW_MEM`], the allocator does not track reference
 /// counts, so this function returns `u8::MAX` as a stable sentinel.
 pub fn ref_count(ppn: PhysPageNum) -> u8 {
-    FRAME_ALLOCATOR.with_mut(|allocator| allocator.ref_count(ppn))
+    FRAME_ALLOCATOR.exclusive(|allocator| allocator.ref_count(ppn))
 }
 
 /// An owned handle to a physical page frame.
@@ -98,14 +102,14 @@ struct FrameAllocator {
 
 impl Drop for PhysFrame {
     fn drop(&mut self) {
-        FRAME_ALLOCATOR.with_mut(|allocator| allocator.dealloc(self.ppn));
+        FRAME_ALLOCATOR.exclusive(|allocator| allocator.dealloc(self.ppn));
     }
 }
 
 impl Drop for PhysFrameRange {
     fn drop(&mut self) {
         FRAME_ALLOCATOR
-            .with_mut(|allocator| allocator.dealloc_range(self.start_ppn, self.page_count));
+            .exclusive(|allocator| allocator.dealloc_range(self.start_ppn, self.page_count));
     }
 }
 
@@ -279,32 +283,53 @@ static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAlloca
 
 #[allow(unused)]
 pub fn frame_test() {
-    // Test 1: Allocate a frame
-    let frame1 = alloc().expect("Failed to allocate frame 1");
-    let ppn1 = frame1.ppn.0;
+    use core::mem::ManuallyDrop;
 
-    // Test 2: Allocate another frame, should have lower ppn (alloc from high to low)
-    let frame2 = alloc().expect("Failed to allocate frame 2");
-    let ppn2 = frame2.ppn.0;
-    assert!(ppn2 < ppn1, "Frame 2 should have lower ppn than frame 1");
+    // Safety: debug self-test is called from `init()` before task::init.
+    // This path must use unchecked access and explicit cleanup.
+    unsafe {
+        FRAME_ALLOCATOR.exclusive_unchecked(|allocator| {
+            // Test 1: Allocate a frame.
+            let frame1 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 1"));
+            let ppn1 = frame1.ppn.0;
 
-    // Test 3: Drop frame1, then allocate again, should reuse ppn1
-    drop(frame1);
-    let frame3 = alloc().expect("Failed to allocate frame 3");
-    let ppn3 = frame3.ppn.0;
-    assert_eq!(ppn3, ppn1, "Frame 3 should reuse ppn of dropped frame 1");
+            // Test 2: Allocate another frame, should have lower ppn (high-to-low allocation).
+            let frame2 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 2"));
+            let ppn2 = frame2.ppn.0;
+            assert!(ppn2 < ppn1, "Frame 2 should have lower ppn than frame 1");
 
-    // Test 4: Allocate 2 contiguous frames.
-    let run = alloc_contiguous(2).expect("Failed to allocate 2 contiguous frames");
-    assert_eq!(run.page_count, 2, "Run length should be 2 pages");
-    drop(run);
+            // Test 3: Free frame1 manually, then allocate again and expect reuse.
+            allocator.dealloc(frame1.ppn);
+            let frame3 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 3"));
+            let ppn3 = frame3.ppn.0;
+            assert_eq!(ppn3, ppn1, "Frame 3 should reuse ppn of dropped frame 1");
 
-    // Test 5: Allocate contiguous frames again (allocator should still work).
-    let run2 = alloc_contiguous(2).expect("Failed to re-allocate 2 contiguous frames");
-    assert_eq!(
-        run2.page_count, 2,
-        "Re-allocated run length should be 2 pages"
-    );
+            // Test 4: Allocate and free 2 contiguous frames.
+            let run = ManuallyDrop::new(
+                allocator
+                    .alloc_contiguous(2)
+                    .expect("Failed to allocate run"),
+            );
+            assert_eq!(run.page_count, 2, "Run length should be 2 pages");
+            allocator.dealloc_range(run.start_ppn, run.page_count);
+
+            // Test 5: Allocate contiguous frames again (allocator should still work).
+            let run2 = ManuallyDrop::new(
+                allocator
+                    .alloc_contiguous(2)
+                    .expect("Failed to re-allocate 2 contiguous frames"),
+            );
+            assert_eq!(
+                run2.page_count, 2,
+                "Re-allocated run length should be 2 pages"
+            );
+
+            // Cleanup for handles wrapped in `ManuallyDrop`.
+            allocator.dealloc(frame2.ppn);
+            allocator.dealloc(frame3.ppn);
+            allocator.dealloc_range(run2.start_ppn, run2.page_count);
+        });
+    }
 
     println!("[frame_test] Frame allocator test passed!");
 }

@@ -1,22 +1,23 @@
 //! Single-slot wait queue primitives.
 //!
-//! The queue stores one waiting task slot in `slot`.
+//! The queue stores one waiting task in `slot` as a weak reference.
 //! Sleep operations replace this slot with the current task and perform
 //! handoff wakeups after rescheduling.
 //!
 //! Synchronization contract:
-//! - These APIs do not disable interrupts internally.
-//! - Callers are responsible for protecting call sites where interrupt
-//!   re-entry could contend on `TASK_MANAGER`.
+//! - `TASK_MANAGER` access is wrapped by `KernelCell::exclusive`.
+//! - `queue` itself is protected by the caller through `&mut WaitQueue`.
+
+use alloc::sync::{Arc, Weak};
 
 use super::{
-    TASK_MANAGER, switch_to,
-    task_struct::{TaskState, TaskState::Running},
+    TASK_MANAGER, current_task, switch_to,
+    task_struct::{Task, TaskState, TaskState::Running},
 };
 
 /// Single-slot wait queue.
 pub struct WaitQueue {
-    slot: Option<usize>,
+    slot: Option<Weak<Task>>,
 }
 
 impl WaitQueue {
@@ -27,18 +28,20 @@ impl WaitQueue {
 
     /// Put current task into uninterruptible sleep.
     pub fn sleep_on(queue: &mut WaitQueue) {
-        let (next_slot, handoff_slot) = TASK_MANAGER.with_mut(|manager| {
-            let current_slot = manager.current;
+        let (next_slot, handoff_slot) = TASK_MANAGER.exclusive(|manager| {
+            let current = current_task();
+            let current_slot = current.pcb.slot;
             assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
             // `queue.slot` is a single shared entry.
             // Replacing it returns the previous waiter, which we keep in a
             // stack-local `handoff_slot` and wake after we run again.
             // This stack-local handoff is what forms the wakeup chain.
-            let handoff_slot = queue.slot.replace(current_slot);
-            if let Some(task) = manager.tasks.get(current_slot).and_then(Option::as_ref) {
-                task.pcb.inner.borrow_mut().sched.state = TaskState::Uninterruptible;
-            }
+            let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+            current
+                .pcb
+                .inner
+                .exclusive(|inner| inner.sched.state = TaskState::Uninterruptible);
 
             (manager.schedule(), handoff_slot)
         });
@@ -49,8 +52,8 @@ impl WaitQueue {
 
         // Resume the previous waiter captured before we slept.
         // Each sleeper wakes the one that used to be in the queue slot.
-        if let Some(slot) = handoff_slot {
-            Self::wake_slot(slot);
+        if let Some(task) = handoff_slot {
+            Self::wake_task(task);
         }
     }
 
@@ -59,17 +62,19 @@ impl WaitQueue {
     /// If another task replaces this queue slot while we are sleeping,
     /// wake that task and retry until the slot settles.
     pub fn interruptible_sleep_on(queue: &mut WaitQueue) {
-        let (current_slot, handoff_slot, mut next_slot) = TASK_MANAGER.with_mut(|manager| {
-            let current_slot = manager.current;
+        let current = current_task();
+        let current_slot = current.pcb.slot;
+        let (handoff_slot, mut next_slot) = TASK_MANAGER.exclusive(|manager| {
             assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
             // Same handoff capture as `sleep_on`, but this path may retry.
-            let handoff_slot = queue.slot.replace(current_slot);
-            if let Some(task) = manager.tasks.get(current_slot).and_then(Option::as_ref) {
-                task.pcb.inner.borrow_mut().sched.state = TaskState::Interruptible;
-            }
+            let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+            current
+                .pcb
+                .inner
+                .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
 
-            (current_slot, handoff_slot, manager.schedule())
+            (handoff_slot, manager.schedule())
         });
 
         loop {
@@ -77,19 +82,19 @@ impl WaitQueue {
                 switch_to(next);
             }
 
-            match queue.slot {
-                Some(slot) if slot != current_slot => {
+            match queue.slot.as_ref().and_then(Weak::upgrade) {
+                Some(task) if task.pcb.slot != current_slot => {
                     // Another task replaced our queue slot while we slept.
                     // Wake that task first, then mark ourselves interruptible
                     // again and schedule once more until our slot settles.
-                    next_slot = TASK_MANAGER.with_mut(|manager| {
-                        if let Some(task) = manager.tasks.get(slot).and_then(Option::as_ref) {
-                            task.pcb.inner.borrow_mut().sched.state = Running;
-                        }
-                        if let Some(task) = manager.tasks.get(current_slot).and_then(Option::as_ref)
-                        {
-                            task.pcb.inner.borrow_mut().sched.state = TaskState::Interruptible;
-                        }
+                    next_slot = TASK_MANAGER.exclusive(|manager| {
+                        task.pcb
+                            .inner
+                            .exclusive(|inner| inner.sched.state = Running);
+                        current
+                            .pcb
+                            .inner
+                            .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
                         manager.schedule()
                     });
                 }
@@ -100,24 +105,24 @@ impl WaitQueue {
             }
         }
 
-        if let Some(slot) = handoff_slot {
-            Self::wake_slot(slot);
+        if let Some(task) = handoff_slot {
+            Self::wake_task(task);
         }
     }
 
     /// Wake one waiter, if present.
     pub fn wake_up(queue: &mut WaitQueue) {
-        if let Some(slot) = queue.slot.take() {
-            Self::wake_slot(slot);
+        if let Some(task) = queue.slot.take() {
+            Self::wake_task(task);
         }
     }
 
-    /// Wake one task by slot index.
-    fn wake_slot(slot: usize) {
-        TASK_MANAGER.with_mut(|manager| {
-            if let Some(task) = manager.tasks.get(slot).and_then(Option::as_ref) {
-                task.pcb.inner.borrow_mut().sched.state = Running;
-            }
-        });
+    /// Wake one task by weak reference.
+    fn wake_task(task: Weak<Task>) {
+        if let Some(task) = task.upgrade() {
+            task.pcb
+                .inner
+                .exclusive(|inner| inner.sched.state = Running);
+        }
     }
 }

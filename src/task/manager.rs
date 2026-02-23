@@ -1,3 +1,4 @@
+use alloc::sync::Arc;
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of_mut, write_bytes};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -12,7 +13,7 @@ use crate::{
     },
     sync::KernelCell,
     syscall::{EAGAIN, SyscallContext},
-    task::task_struct::*,
+    task::{self, task_struct::*},
 };
 
 pub const TASK_NUM: usize = 64;
@@ -28,8 +29,7 @@ unsafe extern "C" {
 static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 
 pub struct TaskManager {
-    pub tasks: [Option<Task>; TASK_NUM],
-    pub current: usize,
+    pub tasks: [Option<Arc<Task>>; TASK_NUM],
     pub last_pid: AtomicU32,
 }
 
@@ -41,112 +41,122 @@ impl TaskManager {
         // 2. Allocate a new task page.
         let mut new_task = Task::new().ok_or(EAGAIN)?;
 
-        // 3. Initialize PCB: copy parent task's PCB and reset some fields.
-        let parent = self.current();
+        // 3. Snapshot parent state and create child memory space by COW.
+        let parent_slot = task::current_slot();
+        let parent = self.tasks[parent_slot]
+            .as_ref()
+            .expect("fork: current task missing");
         let parent_pid = parent.pcb.pid;
-        let parent_inner = parent.pcb.inner.borrow();
-        new_task.pcb = TaskControlBlock {
-            pid,
-            inner: KernelCell::new(TaskControlBlockInner {
-                sched: TaskSchedInfo {
-                    state: TaskState::Uninterruptible,
-                    counter: parent_inner.sched.priority,
-                    priority: parent_inner.sched.priority,
-                },
-                relation: TaskRelationInfo {
-                    father: parent_pid,
-                    pgrp: parent_inner.relation.pgrp,
-                },
-                acct: TaskAcctInfo {
-                    utime: 0,
-                    stime: 0,
-                    cutime: 0,
-                    cstime: 0,
-                },
-                memory_space: None, // empty, will be replaced by cow_copy
-                exit_code: 0,
-                ldt: parent_inner.ldt.clone(),
-                tss: TaskStateSegment {
-                    back_link: 0,
-                    esp0: new_task.stack_top(),
-                    ss0: KERNEL_DS.as_u32(),
-                    esp1: 0,
-                    ss1: 0,
-                    esp2: 0,
-                    ss2: 0,
-                    cr3: unsafe { &pg_dir as *const u8 as u32 },
-                    eip: ctx.eip,
-                    eflags: ctx.eflags,
-                    eax: 0, // child returns 0 from fork
-                    ecx: ctx.ecx,
-                    edx: ctx.edx,
-                    ebx: ctx.ebx,
-                    esp: ctx.user_esp,
-                    ebp: ctx.ebp,
-                    esi: ctx.esi,
-                    edi: ctx.edi,
-                    es: ctx.es & 0xffff,
-                    cs: ctx.cs & 0xffff,
-                    ss: ctx.user_ss & 0xffff,
-                    ds: ctx.ds & 0xffff,
-                    fs: ctx.fs & 0xffff,
-                    gs: ctx.gs & 0xffff,
-                    ldt: selectors::ldt_selector(slot as u16).as_u32(),
-                    trace_bitmap: 0x8000_0000,
-                    i387: I387Struct::empty(),
-                },
-            }),
-        };
+        let (parent_priority, parent_pgrp, parent_ldt, child_memory_space) =
+            parent.pcb.inner.exclusive(|parent_inner| {
+                let old_base = parent_inner.ldt.data_segment().base();
+                let code_base = parent_inner.ldt.code_segment().base();
+                assert_eq!(old_base, code_base, "separate I&D not supported");
 
-        // 4. Copy memory space from parent to child (COW).
-        let old_base = parent_inner.ldt.data_segment().base();
-        let code_base = parent_inner.ldt.code_segment().base();
-        assert_eq!(old_base, code_base, "separate I&D not supported");
+                let code_limit = parent_inner.ldt.code_segment().byte_limit();
+                let data_limit = parent_inner.ldt.data_segment().byte_limit();
+                assert!(
+                    data_limit >= code_limit,
+                    "bad data_limit: data < code (0x{:x} < 0x{:x})",
+                    data_limit,
+                    code_limit
+                );
 
-        let code_limit = parent_inner.ldt.code_segment().byte_limit();
-        let data_limit = parent_inner.ldt.data_segment().byte_limit();
-        assert!(
-            data_limit >= code_limit,
-            "bad data_limit: data < code (0x{:x} < 0x{:x})",
-            data_limit,
-            code_limit
-        );
+                let child_memory_space = parent_inner
+                    .memory_space
+                    .as_ref()
+                    .expect("parent memory space is none, unexpected error")
+                    .cow_copy(slot, data_limit)
+                    .map_err(|_| EAGAIN)?;
 
-        // Set the child's LDT segment base to its linear address slot.
+                Ok::<_, u32>((
+                    parent_inner.sched.priority,
+                    parent_inner.relation.pgrp,
+                    parent_inner.ldt.clone(),
+                    child_memory_space,
+                ))
+            })?;
+
+        // 4. Initialize PCB fields.
+        new_task.pcb = TaskControlBlock::new(slot, pid, TaskControlBlockInner {
+            sched: TaskSchedInfo {
+                state: TaskState::Uninterruptible,
+                counter: parent_priority,
+                priority: parent_priority,
+            },
+            relation: TaskRelationInfo {
+                father: parent_pid,
+                pgrp: parent_pgrp,
+            },
+            acct: TaskAcctInfo {
+                utime: 0,
+                stime: 0,
+                cutime: 0,
+                cstime: 0,
+            },
+            memory_space: None, // empty, set below after LDT base is adjusted
+            exit_code: 0,
+            ldt: parent_ldt,
+            tss: TaskStateSegment {
+                back_link: 0,
+                esp0: new_task.stack_top(),
+                ss0: KERNEL_DS.as_u32(),
+                esp1: 0,
+                ss1: 0,
+                esp2: 0,
+                ss2: 0,
+                cr3: unsafe { &pg_dir as *const u8 as u32 },
+                eip: ctx.eip,
+                eflags: ctx.eflags,
+                eax: 0, // child returns 0 from fork
+                ecx: ctx.ecx,
+                edx: ctx.edx,
+                ebx: ctx.ebx,
+                esp: ctx.user_esp,
+                ebp: ctx.ebp,
+                esi: ctx.esi,
+                edi: ctx.edi,
+                es: ctx.es & 0xffff,
+                cs: ctx.cs & 0xffff,
+                ss: ctx.user_ss & 0xffff,
+                ds: ctx.ds & 0xffff,
+                fs: ctx.fs & 0xffff,
+                gs: ctx.gs & 0xffff,
+                ldt: selectors::ldt_selector(slot as u16).as_u32(),
+                trace_bitmap: 0x8000_0000,
+                i387: I387Struct::empty(),
+            },
+        });
+
+        // 5. Set child LDT base, install COW memory, and prepare descriptor addresses.
         let new_base = slot as u32 * TASK_LINEAR_SIZE;
-        let mut child_inner = new_task.pcb.inner.borrow_mut();
-        child_inner.ldt.set_base(new_base);
+        let (tss_addr, ldt_addr) = new_task.pcb.inner.exclusive(|child_inner| {
+            child_inner.ldt.set_base(new_base);
+            child_inner.memory_space = Some(child_memory_space);
+            child_inner.sched.state = TaskState::Running;
+            (
+                &child_inner.tss as *const TaskStateSegment as u32,
+                child_inner.ldt.as_ptr(),
+            )
+        });
 
-        child_inner.memory_space = Some(
-            parent_inner
-                .memory_space
-                .as_ref()
-                .expect("parent memory space is none, unexpected error")
-                .cow_copy(slot, data_limit)
-                .map_err(|_| EAGAIN)?,
-        );
-
-        // 5. Install TSS and LDT descriptors in GDT for the new task.
-        let tss_addr = &child_inner.tss as *const TaskStateSegment as u32;
-        let ldt_addr = child_inner.ldt.as_ptr();
+        // 6. Install TSS and LDT descriptors in GDT for the new task.
         segment::set_tss_desc(slot as u16, tss_addr);
         segment::set_ldt_desc(slot as u16, ldt_addr);
 
-        // 6. Mark the child as runnable and insert into the task table.
-        child_inner.sched.state = TaskState::Running;
-        drop(parent_inner);
-        drop(child_inner);
-        self.tasks[slot] = Some(new_task);
+        // 7. Insert into task table as runnable.
+        self.tasks[slot] = Some(Arc::new(new_task));
 
         Ok(pid)
     }
 
-    /// Pick the best runnable task and update `current`.
+    /// Pick the best runnable task.
     ///
     /// Returns:
-    /// - `Some(next)` if `current` changed and caller should perform a hardware switch.
+    /// - `Some(next)` if caller should perform a hardware switch.
     /// - `None` if current task remains unchanged.
-    pub fn schedule(&mut self) -> Option<usize> {
+    pub fn schedule(&mut self) -> Option<Arc<Task>> {
+        let current_slot = task::current_slot();
         loop {
             // Pick a runnable non-idle task with the largest counter.
             // For equal counters, prefer the higher slot index.
@@ -157,40 +167,45 @@ impl TaskManager {
                 .skip(1)
                 .filter_map(|(idx, task)| {
                     let task = task.as_ref()?;
-                    let inner = task.pcb.inner.borrow();
-                    (inner.sched.state == TaskState::Running).then_some((idx, inner.sched.counter))
+                    task.pcb.inner.exclusive(|inner| {
+                        (inner.sched.state == TaskState::Running)
+                            .then_some((idx, inner.sched.counter))
+                    })
                 })
                 .max_by_key(|&(idx, counter)| (counter, idx));
 
             match candidate {
                 Some((next, counter)) if counter > 0 => {
-                    if self.current != next {
-                        self.current = next;
-                        return Some(next);
+                    if current_slot != next {
+                        return Some(
+                            self.tasks[next]
+                                .as_ref()
+                                .expect("schedule: candidate task missing")
+                                .clone(),
+                        );
                     }
                     return None;
                 }
                 None => {
-                    if self.current != 0 {
-                        self.current = 0;
-                        return Some(0);
+                    if current_slot != 0 {
+                        return Some(
+                            self.tasks[0]
+                                .as_ref()
+                                .expect("schedule: task0 missing")
+                                .clone(),
+                        );
                     }
                     return None;
                 }
                 Some(_) => {
                     self.tasks.iter().skip(1).flatten().for_each(|task| {
-                        let mut inner = task.pcb.inner.borrow_mut();
-                        inner.sched.counter = (inner.sched.counter >> 1) + inner.sched.priority;
+                        task.pcb.inner.exclusive(|inner| {
+                            inner.sched.counter = (inner.sched.counter >> 1) + inner.sched.priority;
+                        });
                     });
                 }
             }
         }
-    }
-
-    pub fn current(&self) -> &Task {
-        self.tasks[self.current]
-            .as_ref()
-            .expect("get current task failed")
     }
 
     /// Find an unused PID and an empty slot in the task table.
@@ -238,6 +253,7 @@ lazy_static! {
 
         // Then initialize only the PCB.
         addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new(
+            0,
             0, // pid = 0
             TaskControlBlockInner {
                 sched: TaskSchedInfo {
@@ -291,12 +307,11 @@ lazy_static! {
         let task0 = Task::from_static_addr(init_task_addr);
 
         // Initialize task array with task 0.
-        let mut tasks: [Option<Task>; TASK_NUM] = [const { None }; TASK_NUM];
-        tasks[0] = Some(task0);
+        let mut tasks: [Option<Arc<Task>>; TASK_NUM] = [const { None }; TASK_NUM];
+        tasks[0] = Some(Arc::new(task0));
 
         KernelCell::new(TaskManager {
             tasks,
-            current: 0,
             last_pid: AtomicU32::new(0),
         })
     };

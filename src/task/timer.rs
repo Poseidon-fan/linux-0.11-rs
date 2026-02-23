@@ -2,7 +2,10 @@
 
 use core::{arch::naked_asm, ptr};
 
-use crate::{pmio::outb, task::TASK_MANAGER};
+use crate::{
+    pmio::outb,
+    task::{TASK_MANAGER, current_task},
+};
 
 /// Number of timer ticks since boot.
 static mut JIFFIES: u32 = 0;
@@ -62,12 +65,10 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
     // Send End-Of-Interrupt to master 8259A PIC.
     outb(0x20, 0x20);
 
-    // Interrupts are already masked by the interrupt gate, so plain
-    // `with_mut` is sufficient here.
-    let next = TASK_MANAGER.with_mut(|manager| {
-        {
-            let mut current = manager.current().pcb.inner.borrow_mut();
-
+    // Safety: IRQ0 runs through an interrupt gate, so hardware already
+    // masked interrupts on entry. This satisfies `exclusive_unchecked`.
+    let should_schedule = unsafe {
+        current_task().pcb.inner.exclusive_unchecked(|current| {
             if cpl != 0 {
                 current.acct.utime = current.acct.utime.wrapping_add(1);
             } else {
@@ -78,13 +79,17 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
                 current.sched.counter -= 1;
             }
 
-            if current.sched.counter > 0 || cpl == 0 {
-                return None;
-            }
-        }
+            current.sched.counter == 0 && cpl != 0
+        })
+    };
 
-        manager.schedule()
-    });
+    // Safety: IRQ0 runs through an interrupt gate, so hardware already
+    // masked interrupts on entry. The schedule path also uses unchecked API.
+    let next = if should_schedule {
+        unsafe { TASK_MANAGER.exclusive_unchecked(|manager| manager.schedule()) }
+    } else {
+        None
+    };
 
     if let Some(next) = next {
         super::switch_to(next);

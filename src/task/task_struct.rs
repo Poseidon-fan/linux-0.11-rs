@@ -21,6 +21,8 @@ pub const TASK_PAGE_SIZE: u32 = PAGE_SIZE * TASK_PAGE_FRAMES as u32;
 /// [`KernelCell`] to allow mutation through shared references in a
 /// single-threaded kernel context.
 pub struct TaskControlBlock {
+    /// Slot index in the global task table.
+    pub slot: usize,
     pub pid: u32,
     pub inner: KernelCell<TaskControlBlockInner>,
 }
@@ -229,8 +231,9 @@ impl DerefMut for Task {
 }
 
 impl TaskControlBlock {
-    pub fn new(pid: u32, inner: TaskControlBlockInner) -> Self {
+    pub fn new(slot: usize, pid: u32, inner: TaskControlBlockInner) -> Self {
         Self {
+            slot,
             pid,
             inner: KernelCell::new(inner),
         }
