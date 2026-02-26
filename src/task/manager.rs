@@ -12,7 +12,7 @@ use crate::{
         selectors::{self, KERNEL_DS, USER_CS, USER_DS},
     },
     sync::KernelCell,
-    syscall::{EAGAIN, SyscallContext},
+    syscall::SyscallContext,
     task::{self, task_struct::*},
 };
 
@@ -34,12 +34,12 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
-    pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, u32> {
+    pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, ()> {
         // 1. Find a free slot in task array.
-        let (slot, pid) = self.find_empty_process().ok_or(EAGAIN)?;
+        let (slot, pid) = self.find_empty_process().ok_or(())?;
 
         // 2. Allocate a new task page.
-        let mut new_task = Task::new().ok_or(EAGAIN)?;
+        let mut new_task = Task::new().ok_or(())?;
 
         // 3. Snapshot parent state and create child memory space by COW.
         let parent_slot = task::current_slot();
@@ -67,9 +67,9 @@ impl TaskManager {
                     .as_ref()
                     .expect("parent memory space is none, unexpected error")
                     .cow_copy(slot, data_limit)
-                    .map_err(|_| EAGAIN)?;
+                    .map_err(|_| ())?;
 
-                Ok::<_, u32>((
+                Ok::<_, ()>((
                     parent_inner.sched.priority,
                     parent_inner.relation.pgrp,
                     parent_inner.ldt.clone(),

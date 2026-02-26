@@ -2,7 +2,7 @@ use linkme::distributed_slice;
 
 use crate::{
     define_syscall_handler,
-    syscall::{SYSCALL_TABLE, context::SyscallContext},
+    syscall::{EAGAIN, SYSCALL_TABLE, context::SyscallContext},
     task::{self, TASK_MANAGER, current_task, task_struct::TaskState},
 };
 
@@ -16,7 +16,9 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_FORK = 2,
     fn sys_fork(ctx: &SyscallContext) -> Result<u32, u32> {
-        TASK_MANAGER.exclusive(|manager| manager.fork(ctx))
+        TASK_MANAGER
+            .exclusive(|manager| manager.fork(ctx))
+            .map_err(|()| EAGAIN)
     }
 );
 

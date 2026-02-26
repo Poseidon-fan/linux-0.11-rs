@@ -5,15 +5,14 @@
 //! handoff wakeups after rescheduling.
 //!
 //! Synchronization contract:
-//! - `TASK_MANAGER` access is wrapped by `KernelCell::exclusive`.
+//! - Task state changes use `pcb.inner.exclusive` for IRQ exclusion.
 //! - `queue` itself is protected by the caller through `&mut WaitQueue`.
 
 use alloc::sync::{Arc, Weak};
 
-use super::{
-    TASK_MANAGER, current_task, schedule,
-    task_struct::{Task, TaskState, TaskState::Running},
-};
+use crate::task;
+
+use super::task_struct::{Task, TaskState, TaskState::Running};
 
 /// Single-slot wait queue.
 pub struct WaitQueue {
@@ -28,25 +27,16 @@ impl WaitQueue {
 
     /// Put current task into uninterruptible sleep.
     pub fn sleep_on(queue: &mut WaitQueue) {
-        let handoff_slot = TASK_MANAGER.exclusive(|_| {
-            let current = current_task();
-            let current_slot = current.pcb.slot;
-            assert_ne!(current_slot, 0, "task[0] trying to sleep");
+        let current = task::current_task();
+        assert_ne!(current.pcb.slot, 0, "task[0] trying to sleep");
 
-            // `queue.slot` is a single shared entry.
-            // Replacing it returns the previous waiter, which we keep in a
-            // stack-local `handoff_slot` and wake after we run again.
-            // This stack-local handoff is what forms the wakeup chain.
-            let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
-            current
-                .pcb
-                .inner
-                .exclusive(|inner| inner.sched.state = TaskState::Uninterruptible);
+        let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+        current
+            .pcb
+            .inner
+            .exclusive(|inner| inner.sched.state = TaskState::Uninterruptible);
 
-            handoff_slot
-        });
-
-        schedule();
+        task::schedule();
 
         // Resume the previous waiter captured before we slept.
         // Each sleeper wakes the one that used to be in the queue slot.
@@ -60,37 +50,29 @@ impl WaitQueue {
     /// If another task replaces this queue slot while we are sleeping,
     /// wake that task and retry until the slot settles.
     pub fn interruptible_sleep_on(queue: &mut WaitQueue) {
-        let current = current_task();
+        let current = task::current_task();
         let current_slot = current.pcb.slot;
-        let handoff_slot = TASK_MANAGER.exclusive(|_| {
-            assert_ne!(current_slot, 0, "task[0] trying to sleep");
+        assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
-            // Same handoff capture as `sleep_on`, but this path may retry.
-            let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
-            current
-                .pcb
-                .inner
-                .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
-
-            handoff_slot
-        });
+        let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+        current
+            .pcb
+            .inner
+            .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
 
         loop {
-            schedule();
+            task::schedule();
 
             match queue.slot.as_ref().and_then(Weak::upgrade) {
                 Some(task) if task.pcb.slot != current_slot => {
                     // Another task replaced our queue slot while we slept.
                     // Wake that task first, then mark ourselves interruptible
                     // again and schedule once more until our slot settles.
-                    TASK_MANAGER.exclusive(|_| {
+                    current.pcb.inner.exclusive(|current_inner| {
+                        current_inner.sched.state = TaskState::Interruptible;
                         task.pcb
                             .inner
-                            .exclusive(|inner| inner.sched.state = Running);
-                        current
-                            .pcb
-                            .inner
-                            .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
+                            .exclusive(|task_inner| task_inner.sched.state = Running);
                     });
                 }
                 _ => {
