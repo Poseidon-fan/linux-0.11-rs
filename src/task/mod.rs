@@ -18,6 +18,15 @@ use self::current::{init_current_task, set_current_task};
 pub use current::{current_slot, current_task};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 
+/// Returns true if the current process has superuser privileges (euid == 0).
+#[inline]
+pub fn is_super() -> bool {
+    current_task()
+        .pcb
+        .inner
+        .exclusive(|inner| inner.identity.euid == 0)
+}
+
 unsafe extern "C" {
     /// GDT defined in head.s
     static mut gdt: [u64; 256];

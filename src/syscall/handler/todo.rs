@@ -105,12 +105,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_GETPID = 20,
-    fn sys_getpid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_MOUNT = 21,
     fn sys_mount(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -119,18 +113,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_UMOUNT = 22,
     fn sys_umount(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SETUID = 23,
-    fn sys_setuid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_GETUID = 24,
-    fn sys_getuid(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
@@ -255,32 +237,8 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_SETGID = 46,
-    fn sys_setgid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_GETGID = 47,
-    fn sys_getgid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_SIGNAL = 48,
     fn sys_signal(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_GETEUID = 49,
-    fn sys_geteuid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_GETEGID = 50,
-    fn sys_getegid(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
@@ -321,12 +279,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_SETPGID = 57,
-    fn sys_setpgid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_ULIMIT = 58,
     fn sys_ulimit(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -363,24 +315,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_GETPPID = 64,
-    fn sys_getppid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_GETPGRP = 65,
-    fn sys_getpgrp(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SETSID = 66,
-    fn sys_setsid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_SIGACTION = 67,
     fn sys_sigaction(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -395,18 +329,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_SSETMASK = 69,
     fn sys_ssetmask(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SETREUID = 70,
-    fn sys_setreuid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SETREGID = 71,
-    fn sys_setregid(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

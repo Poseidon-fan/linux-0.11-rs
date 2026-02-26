@@ -32,7 +32,11 @@
 
 use core::arch::asm;
 
-use crate::syscall::process::{NR_EXIT, NR_FORK, NR_PAUSE, NR_WAITPID};
+use crate::syscall::process::{
+    NR_EXIT, NR_FORK, NR_GETEGID, NR_GETEUID, NR_GETGID, NR_GETPGRP, NR_GETPID, NR_GETPPID,
+    NR_GETUID, NR_PAUSE, NR_SETGID, NR_SETPGID, NR_SETREGID, NR_SETREUID, NR_SETSID, NR_SETUID,
+    NR_WAITPID,
+};
 
 // ===========================================================================
 // Low-level syscall primitives — thin wrappers around `int $0x80`
@@ -168,4 +172,17 @@ use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_WAITPID => waitpid(pid: i32, stat_addr: *mut u32, options: u32) -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
+use_syscall!(NR_GETPID => getpid() -> u32);
+use_syscall!(NR_GETPPID => getppid() -> u32);
+use_syscall!(NR_GETPGRP => getpgrp() -> u32);
+use_syscall!(NR_GETUID => getuid() -> u32);
+use_syscall!(NR_GETEUID => geteuid() -> u32);
+use_syscall!(NR_GETGID => getgid() -> u32);
+use_syscall!(NR_GETEGID => getegid() -> u32);
+use_syscall!(NR_SETUID => setuid(uid: u32) -> u32);
+use_syscall!(NR_SETGID => setgid(gid: u32) -> u32);
+use_syscall!(NR_SETREUID => setreuid(ruid: u32, euid: u32) -> u32);
+use_syscall!(NR_SETREGID => setregid(rgid: u32, egid: u32) -> u32);
+use_syscall!(NR_SETPGID => setpgid(pid: i32, pgid: i32) -> u32);
+use_syscall!(NR_SETSID => setsid() -> u32);
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);

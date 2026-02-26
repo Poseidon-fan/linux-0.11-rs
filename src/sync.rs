@@ -25,6 +25,7 @@ use core::{
 use lazy_static::lazy_static;
 
 use crate::segment::selectors::{USER_CS, USER_DS};
+use crate::task;
 
 /// Enables interrupts by setting the IF (Interrupt Flag) in EFLAGS.
 #[inline]
@@ -222,7 +223,7 @@ impl<T> KernelCell<T> {
     {
         #[cfg(debug_assertions)]
         {
-            let _ = crate::task::current_task();
+            let _ = task::current_task();
         }
         let _guard = TaskIrqGuard::enter();
         // SAFETY: `exclusive` enforces the interrupt-side exclusion contract.

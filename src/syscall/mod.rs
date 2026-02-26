@@ -8,7 +8,7 @@ pub use context::SyscallContext;
 pub use error::*;
 pub use handler::*;
 
-use crate::task::{self, current_task, task_struct::TaskState};
+use crate::task::{self, task_struct::TaskState};
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
 
@@ -23,7 +23,7 @@ pub extern "C" fn syscall_rust_entry(ctx: &SyscallContext) -> i32 {
     let result = handler(ctx);
 
     // Schedule if needed.
-    current_task()
+    task::current_task()
         .pcb
         .inner
         .exclusive(|current| {

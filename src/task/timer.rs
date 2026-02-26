@@ -2,10 +2,7 @@
 
 use core::{arch::naked_asm, ptr};
 
-use crate::{
-    pmio::outb,
-    task::{self, current_task},
-};
+use crate::{pmio::outb, task};
 
 /// Number of timer ticks since boot.
 static mut JIFFIES: u32 = 0;
@@ -68,19 +65,22 @@ extern "C" fn timer_interrupt_rust_entry(cpl: u32) {
     // Safety: IRQ0 runs through an interrupt gate, so hardware already
     // masked interrupts on entry. This satisfies `exclusive_unchecked`.
     let should_schedule = unsafe {
-        current_task().pcb.inner.exclusive_unchecked(|current| {
-            if cpl != 0 {
-                current.acct.utime = current.acct.utime.wrapping_add(1);
-            } else {
-                current.acct.stime = current.acct.stime.wrapping_add(1);
-            }
+        task::current_task()
+            .pcb
+            .inner
+            .exclusive_unchecked(|current| {
+                if cpl != 0 {
+                    current.acct.utime = current.acct.utime.wrapping_add(1);
+                } else {
+                    current.acct.stime = current.acct.stime.wrapping_add(1);
+                }
 
-            if current.sched.counter > 0 {
-                current.sched.counter -= 1;
-            }
+                if current.sched.counter > 0 {
+                    current.sched.counter -= 1;
+                }
 
-            current.sched.counter == 0 && cpl != 0
-        })
+                current.sched.counter == 0 && cpl != 0
+            })
     };
 
     if should_schedule {

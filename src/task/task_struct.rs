@@ -34,9 +34,11 @@ pub struct TaskControlBlock {
 pub struct TaskControlBlockInner {
     pub sched: TaskSchedInfo,
     pub relation: TaskRelationInfo,
+    pub identity: TaskIdentityInfo,
     pub acct: TaskAcctInfo,
     pub memory_space: Option<MemorySpace>,
     pub exit_code: i32,
+    pub tty: i32,
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
 }
@@ -194,12 +196,27 @@ pub struct TaskSchedInfo {
     pub priority: u32,
 }
 
-/// Process relationship fields from Linux 0.11 task_struct.
+/// Process relationship fields.
 pub struct TaskRelationInfo {
-    /// Parent process id.
+    /// Parent process id. Use `u32::MAX` for no parent (e.g. task 0).
     pub father: u32,
     /// Process group id.
     pub pgrp: u32,
+    /// Session id.
+    pub session: u32,
+    /// Session leader flag (0 or 1).
+    pub leader: u8,
+}
+
+/// User/group identity for permission checks.
+#[derive(Clone, Copy)]
+pub struct TaskIdentityInfo {
+    pub uid: u16,
+    pub euid: u16,
+    pub suid: u16,
+    pub gid: u16,
+    pub egid: u16,
+    pub sgid: u16,
 }
 
 /// CPU accounting fields from Linux 0.11 task_struct.

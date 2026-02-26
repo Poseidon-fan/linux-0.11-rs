@@ -5,7 +5,7 @@
 
 use crate::{
     mm::address::{LinAddr, LinPageNum},
-    task::current_task,
+    task,
 };
 
 /// Handle a not-present page fault (`P=0` in the CPU error code).
@@ -28,7 +28,7 @@ pub fn handle_wp_page(address: u32) {
     // the target page through typed paging-index helpers.
     let fault_addr = LinAddr::from(address);
     let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
-    current_task().pcb.inner.exclusive(|inner| {
+    task::current_task().pcb.inner.exclusive(|inner| {
         inner
             .memory_space
             .as_mut()

@@ -47,35 +47,45 @@ impl TaskManager {
             .as_ref()
             .expect("fork: current task missing");
         let parent_pid = parent.pcb.pid;
-        let (parent_priority, parent_pgrp, parent_ldt, child_memory_space) =
-            parent.pcb.inner.exclusive(|parent_inner| {
-                let old_base = parent_inner.ldt.data_segment().base();
-                let code_base = parent_inner.ldt.code_segment().base();
-                assert_eq!(old_base, code_base, "separate I&D not supported");
+        let (
+            parent_priority,
+            parent_pgrp,
+            parent_session,
+            parent_identity,
+            parent_tty,
+            parent_ldt,
+            child_memory_space,
+        ) = parent.pcb.inner.exclusive(|parent_inner| {
+            let old_base = parent_inner.ldt.data_segment().base();
+            let code_base = parent_inner.ldt.code_segment().base();
+            assert_eq!(old_base, code_base, "separate I&D not supported");
 
-                let code_limit = parent_inner.ldt.code_segment().byte_limit();
-                let data_limit = parent_inner.ldt.data_segment().byte_limit();
-                assert!(
-                    data_limit >= code_limit,
-                    "bad data_limit: data < code (0x{:x} < 0x{:x})",
-                    data_limit,
-                    code_limit
-                );
+            let code_limit = parent_inner.ldt.code_segment().byte_limit();
+            let data_limit = parent_inner.ldt.data_segment().byte_limit();
+            assert!(
+                data_limit >= code_limit,
+                "bad data_limit: data < code (0x{:x} < 0x{:x})",
+                data_limit,
+                code_limit
+            );
 
-                let child_memory_space = parent_inner
-                    .memory_space
-                    .as_ref()
-                    .expect("parent memory space is none, unexpected error")
-                    .cow_copy(slot, data_limit)
-                    .map_err(|_| ())?;
+            let child_memory_space = parent_inner
+                .memory_space
+                .as_ref()
+                .expect("parent memory space is none, unexpected error")
+                .cow_copy(slot, data_limit)
+                .map_err(|_| ())?;
 
-                Ok::<_, ()>((
-                    parent_inner.sched.priority,
-                    parent_inner.relation.pgrp,
-                    parent_inner.ldt.clone(),
-                    child_memory_space,
-                ))
-            })?;
+            Ok::<_, ()>((
+                parent_inner.sched.priority,
+                parent_inner.relation.pgrp,
+                parent_inner.relation.session,
+                parent_inner.identity,
+                parent_inner.tty,
+                parent_inner.ldt.clone(),
+                child_memory_space,
+            ))
+        })?;
 
         // 4. Initialize PCB fields.
         new_task.pcb = TaskControlBlock::new(slot, pid, TaskControlBlockInner {
@@ -87,7 +97,10 @@ impl TaskManager {
             relation: TaskRelationInfo {
                 father: parent_pid,
                 pgrp: parent_pgrp,
+                session: parent_session,
+                leader: 0,
             },
+            identity: parent_identity,
             acct: TaskAcctInfo {
                 utime: 0,
                 stime: 0,
@@ -96,6 +109,7 @@ impl TaskManager {
             },
             memory_space: None, // empty, set below after LDT base is adjusted
             exit_code: 0,
+            tty: parent_tty,
             ldt: parent_ldt,
             tss: TaskStateSegment {
                 back_link: 0,
@@ -261,7 +275,20 @@ lazy_static! {
                     counter: 15,
                     priority: 15,
                 },
-                relation: TaskRelationInfo { father: 0, pgrp: 0 },
+                relation: TaskRelationInfo {
+                    father: u32::MAX,
+                    pgrp: 0,
+                    session: 0,
+                    leader: 0,
+                },
+                identity: TaskIdentityInfo {
+                    uid: 0,
+                    euid: 0,
+                    suid: 0,
+                    gid: 0,
+                    egid: 0,
+                    sgid: 0,
+                },
                 acct: TaskAcctInfo {
                     utime: 0,
                     stime: 0,
@@ -270,6 +297,7 @@ lazy_static! {
                 },
                 memory_space: Some(MemorySpace::new(0)), // task 0
                 exit_code: 0,
+                tty: -1,
                 ldt: LocalDescriptorTable::new(0, 0x9f),
                 tss: TaskStateSegment {
                     back_link: 0,
