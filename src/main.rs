@@ -49,7 +49,8 @@ pub extern "C" fn rust_main() -> ! {
     sync::move_to_user_mode();
     (user_lib::fork().unwrap() == 0).then(|| user_lib::init());
 
-    user_lib::test(true).unwrap();
+    // 10: parent path in rust_main after initial fork.
+    user_lib::test(10).unwrap();
 
     loop {
         user_lib::pause().unwrap();

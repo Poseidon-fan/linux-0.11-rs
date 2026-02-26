@@ -33,12 +33,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_WAITPID = 7,
-    fn sys_waitpid(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_CREAT = 8,
     fn sys_creat(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()

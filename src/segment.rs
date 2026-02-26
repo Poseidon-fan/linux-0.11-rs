@@ -170,6 +170,149 @@ pub fn str() -> SegmentSelector {
     SegmentSelector(selector)
 }
 
+// ============================================================================
+// FS/DS segment access
+// ============================================================================
+//
+// These functions read/write memory through the FS or DS segment selector.
+// Typically used for kernel-to-user data copy when FS is set to user segment.
+
+/// Read a byte from the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn get_fs_byte(addr: *const u8) -> u8 {
+    let v: u8;
+    unsafe {
+        asm!(
+            "movb %fs:({}), {}",
+            in(reg) addr as u32,
+            out(reg_byte) v,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+    v
+}
+
+/// Read a word (16-bit) from the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn get_fs_word(addr: *const u16) -> u16 {
+    let v: u16;
+    unsafe {
+        asm!(
+            "movw %fs:({}), {1:x}",
+            in(reg) addr as u32,
+            out(reg) v,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+    v
+}
+
+/// Read a long (32-bit) from the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn get_fs_long(addr: *const u32) -> u32 {
+    let v: u32;
+    unsafe {
+        asm!(
+            "movl %fs:({}), {}",
+            in(reg) addr as u32,
+            out(reg) v,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+    v
+}
+
+/// Write a byte to the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn put_fs_byte(val: u8, addr: *mut u8) {
+    unsafe {
+        asm!(
+            "movb {}, %fs:({})",
+            in(reg_byte) val,
+            in(reg) addr as u32,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+}
+
+/// Write a word (16-bit) to the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn put_fs_word(val: u16, addr: *mut u16) {
+    unsafe {
+        asm!(
+            "movw {0:x}, %fs:({1})",
+            in(reg) val,
+            in(reg) addr as u32,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+}
+
+/// Write a long (32-bit) to the address through the FS segment.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer within the current FS segment.
+#[inline]
+pub fn put_fs_long(val: u32, addr: *mut u32) {
+    unsafe {
+        asm!(
+            "movl {}, %fs:({})",
+            in(reg) val,
+            in(reg) addr as u32,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+}
+
+/// Get the current FS segment selector value.
+#[inline]
+pub fn get_fs() -> u16 {
+    let v: u16;
+    unsafe {
+        asm!("mov %fs, %ax", out("ax") v, options(nomem, nostack, att_syntax));
+    }
+    v
+}
+
+/// Get the current DS segment selector value.
+#[inline]
+pub fn get_ds() -> u16 {
+    let v: u16;
+    unsafe {
+        asm!("mov %ds, %ax", out("ax") v, options(nomem, nostack, att_syntax));
+    }
+    v
+}
+
+/// Set the FS segment selector.
+#[inline]
+pub fn set_fs(val: u16) {
+    unsafe {
+        asm!("mov {0:x}, %fs", in(reg) val, options(nomem, nostack, att_syntax));
+    }
+}
+
 /// First TSS entry index in GDT.
 pub const FIRST_TSS_ENTRY: u16 = 4;
 

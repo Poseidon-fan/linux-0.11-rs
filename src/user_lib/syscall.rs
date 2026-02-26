@@ -32,7 +32,7 @@
 
 use core::arch::asm;
 
-use crate::syscall::process::{NR_EXIT, NR_FORK, NR_PAUSE};
+use crate::syscall::process::{NR_EXIT, NR_FORK, NR_PAUSE, NR_WAITPID};
 
 // ===========================================================================
 // Low-level syscall primitives — thin wrappers around `int $0x80`
@@ -166,5 +166,6 @@ macro_rules! use_syscall {
 
 use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
+use_syscall!(NR_WAITPID => waitpid(pid: i32, stat_addr: *mut u32, options: u32) -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
-use_syscall!(crate::syscall::NR_TEST => test(is_father: bool) -> u32);
+use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);

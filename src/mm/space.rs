@@ -94,7 +94,7 @@ impl MemorySpace {
     ///
     /// Returns `None` when the page is outside this memory space range or
     /// when the corresponding PDE is not present.
-    fn find_pte(&mut self, page: LinPageNum) -> Option<&mut PageTableEntry> {
+    pub(crate) fn find_pte(&mut self, page: LinPageNum) -> Option<&mut PageTableEntry> {
         let pde_index = page.pde_index();
         if !(self.pde_base..self.pde_base + PDES_PER_PROCESS).contains(&pde_index) {
             return None;

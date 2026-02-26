@@ -26,15 +26,8 @@ macro_rules! define_syscall_handler {
 define_syscall_handler!(
     NR_TEST = 3,
     fn sys_test(ctx: &SyscallContext) -> Result<u32, u32> {
-        let (is_father, _, _) = ctx.args();
-        match is_father {
-            0 => {
-                crate::println!("from child task");
-            }
-            _ => {
-                crate::println!("from father task");
-            }
-        }
+        let (value, _, _) = ctx.args();
+        crate::println!("test value: {}", value as i32);
 
         Ok(0)
     }
