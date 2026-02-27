@@ -10,6 +10,12 @@ use crate::{
 };
 
 /// Number of physical pages reserved for each task's PCB + kernel stack block.
+///
+/// Debug builds use more stack due to larger frames and no optimization;
+/// release builds use 2 pages to save memory.
+#[cfg(debug_assertions)]
+pub const TASK_PAGE_FRAMES: usize = 4;
+#[cfg(not(debug_assertions))]
 pub const TASK_PAGE_FRAMES: usize = 2;
 
 /// Total bytes reserved for one task's PCB + kernel stack block.
@@ -41,6 +47,7 @@ pub struct TaskControlBlockInner {
     pub tty: i32,
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
+    pub signal_info: TaskSignalInfo,
 }
 
 /// Memory layout of a task page block (4KB aligned).
@@ -219,7 +226,7 @@ pub struct TaskIdentityInfo {
     pub sgid: u16,
 }
 
-/// CPU accounting fields from Linux 0.11 task_struct.
+/// CPU accounting fields.
 pub struct TaskAcctInfo {
     /// User-mode CPU time in timer ticks.
     pub utime: u32,
@@ -229,6 +236,38 @@ pub struct TaskAcctInfo {
     pub cutime: u32,
     /// Aggregated waited child kernel-mode CPU ticks.
     pub cstime: u32,
+}
+
+/// Number of signals supported.
+pub const NSIG: usize = 32;
+
+/// Per-signal handler configuration (16 bytes).
+///
+/// `sa_handler` and `sa_restorer` are user-space virtual addresses.
+#[repr(C)]
+#[derive(Clone)]
+pub struct SigAction {
+    /// Handler address; 0 = default, 1 = ignore.
+    pub sa_handler: u32,
+    /// Mask of signals to block during handler execution.
+    pub sa_mask: u32,
+    /// SA_ONESHOT, SA_NOMASK, etc.
+    pub sa_flags: u32,
+    /// User-space restorer stub address (called after handler returns).
+    pub sa_restorer: u32,
+}
+
+/// Signal-related state for a task.
+#[derive(Clone)]
+pub struct TaskSignalInfo {
+    /// Pending signals bitmap (bit 0 = signal 1, bit 1 = signal 2, ...).
+    pub signal: u32,
+    /// Blocked signals bitmap.
+    pub blocked: u32,
+    /// Per-signal handler configuration.
+    pub sigaction: [SigAction; NSIG],
+    /// Jiffies when SIGALRM should be delivered (0 = disabled).
+    pub alarm: u32,
 }
 
 impl Deref for Task {

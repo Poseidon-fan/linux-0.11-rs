@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::array;
 use core::mem::MaybeUninit;
 use core::ptr::{addr_of_mut, write_bytes};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -54,6 +55,7 @@ impl TaskManager {
             parent_identity,
             parent_tty,
             parent_ldt,
+            parent_signal_info,
             child_memory_space,
         ) = parent.pcb.inner.exclusive(|parent_inner| {
             let old_base = parent_inner.ldt.data_segment().base();
@@ -83,6 +85,7 @@ impl TaskManager {
                 parent_inner.identity,
                 parent_inner.tty,
                 parent_inner.ldt.clone(),
+                parent_inner.signal_info.clone(),
                 child_memory_space,
             ))
         })?;
@@ -139,6 +142,12 @@ impl TaskManager {
                 ldt: selectors::ldt_selector(slot as u16).as_u32(),
                 trace_bitmap: 0x8000_0000,
                 i387: I387Struct::empty(),
+            },
+            signal_info: TaskSignalInfo {
+                signal: 0,
+                blocked: parent_signal_info.blocked,
+                sigaction: parent_signal_info.sigaction.clone(),
+                alarm: 0,
             },
         });
 
@@ -299,6 +308,17 @@ lazy_static! {
                 exit_code: 0,
                 tty: -1,
                 ldt: LocalDescriptorTable::new(0, 0x9f),
+                signal_info: TaskSignalInfo {
+                    signal: 0,
+                    blocked: 0,
+                    sigaction: array::from_fn(|_| SigAction {
+                        sa_handler: 0,
+                        sa_mask: 0,
+                        sa_flags: 0,
+                        sa_restorer: 0,
+                    }),
+                    alarm: 0,
+                },
                 tss: TaskStateSegment {
                     back_link: 0,
                     esp0: init_task_addr + TASK_PAGE_SIZE,
