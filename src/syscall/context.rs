@@ -1,3 +1,8 @@
+use crate::{
+    segment::selectors::{USER_CS, USER_DS},
+    signal::{self, DeliverAction, SignalDeliveryFrame, SignalSavedRegisters},
+};
+
 /// System call context — the complete register frame built on the kernel
 /// stack by `syscall_entry.s` before calling into Rust.
 ///
@@ -82,5 +87,38 @@ impl SyscallContext {
     #[inline]
     pub fn args(&self) -> (u32, u32, u32) {
         (self.ebx, self.ecx, self.edx)
+    }
+}
+
+impl SignalDeliveryFrame for SyscallContext {
+    #[inline]
+    fn is_returning_to_user(&self) -> bool {
+        (self.cs & 0xffff) == USER_CS.as_u32() && (self.user_ss & 0xffff) == USER_DS.as_u32()
+    }
+
+    fn deliver_signal(&mut self, action: DeliverAction) -> bool {
+        if !self.is_returning_to_user() {
+            return false;
+        }
+
+        let regs = SignalSavedRegisters {
+            eax: self.eax,
+            ecx: self.ecx,
+            edx: self.edx,
+            eflags: self.eflags,
+            old_eip: self.eip,
+        };
+        let new_esp = signal::push_user_signal_frame(
+            self.user_esp,
+            action.restorer,
+            action.signr,
+            action.blocked,
+            action.sa_flags,
+            regs,
+        );
+
+        self.user_esp = new_esp;
+        self.eip = action.handler;
+        true
     }
 }

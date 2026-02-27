@@ -8,12 +8,15 @@ pub use context::SyscallContext;
 pub use error::*;
 pub use handler::*;
 
-use crate::task::{self, task_struct::TaskState};
+use crate::{
+    signal,
+    task::{self, task_struct::TaskState},
+};
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
-pub extern "C" fn syscall_rust_entry(ctx: &SyscallContext) -> i32 {
+pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
     // Check if the syscall number is valid.
     if (ctx.syscall_nr() as usize) >= SYSCALL_TABLE.len() {
         return -(ENOSYS as i32);
@@ -31,8 +34,11 @@ pub extern "C" fn syscall_rust_entry(ctx: &SyscallContext) -> i32 {
         })
         .then(task::schedule);
 
-    match result {
+    let ret = match result {
         Ok(value) => value as i32,
         Err(errno) => -(errno as i32),
-    }
+    };
+    ctx.eax = ret as u32;
+    signal::handle_pending_signal(ctx);
+    ret
 }

@@ -186,3 +186,4 @@ use_syscall!(NR_SETREGID => setregid(rgid: u32, egid: u32) -> u32);
 use_syscall!(NR_SETPGID => setpgid(pid: i32, pgid: i32) -> u32);
 use_syscall!(NR_SETSID => setsid() -> u32);
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
+use_syscall!(crate::syscall::NR_TEST1 => test1(handler: u32, restorer: u32, signr: u32) -> u32);

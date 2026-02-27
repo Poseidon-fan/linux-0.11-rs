@@ -14,6 +14,7 @@ mod mm;
 mod panic;
 mod pmio;
 mod segment;
+mod signal;
 mod sync;
 mod syscall;
 mod task;
@@ -48,9 +49,6 @@ pub extern "C" fn rust_main() -> ! {
     sync::sti();
     sync::move_to_user_mode();
     (user_lib::fork().unwrap() == 0).then(|| user_lib::init());
-
-    // 10: parent path in rust_main after initial fork.
-    user_lib::test(10).unwrap();
 
     loop {
         user_lib::pause().unwrap();

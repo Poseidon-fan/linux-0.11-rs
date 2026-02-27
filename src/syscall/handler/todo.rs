@@ -15,6 +15,12 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
+    NR_READ = 3,
+    fn sys_read(_ctx: &SyscallContext) -> Result<u32, u32> {
+        todo!()
+    }
+);
+define_syscall_handler!(
     NR_WRITE = 4,
     fn sys_write(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
