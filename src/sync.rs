@@ -66,11 +66,11 @@ fn read_eflags_and_cli() -> u32 {
 }
 
 /// RAII guard for per-task IRQ nesting in [`KernelCell::exclusive`].
-struct TaskIrqGuard;
+pub struct TaskIrqGuard;
 
 impl TaskIrqGuard {
     #[inline]
-    fn enter() -> Self {
+    pub fn enter() -> Self {
         let outer_flags = (SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK == 0)
             .then(read_eflags_and_cli);
 
