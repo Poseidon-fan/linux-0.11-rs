@@ -5,12 +5,12 @@ mod syscall;
 
 pub use syscall::*;
 
-extern "C" fn signal_test_handler(signr: i32) {
-    test(1000 + signr).unwrap();
+extern "C" fn sigchld_test_handler(signr: i32) {
+    test(2000 + signr).unwrap();
 }
 
-extern "C" fn signal_test_restorer() -> ! {
-    test(1999).unwrap();
+extern "C" fn sigchld_test_restorer() -> ! {
+    test(2999).unwrap();
     exit().unwrap();
 
     #[allow(clippy::empty_loop)]
@@ -18,17 +18,29 @@ extern "C" fn signal_test_restorer() -> ! {
 }
 
 pub fn init() -> ! {
-    const TEST_SIGNAL: u32 = 10;
+    const SIGCHLD: u32 = 17;
 
     test(100).unwrap();
-    test1(
-        signal_test_handler as usize as u32,
-        signal_test_restorer as usize as u32,
-        TEST_SIGNAL,
+    test2(
+        sigchld_test_handler as usize as u32,
+        sigchld_test_restorer as usize as u32,
+        SIGCHLD,
     )
     .unwrap();
 
-    // Should not be reached if signal delivery path works.
+    let pid = fork().unwrap();
+    if pid == 0 {
+        test(300).unwrap();
+        exit().unwrap();
+
+        #[allow(clippy::empty_loop)]
+        loop {}
+    }
+
+    let mut status = 0u32;
+    waitpid(pid as i32, &mut status as *mut u32, 0).unwrap();
+
+    // Should not be reached if SIGCHLD delivery path works.
     test(-100).unwrap();
     exit().unwrap();
     #[allow(clippy::empty_loop)]

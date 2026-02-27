@@ -9,6 +9,7 @@ use core::{arch::asm, mem};
 use crate::{
     pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
+    signal::SIGCHLD,
     task::task_struct::TaskState,
     trap::{set_intr_gate, set_system_gate},
 };
@@ -83,6 +84,12 @@ pub fn do_exit(code: i32) -> ! {
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] cannot exit");
         let current_pid = current.pcb.pid;
+        let father_pid = unsafe {
+            current
+                .pcb
+                .inner
+                .exclusive_unchecked(|inner| inner.relation.father)
+        };
 
         // Re-parent all direct children to task 1.
         manager
@@ -106,6 +113,23 @@ pub fn do_exit(code: i32) -> ! {
                 current_inner.sched.state = TaskState::Zombie;
                 current_inner.exit_code = code;
             });
+        }
+
+        // Notify parent process with SIGCHLD so waiters can observe child exit.
+        if let Some(father_task) = manager
+            .tasks
+            .iter()
+            .filter_map(|task| task.as_ref())
+            .find(|task| task.pcb.pid == father_pid)
+        {
+            unsafe {
+                father_task.pcb.inner.exclusive_unchecked(|father_inner| {
+                    father_inner.signal_info.signal |= 1u32 << (SIGCHLD - 1);
+                    if father_inner.sched.state == TaskState::Interruptible {
+                        father_inner.sched.state = TaskState::Running;
+                    }
+                });
+            }
         }
     });
     schedule();

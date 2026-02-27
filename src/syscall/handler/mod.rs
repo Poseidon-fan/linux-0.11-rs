@@ -66,3 +66,32 @@ define_syscall_handler!(
         Ok(0)
     }
 );
+
+define_syscall_handler!(
+    NR_TEST2 = 76,
+    fn sys_test2(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (handler, restorer, signr) = ctx.args();
+        if signr == 0 || signr > NSIG as u32 {
+            return Err(EINVAL);
+        }
+
+        let idx = (signr - 1) as usize;
+        task::current_task().pcb.inner.exclusive(|inner| {
+            inner.signal_info.sigaction[idx] = SigAction {
+                sa_handler: handler,
+                sa_mask: 0,
+                sa_flags: signal::SA_ONESHOT | signal::SA_NOMASK,
+                sa_restorer: restorer,
+            };
+            inner.signal_info.signal &= !(1u32 << idx);
+        });
+
+        crate::println!(
+            "test2 set sigaction signal={} handler={:#x} restorer={:#x}",
+            signr,
+            handler,
+            restorer
+        );
+        Ok(0)
+    }
+);

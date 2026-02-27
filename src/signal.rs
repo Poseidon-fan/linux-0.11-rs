@@ -12,7 +12,8 @@ pub const SA_ONESHOT: u32 = 0x8000_0000;
 
 const SIG_DFL: u32 = 0;
 const SIG_IGN: u32 = 1;
-const SIGCHLD: u32 = 17;
+/// Child status changed signal number.
+pub const SIGCHLD: u32 = 17;
 
 /// Saved register subset required by the user signal frame layout.
 #[derive(Clone, Copy)]
@@ -99,8 +100,12 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
 
     match action {
         PendingSignalAction::None => {}
-        PendingSignalAction::Exit { signr } => task::do_exit(1 << (signr - 1)),
+        PendingSignalAction::Exit { signr } => {
+            crate::println!("[signal] handle signr={} action=exit", signr);
+            task::do_exit(1 << (signr - 1))
+        }
         PendingSignalAction::Deliver(deliver) => {
+            crate::println!("[signal] handle signr={} action=deliver", deliver.signr);
             if frame.deliver_signal(deliver) {
                 task::current_task().pcb.inner.exclusive(|inner| {
                     inner.signal_info.blocked |= deliver.sa_mask;
