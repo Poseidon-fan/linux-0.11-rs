@@ -12,6 +12,8 @@ pub const SA_ONESHOT: u32 = 0x8000_0000;
 
 const SIG_DFL: u32 = 0;
 const SIG_IGN: u32 = 1;
+/// Cannot be caught or ignored.
+pub const SIGKILL: u32 = 9;
 /// Child status changed signal number.
 pub const SIGCHLD: u32 = 17;
 

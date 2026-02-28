@@ -5,8 +5,12 @@ use crate::syscall::SYSCALL_TABLE;
 
 use crate::{
     define_syscall_handler, mm, segment,
-    syscall::{EAGAIN, ECHILD, EPERM, ESRCH, context::SyscallContext},
-    task::{self, TASK_MANAGER, is_super, task_struct::TaskState},
+    signal::{SA_NOMASK, SA_ONESHOT, SIGKILL},
+    syscall::{EAGAIN, ECHILD, EINVAL, EPERM, ESRCH, context::SyscallContext},
+    task::{
+        self, TASK_MANAGER, is_super,
+        task_struct::{NSIG, SigAction, Task, TaskState},
+    },
 };
 
 define_syscall_handler!(
@@ -171,6 +175,144 @@ define_syscall_handler!(
             .inner
             .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
         task::schedule();
+        Ok(0)
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Signal syscalls
+// ---------------------------------------------------------------------------
+
+define_syscall_handler!(
+    NR_KILL = 37,
+    fn sys_kill(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (pid_arg, sig_arg, _) = ctx.args();
+        let pid = pid_arg as i32;
+        let sig = sig_arg;
+
+        (1..=NSIG as u32)
+            .contains(&sig)
+            .then_some(())
+            .ok_or(EINVAL)?;
+
+        let current = task::current_task();
+        let current_pid = current.pcb.pid;
+        let current_euid = current.pcb.inner.exclusive(|inner| inner.identity.euid);
+
+        fn send_sig(sig: u32, task: &Task, priv_flag: bool, current_euid: u16) -> Result<(), u32> {
+            let idx = (sig - 1) as usize;
+            let allowed = priv_flag
+                || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
+                || is_super();
+            if !allowed {
+                return Err(EPERM);
+            }
+            task.pcb.inner.exclusive(|inner| {
+                inner.signal_info.signal |= 1u32 << idx;
+                if inner.sched.state == TaskState::Interruptible {
+                    inner.sched.state = TaskState::Running;
+                }
+            });
+            Ok(())
+        }
+
+        let mut retval = Ok(0u32);
+        TASK_MANAGER.exclusive(|manager| {
+            for task in manager.tasks.iter().filter_map(|t| t.as_ref()) {
+                if task.pcb.slot == 0 {
+                    continue;
+                }
+                let matches = match pid {
+                    0 => task.pcb.inner.exclusive(|i| i.relation.pgrp) == current_pid,
+                    p if p > 0 => task.pcb.pid == p as u32,
+                    -1 => true,
+                    p => task.pcb.inner.exclusive(|i| i.relation.pgrp) == (-p) as u32,
+                };
+                if matches {
+                    if let Err(e) = send_sig(sig, task, pid == 0, current_euid) {
+                        retval = Err(e);
+                    }
+                }
+            }
+        });
+        retval
+    }
+);
+
+define_syscall_handler!(
+    NR_SIGNAL = 48,
+    fn sys_signal(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (signum, handler, restorer) = ctx.args();
+
+        (1..=NSIG as u32)
+            .contains(&signum)
+            .then_some(signum)
+            .filter(|&s| s != SIGKILL)
+            .ok_or(EPERM)?;
+
+        let idx = (signum - 1) as usize;
+        let old_handler = task::current_task().pcb.inner.exclusive(|inner| {
+            let old = inner.signal_info.sigaction[idx].sa_handler;
+            inner.signal_info.sigaction[idx] = SigAction {
+                sa_handler: handler,
+                sa_mask: 0,
+                sa_flags: SA_ONESHOT | SA_NOMASK,
+                sa_restorer: restorer,
+            };
+            old
+        });
+        Ok(old_handler)
+    }
+);
+
+define_syscall_handler!(
+    NR_SIGACTION = 67,
+    fn sys_sigaction(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (signum, action_ptr, oldaction_ptr) = ctx.args();
+
+        (1..=NSIG as u32)
+            .contains(&signum)
+            .then_some(signum)
+            .filter(|&s| s != SIGKILL)
+            .ok_or(EPERM)?;
+
+        let idx = (signum - 1) as usize;
+
+        fn read_sigaction_from_user(ptr: u32) -> SigAction {
+            let base = ptr as *const u8;
+            let mut bytes = [0u8; 16];
+            for (i, byte) in bytes.iter_mut().enumerate() {
+                *byte = segment::get_fs_byte(unsafe { base.add(i) });
+            }
+            unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const SigAction) }
+        }
+
+        fn write_sigaction_to_user(ptr: u32, sa: &SigAction) {
+            mm::ensure_user_area_writable(ptr, 16);
+            let base = ptr as *mut u8;
+            let sa_bytes = sa as *const SigAction as *const [u8; 16];
+            for (i, b) in unsafe { *sa_bytes }.iter().enumerate() {
+                segment::put_fs_byte(*b, unsafe { base.add(i) });
+            }
+        }
+
+        let old_sa = task::current_task().pcb.inner.exclusive(|inner| {
+            let old = inner.signal_info.sigaction[idx].clone();
+            if action_ptr != 0 {
+                inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
+            }
+            let current = inner.signal_info.sigaction[idx].clone();
+            if (current.sa_flags & SA_NOMASK) != 0 {
+                inner.signal_info.sigaction[idx].sa_mask = 0;
+            } else {
+                inner.signal_info.sigaction[idx].sa_mask |= 1u32 << idx;
+            }
+            old
+        });
+
+        if oldaction_ptr != 0 {
+            write_sigaction_to_user(oldaction_ptr, &old_sa);
+        }
         Ok(0)
     }
 );

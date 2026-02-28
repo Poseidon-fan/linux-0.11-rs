@@ -189,12 +189,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_KILL = 37,
-    fn sys_kill(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_RENAME = 38,
     fn sys_rename(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -239,12 +233,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_BRK = 45,
     fn sys_brk(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SIGNAL = 48,
-    fn sys_signal(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
@@ -317,12 +305,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_DUP2 = 63,
     fn sys_dup2(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SIGACTION = 67,
-    fn sys_sigaction(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
