@@ -135,12 +135,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_ALARM = 27,
-    fn sys_alarm(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_FSTAT = 28,
     fn sys_fstat(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -305,18 +299,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_DUP2 = 63,
     fn sys_dup2(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SGETMASK = 68,
-    fn sys_sgetmask(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_SSETMASK = 69,
-    fn sys_ssetmask(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

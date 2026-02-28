@@ -5,10 +5,10 @@ use crate::syscall::SYSCALL_TABLE;
 
 use crate::{
     define_syscall_handler, mm, segment,
-    signal::{SA_NOMASK, SA_ONESHOT, SIGKILL},
-    syscall::{EAGAIN, ECHILD, EINVAL, EPERM, ESRCH, context::SyscallContext},
+    signal::{SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
+    syscall::{EAGAIN, ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
     task::{
-        self, TASK_MANAGER, is_super,
+        self, HZ, TASK_MANAGER, is_super,
         task_struct::{NSIG, SigAction, Task, TaskState},
     },
 };
@@ -160,10 +160,33 @@ define_syscall_handler!(
                         .inner
                         .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
                     task::schedule();
+                    if task::current_task().pcb.inner.exclusive(|inner| {
+                        inner.signal_info.signal &= !(1 << (SIGCHLD - 1));
+                        inner.signal_info.signal != 0
+                    }) {
+                        return Err(EINTR);
+                    }
                 }
                 ScanResult::NoChild => return Err(ECHILD),
             }
         }
+    }
+);
+
+define_syscall_handler!(
+    NR_ALARM = 27,
+    fn sys_alarm(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (seconds, _, _) = ctx.args();
+        let old_seconds = task::current_task().pcb.inner.exclusive(|inner| {
+            let j = task::jiffies();
+            let alarm = inner.signal_info.alarm;
+            let old = (alarm > 0 && alarm > j)
+                .then(|| (alarm - j) / HZ)
+                .unwrap_or(0);
+            inner.signal_info.alarm = (seconds > 0).then(|| j + HZ * seconds).unwrap_or(0);
+            old
+        });
+        Ok(old_seconds)
     }
 );
 
@@ -204,14 +227,11 @@ define_syscall_handler!(
             let allowed = priv_flag
                 || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
                 || is_super();
-            if !allowed {
-                return Err(EPERM);
-            }
+            allowed.then_some(()).ok_or(EPERM)?;
             task.pcb.inner.exclusive(|inner| {
                 inner.signal_info.signal |= 1u32 << idx;
-                if inner.sched.state == TaskState::Interruptible {
-                    inner.sched.state = TaskState::Running;
-                }
+                (inner.sched.state == TaskState::Interruptible)
+                    .then(|| inner.sched.state = TaskState::Running);
             });
             Ok(())
         }
@@ -266,6 +286,30 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
+    NR_SGETMASK = 68,
+    fn sys_sgetmask(_ctx: &SyscallContext) -> Result<u32, u32> {
+        Ok(task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| inner.signal_info.blocked))
+    }
+);
+
+define_syscall_handler!(
+    NR_SSETMASK = 69,
+    fn sys_ssetmask(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (newmask, _, _) = ctx.args();
+        let old = task::current_task().pcb.inner.exclusive(|inner| {
+            core::mem::replace(
+                &mut inner.signal_info.blocked,
+                newmask & !(1u32 << (SIGKILL - 1)),
+            )
+        });
+        Ok(old)
+    }
+);
+
+define_syscall_handler!(
     NR_SIGACTION = 67,
     fn sys_sigaction(ctx: &SyscallContext) -> Result<u32, u32> {
         let (signum, action_ptr, oldaction_ptr) = ctx.args();
@@ -298,21 +342,17 @@ define_syscall_handler!(
 
         let old_sa = task::current_task().pcb.inner.exclusive(|inner| {
             let old = inner.signal_info.sigaction[idx].clone();
-            if action_ptr != 0 {
+            (action_ptr != 0).then(|| {
                 inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
-            }
+            });
             let current = inner.signal_info.sigaction[idx].clone();
-            if (current.sa_flags & SA_NOMASK) != 0 {
-                inner.signal_info.sigaction[idx].sa_mask = 0;
-            } else {
-                inner.signal_info.sigaction[idx].sa_mask |= 1u32 << idx;
-            }
+            inner.signal_info.sigaction[idx].sa_mask = ((current.sa_flags & SA_NOMASK) == 0)
+                .then(|| current.sa_mask | (1u32 << idx))
+                .unwrap_or(0);
             old
         });
 
-        if oldaction_ptr != 0 {
-            write_sigaction_to_user(oldaction_ptr, &old_sa);
-        }
+        (oldaction_ptr != 0).then(|| write_sigaction_to_user(oldaction_ptr, &old_sa));
         Ok(0)
     }
 );

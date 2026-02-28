@@ -12,10 +12,16 @@ pub const SA_ONESHOT: u32 = 0x8000_0000;
 
 const SIG_DFL: u32 = 0;
 const SIG_IGN: u32 = 1;
+/// Hangup signal (sent to session when leader exits).
+pub const SIGHUP: u32 = 1;
 /// Cannot be caught or ignored.
 pub const SIGKILL: u32 = 9;
+/// Alarm clock signal number.
+pub const SIGALRM: u32 = 14;
 /// Child status changed signal number.
 pub const SIGCHLD: u32 = 17;
+/// Stop signal (cannot be caught or ignored).
+pub const SIGSTOP: u32 = 19;
 
 /// Saved register subset required by the user signal frame layout.
 #[derive(Clone, Copy)]

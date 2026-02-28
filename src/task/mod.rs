@@ -9,7 +9,7 @@ use core::{arch::asm, mem};
 use crate::{
     pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
-    signal::SIGCHLD,
+    signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
     task::task_struct::TaskState,
     trap::{set_intr_gate, set_system_gate},
 };
@@ -18,6 +18,7 @@ use self::current::{init_current_task, set_current_task};
 
 pub use current::{current_slot, current_task};
 pub use manager::{TASK_MANAGER, TASK_NUM};
+pub use timer::jiffies;
 
 /// Returns true if the current process has superuser privileges (euid == 0).
 #[inline]
@@ -50,7 +51,27 @@ pub fn schedule() {
         selector: u16,
     }
 
-    let Some(next) = TASK_MANAGER.exclusive(|manager| manager.select_next_task()) else {
+    let Some(next) = TASK_MANAGER.exclusive(|manager| {
+        const BLOCKABLE: u32 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));
+        let j = timer::jiffies();
+        manager
+            .tasks
+            .iter()
+            .filter_map(|t| t.as_ref())
+            .for_each(|task| {
+                task.pcb.inner.exclusive(|inner| {
+                    (inner.signal_info.alarm > 0 && inner.signal_info.alarm < j).then(|| {
+                        inner.signal_info.signal |= 1 << (SIGALRM - 1);
+                        inner.signal_info.alarm = 0;
+                    });
+                    let unblocked =
+                        inner.signal_info.signal & !(BLOCKABLE & inner.signal_info.blocked);
+                    (unblocked != 0 && inner.sched.state == TaskState::Interruptible)
+                        .then(|| inner.sched.state = TaskState::Running);
+                });
+            });
+        manager.select_next_task()
+    }) else {
         return;
     };
 
@@ -100,11 +121,39 @@ pub fn do_exit(code: i32) -> ! {
             .filter_map(|(_, task)| task.as_ref())
             .for_each(|task| unsafe {
                 task.pcb.inner.exclusive_unchecked(|inner| {
-                    if inner.relation.father == current_pid {
-                        inner.relation.father = 1;
-                    }
+                    (inner.relation.father == current_pid).then(|| inner.relation.father = 1);
                 });
             });
+
+        // If session leader, send SIGHUP to all tasks in same session.
+        let session = unsafe {
+            current
+                .pcb
+                .inner
+                .exclusive_unchecked(|inner| inner.relation.leader != 0)
+        };
+        if session {
+            let current_session = unsafe {
+                current
+                    .pcb
+                    .inner
+                    .exclusive_unchecked(|inner| inner.relation.session)
+            };
+            manager
+                .tasks
+                .iter()
+                .filter_map(|t| t.as_ref())
+                .filter(|task| task.pcb.slot != current_slot)
+                .for_each(|task| unsafe {
+                    task.pcb.inner.exclusive_unchecked(|inner| {
+                        (inner.relation.session == current_session).then(|| {
+                            inner.signal_info.signal |= 1 << (SIGHUP - 1);
+                            (inner.sched.state == TaskState::Interruptible)
+                                .then(|| inner.sched.state = TaskState::Running);
+                        });
+                    });
+                });
+        }
 
         unsafe {
             current.pcb.inner.exclusive_unchecked(|current_inner| {
@@ -125,9 +174,8 @@ pub fn do_exit(code: i32) -> ! {
             unsafe {
                 father_task.pcb.inner.exclusive_unchecked(|father_inner| {
                     father_inner.signal_info.signal |= 1u32 << (SIGCHLD - 1);
-                    if father_inner.sched.state == TaskState::Interruptible {
-                        father_inner.sched.state = TaskState::Running;
-                    }
+                    (father_inner.sched.state == TaskState::Interruptible)
+                        .then(|| father_inner.sched.state = TaskState::Running);
                 });
             }
         }

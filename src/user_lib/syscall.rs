@@ -33,9 +33,9 @@
 use core::arch::asm;
 
 use crate::syscall::process::{
-    NR_EXIT, NR_FORK, NR_GETEGID, NR_GETEUID, NR_GETGID, NR_GETPGRP, NR_GETPID, NR_GETPPID,
-    NR_GETUID, NR_KILL, NR_PAUSE, NR_SETGID, NR_SETPGID, NR_SETREGID, NR_SETREUID, NR_SETSID,
-    NR_SETUID, NR_SIGACTION, NR_SIGNAL, NR_WAITPID,
+    NR_ALARM, NR_EXIT, NR_FORK, NR_GETEGID, NR_GETEUID, NR_GETGID, NR_GETPGRP, NR_GETPID,
+    NR_GETPPID, NR_GETUID, NR_KILL, NR_PAUSE, NR_SETGID, NR_SETPGID, NR_SETREGID, NR_SETREUID,
+    NR_SETSID, NR_SETUID, NR_SGETMASK, NR_SIGACTION, NR_SIGNAL, NR_SSETMASK, NR_WAITPID,
 };
 
 // ===========================================================================
@@ -172,6 +172,7 @@ use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_WAITPID => waitpid(pid: i32, stat_addr: *mut u32, options: u32) -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
+use_syscall!(NR_ALARM => alarm(seconds: u32) -> u32);
 use_syscall!(NR_GETPID => getpid() -> u32);
 use_syscall!(NR_GETPPID => getppid() -> u32);
 use_syscall!(NR_GETPGRP => getpgrp() -> u32);
@@ -188,4 +189,6 @@ use_syscall!(NR_SETSID => setsid() -> u32);
 use_syscall!(NR_KILL => kill(pid: i32, sig: i32) -> u32);
 use_syscall!(NR_SIGNAL => signal(signum: i32, handler: u32, restorer: u32) -> u32);
 use_syscall!(NR_SIGACTION => sigaction(signum: i32, act: u32, oldact: u32) -> u32);
+use_syscall!(NR_SGETMASK => sgetmask() -> u32);
+use_syscall!(NR_SSETMASK => ssetmask(newmask: u32) -> u32);
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
