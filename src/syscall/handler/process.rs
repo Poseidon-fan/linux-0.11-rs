@@ -11,6 +11,7 @@ use crate::{
         self, HZ, TASK_MANAGER, is_super,
         task_struct::{NSIG, SigAction, Task, TaskState},
     },
+    time,
 };
 
 define_syscall_handler!(
@@ -524,6 +525,87 @@ define_syscall_handler!(
     fn sys_setregid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (rgid, egid, _) = ctx.args();
         sys_setregid_impl(rgid, egid)
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Time and system info syscalls
+// ---------------------------------------------------------------------------
+
+define_syscall_handler!(
+    NR_TIME = 13,
+    fn sys_time(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (tloc, _, _) = ctx.args();
+        let t = time::current_time();
+        if tloc != 0 {
+            mm::ensure_user_area_writable(tloc, 4);
+            segment::put_fs_long(t, tloc as *mut u32);
+        }
+        Ok(t)
+    }
+);
+
+define_syscall_handler!(
+    NR_TIMES = 43,
+    fn sys_times(ctx: &SyscallContext) -> Result<u32, u32> {
+        // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
+        //
+        //   offset  size  field       description
+        //   ------  ----  ----------  -----------------------------------------
+        //   0x00    4     tms_utime   User CPU time (clock ticks)
+        //   0x04    4     tms_stime   System CPU time (clock ticks)
+        //   0x08    4     tms_cutime  Child user CPU time (waited children)
+        //   0x0C    4     tms_cstime  Child system CPU time (waited children)
+        let (tbuf, _, _) = ctx.args();
+        if tbuf != 0 {
+            let (utime, stime, cutime, cstime) =
+                task::current_task().pcb.inner.exclusive(|inner| {
+                    (
+                        inner.acct.utime,
+                        inner.acct.stime,
+                        inner.acct.cutime,
+                        inner.acct.cstime,
+                    )
+                });
+            mm::ensure_user_area_writable(tbuf, 16);
+            let base = tbuf as *mut u32;
+            unsafe {
+                segment::put_fs_long(utime, base);
+                segment::put_fs_long(stime, base.add(1));
+                segment::put_fs_long(cutime, base.add(2));
+                segment::put_fs_long(cstime, base.add(3));
+            }
+        }
+        Ok(task::jiffies())
+    }
+);
+
+define_syscall_handler!(
+    NR_UNAME = 59,
+    fn sys_uname(ctx: &SyscallContext) -> Result<u32, u32> {
+        // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
+        //
+        //   offset  size  field      description
+        //   ------  ----  ---------  -----------------------------------------
+        //   0x00    9     sysname    Operating system name (e.g. "linux .0")
+        //   0x09    9     nodename   Network node name
+        //   0x12    9     release    Kernel release
+        //   0x1B    9     version    Kernel version
+        //   0x24    9     machine    Hardware identifier
+        //
+        // Each field is char[9], no null terminator in the struct.
+        let (name, _, _) = ctx.args();
+        if name == 0 {
+            return Err(EINVAL);
+        }
+        // Match "linux .0", "nodename", "release ", "version ", "machine " (each char[9])
+        const UTSNAME: &[u8; 45] = b"linux .0\0nodename\0release \0version \0machine \0";
+        mm::ensure_user_area_writable(name, 45);
+        let base = name as *mut u8;
+        for (i, &b) in UTSNAME.iter().enumerate() {
+            segment::put_fs_byte(b, unsafe { base.add(i) });
+        }
+        Ok(0)
     }
 );
 

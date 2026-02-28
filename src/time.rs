@@ -3,10 +3,15 @@
 //! Reads the current time from CMOS RTC (Real-Time Clock) at boot
 //! and converts it to Unix timestamp (seconds since 1970-01-01 00:00:00 UTC).
 
+use core::ptr;
+
 use crate::{
     pmio::{inb_p, outb_p},
-    println,
+    println, task,
 };
+
+/// Unix timestamp at kernel boot (seconds since 1970-01-01 00:00:00 UTC).
+static mut STARTUP_TIME: u32 = 0;
 
 /// Broken-down time structure (similar to ISO C `struct tm`).
 struct Time {
@@ -58,8 +63,23 @@ pub fn init() {
             };
         }
     };
-    let startup_time = kernel_mktime(&time);
-    println!("startup time: {}", startup_time);
+    let t = kernel_mktime(&time);
+    unsafe {
+        ptr::write(ptr::addr_of_mut!(STARTUP_TIME), t);
+    }
+    println!("startup time: {}", t);
+}
+
+/// Returns the Unix timestamp at kernel boot.
+#[inline]
+pub fn startup_time() -> u32 {
+    unsafe { ptr::read_volatile(ptr::addr_of!(STARTUP_TIME)) }
+}
+
+/// Returns current Unix time (startup_time + elapsed seconds since boot).
+#[inline]
+pub fn current_time() -> u32 {
+    startup_time() + task::jiffies() / task::HZ
 }
 
 /// Converts a [`Time`] struct to Unix timestamp.

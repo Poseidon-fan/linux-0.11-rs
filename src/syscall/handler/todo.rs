@@ -69,12 +69,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_TIME = 13,
-    fn sys_time(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_MKNOD = 14,
     fn sys_mknod(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -213,12 +207,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    NR_TIMES = 43,
-    fn sys_times(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     NR_PROF = 44,
     fn sys_prof(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -269,12 +257,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     NR_ULIMIT = 58,
     fn sys_ulimit(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    NR_UNAME = 59,
-    fn sys_uname(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

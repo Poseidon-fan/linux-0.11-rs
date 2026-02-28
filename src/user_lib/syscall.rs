@@ -35,7 +35,8 @@ use core::arch::asm;
 use crate::syscall::process::{
     NR_ALARM, NR_EXIT, NR_FORK, NR_GETEGID, NR_GETEUID, NR_GETGID, NR_GETPGRP, NR_GETPID,
     NR_GETPPID, NR_GETUID, NR_KILL, NR_PAUSE, NR_SETGID, NR_SETPGID, NR_SETREGID, NR_SETREUID,
-    NR_SETSID, NR_SETUID, NR_SGETMASK, NR_SIGACTION, NR_SIGNAL, NR_SSETMASK, NR_WAITPID,
+    NR_SETSID, NR_SETUID, NR_SGETMASK, NR_SIGACTION, NR_SIGNAL, NR_SSETMASK, NR_TIME, NR_TIMES,
+    NR_UNAME, NR_WAITPID,
 };
 
 // ===========================================================================
@@ -191,4 +192,7 @@ use_syscall!(NR_SIGNAL => signal(signum: i32, handler: u32, restorer: u32) -> u3
 use_syscall!(NR_SIGACTION => sigaction(signum: i32, act: u32, oldact: u32) -> u32);
 use_syscall!(NR_SGETMASK => sgetmask() -> u32);
 use_syscall!(NR_SSETMASK => ssetmask(newmask: u32) -> u32);
+use_syscall!(NR_TIME => time(tloc: *mut u32) -> u32);
+use_syscall!(NR_TIMES => times(tbuf: *mut u8) -> u32);
+use_syscall!(NR_UNAME => uname(name: *mut u8) -> u32);
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
