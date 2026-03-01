@@ -9,6 +9,8 @@
 extern crate alloc;
 
 mod boot;
+mod driver;
+mod fs;
 mod logging;
 mod mm;
 mod panic;
