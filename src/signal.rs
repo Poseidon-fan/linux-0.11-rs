@@ -16,6 +16,8 @@ const SIG_IGN: u32 = 1;
 pub const SIGHUP: u32 = 1;
 /// Cannot be caught or ignored.
 pub const SIGKILL: u32 = 9;
+/// Invalid memory reference signal number.
+pub const SIGSEGV: u32 = 11;
 /// Alarm clock signal number.
 pub const SIGALRM: u32 = 14;
 /// Child status changed signal number.

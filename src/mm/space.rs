@@ -9,7 +9,7 @@
 //! corresponding page directory entries in the shared page directory.
 
 use alloc::collections::btree_map::BTreeMap;
-use core::ptr;
+use core::arch::asm;
 
 use crate::mm::{
     address::{LinPageNum, PhysAddr, PhysPageNum},
@@ -90,6 +90,41 @@ impl MemorySpace {
         Self::copy_page(old_ppn, new_ppn);
     }
 
+    /// Ensure `fault_page` is mapped to a present, writable, user page.
+    ///
+    /// This is the anonymous-demand-paging path for no-present page faults:
+    /// - Allocate a page table when the PDE is missing.
+    /// - Allocate a zeroed data frame.
+    /// - Install a user/writable/present PTE.
+    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), ()> {
+        let pde_index = fault_page.pde_index();
+        let local_pde_index = self.local_pde_index(pde_index).ok_or(())?;
+
+        if !page::read_pde(pde_index).is_present() {
+            let page_table = PageTable::new().ok_or(())?;
+            page::write_pde(
+                pde_index,
+                PageDirectoryEntry::user_page_table(page_table.phys_addr()),
+            );
+            self.page_tables[local_pde_index] = Some(page_table);
+        }
+
+        let pte = self.find_pte(fault_page).ok_or(())?;
+        if pte.is_present() {
+            return Ok(());
+        }
+
+        let frame = frame::alloc().ok_or(())?;
+        let ppn = frame.ppn;
+        *pte = PageTableEntry::new(
+            ppn,
+            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
+        );
+        self.data_frames.insert(fault_page, frame);
+        page::invalidate_tlb();
+        Ok(())
+    }
+
     /// Find the mutable PTE for a linear page.
     ///
     /// Returns `None` when the page is outside this memory space range or
@@ -111,16 +146,38 @@ impl MemorySpace {
         Some(&mut page_table[page.pte_index()])
     }
 
+    /// Translate a global PDE index into the per-process 0..16 slot index.
+    #[inline]
+    fn local_pde_index(&self, pde_index: usize) -> Option<usize> {
+        (self.pde_base..self.pde_base + PDES_PER_PROCESS)
+            .contains(&pde_index)
+            .then_some(pde_index - self.pde_base)
+    }
+
     /// Copy one 4KB page from `src_page` to `dst_page`.
     fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
         let src_phys: PhysAddr = src_page.into();
         let dst_phys: PhysAddr = dst_page.into();
+        // Use raw x86 loads/stores so physical address 0 remains a valid source.
+        // Rust pointer intrinsics reject null pointers even in bare-metal use.
+        let src = src_phys.as_u32();
+        let dst = dst_phys.as_u32();
+        let words = PAGE_SIZE / 4;
         unsafe {
-            ptr::copy_nonoverlapping(
-                src_phys.as_ptr::<u8>(),
-                dst_phys.as_mut_ptr::<u8>(),
-                PAGE_SIZE as usize,
-            )
+            asm!(
+                "1:",
+                "mov ({src}), {tmp:e}",
+                "mov {tmp:e}, ({dst})",
+                "add $4, {src}",
+                "add $4, {dst}",
+                "sub $1, {words}",
+                "jnz 1b",
+                src = in(reg) src,
+                dst = in(reg) dst,
+                words = in(reg) words,
+                tmp = out(reg) _,
+                options(att_syntax, nostack),
+            );
         }
     }
 
