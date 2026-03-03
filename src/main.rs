@@ -46,6 +46,7 @@ pub extern "C" fn rust_main() -> ! {
     trap::init();
     time::init();
     task::init();
+    fs::buffer::init(buffer_memory_end);
     println!("init complete");
 
     sync::sti();
