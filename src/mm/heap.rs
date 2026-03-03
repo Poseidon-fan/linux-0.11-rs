@@ -5,39 +5,29 @@
 //! # Memory Layout
 //!
 //! ```text
-//!   0x00000 ┌─────────────────┐
-//!           │  Kernel Code    │
-//!           │  & Data         │
-//!   ekernel ├─────────────────┤
-//!           │                 │
-//!   0x70000 ├─────────────────┤ ← HEAP_END - HEAP_SIZE
-//!           │  Kernel Heap    │   (128 KB)
-//!   0x90000 ├─────────────────┤ ← HEAP_END
-//!           │  BIOS Info      │
-//!   0xA0000 ├─────────────────┤
-//!           │  VGA / ROM      │   (Reserved, not usable)
-//!   0xFFFFF └─────────────────┘
+//!   0x00000000 ┌───────────────────────────┐
+//!              │ Kernel image + static data│
+//!   0x00090000 ├───────────────────────────┤
+//!              │ Boot params scratch area  │
+//!   0x000A0000 ├───────────────────────────┤
+//!              │ VGA / ROM (reserved)      │
+//!   0x00100000 ├───────────────────────────┤ ← HEAP_START
+//!              │ Kernel heap               │   (1 MB)
+//!   0x00200000 ├───────────────────────────┤ ← HEAP_END / LOW_MEM
+//!              │ Frame-managed memory ...  │
+//!              └───────────────────────────┘
 //! ```
 
 use buddy_system_allocator::LockedHeap;
 
 use crate::println;
 
+/// Start address of the kernel heap (inclusive).
+pub const HEAP_START: usize = 0x100000;
 /// End address of the kernel heap (exclusive).
-///
-/// Kernel claims 0 ~ 1M memory space, starting from address 0x0.
-/// However, 0xA0000 - 0xFFFFF (640KB - 1MB) is reserved for VGA/ROM,
-/// and some info data is stored at 0x90000 (useless after initialization).
-/// We place the kernel heap right below 0x90000 to avoid conflicts.
-const HEAP_END: usize = 0x90000;
-
-/// Size of the kernel heap in bytes (128 KB).
-const HEAP_SIZE: usize = 128 * 1024;
-
-unsafe extern "C" {
-    /// Linker-defined symbol marking the end of the kernel image.
-    fn ekernel();
-}
+pub const HEAP_END: usize = 0x200000;
+/// Size of the kernel heap in bytes (1 MB).
+pub const HEAP_SIZE: usize = HEAP_END - HEAP_START;
 
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
@@ -48,17 +38,9 @@ fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
 }
 
 /// Initializes the kernel heap allocator.
-///
-/// # Panics
-/// Panics if the kernel image overlaps with the heap region.
 pub(super) fn init() {
-    assert!(
-        (ekernel as usize) < HEAP_END - HEAP_SIZE,
-        "kernel overlaps with heap"
-    );
-
     unsafe {
-        HEAP_ALLOCATOR.lock().init(HEAP_END - HEAP_SIZE, HEAP_SIZE);
+        HEAP_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }
 
     #[cfg(debug_assertions)]

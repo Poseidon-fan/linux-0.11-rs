@@ -12,10 +12,11 @@ pub const PAGE_SIZE: u32 = 4096;
 /// identity-mapped.  They are never tracked by the frame allocator's
 /// reference-counting `mem_map`, so operations like `share()` and the
 /// `Drop` impl on [`PhysFrame`] silently skip them.
-pub const LOW_MEM: u32 = 0x100000;
+pub const LOW_MEM: u32 = 0x200000;
 
-const PAGING_MEMORY: u32 = 15 * 1024 * 1024;
+const PAGING_MEMORY: u32 = 14 * 1024 * 1024;
 const PAGING_PAGES: u32 = PAGING_MEMORY >> 12;
+const HIGH_MEMORY: u32 = LOW_MEM + PAGING_MEMORY;
 const UNPAGED_PAGES: u32 = LOW_MEM >> 12;
 const BITMAP_WORD_BITS: usize = u32::BITS as usize;
 const FREE_BITMAP_WORDS: usize = (PAGING_PAGES as usize).div_ceil(BITMAP_WORD_BITS);
@@ -123,6 +124,25 @@ impl PhysFrameRange {
 impl FrameAllocator {
     fn init(&mut self, start_mem: u32, end_mem: u32) {
         const USED: u8 = 100;
+        assert!(
+            start_mem >= LOW_MEM,
+            "frame init start_mem {:#x} is below LOW_MEM {:#x}",
+            start_mem,
+            LOW_MEM
+        );
+        assert!(
+            start_mem <= end_mem,
+            "frame init start_mem {:#x} must be <= end_mem {:#x}",
+            start_mem,
+            end_mem
+        );
+        assert!(
+            end_mem <= HIGH_MEMORY,
+            "frame init end_mem {:#x} exceeds high memory limit {:#x}",
+            end_mem,
+            HIGH_MEMORY
+        );
+
         self.mem_map.fill(USED);
         self.free_bitmap.fill(0);
         let start_no = (PhysAddr::from(start_mem).floor().0 - UNPAGED_PAGES) as usize;

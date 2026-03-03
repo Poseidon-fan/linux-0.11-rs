@@ -33,9 +33,9 @@ pub extern "C" fn rust_main() -> ! {
     let memory_end = ((1 << 20) + ((ext_mem_k() as u32) << 10)) & 0xfffff000;
     let memory_end = memory_end.min(16 * 1024 * 1024);
     let buffer_memory_end = match memory_end {
-        m if m > 12 * 1024 * 1024 => 4 * 1024 * 1024,
-        m if m > 6 * 1024 * 1024 => 2 * 1024 * 1024,
-        _ => 1024 * 1024,
+        m if m > 12 * 1024 * 1024 => 5 * 1024 * 1024,
+        m if m > 6 * 1024 * 1024 => 3 * 1024 * 1024,
+        _ => panic!("memory must be > 6MB"),
     };
     let main_memory_start = buffer_memory_end;
 
@@ -46,7 +46,6 @@ pub extern "C" fn rust_main() -> ! {
     trap::init();
     time::init();
     task::init();
-    fs::buffer::init(buffer_memory_end);
     println!("init complete");
 
     sync::sti();

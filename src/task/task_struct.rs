@@ -82,7 +82,8 @@ pub struct TaskPage {
 /// When a `Task` is dropped, the physical frames are automatically deallocated.
 ///
 /// For task 0 (idle process), the frames are statically allocated in kernel
-/// memory (below 1MB), so drop is a no-op (FrameAllocator ignores them).
+/// memory below LOW_MEM (2MB in current layout), so drop is a no-op
+/// (FrameAllocator ignores them).
 pub struct Task(PhysFrameRange);
 
 /// Local Descriptor Table (LDT) for a task.
@@ -316,7 +317,7 @@ impl Task {
     ///
     /// The address must point to a valid, page-aligned TaskPage that:
     /// - Lives for the entire kernel lifetime (static allocation)
-    /// - Is located below 1MB (so frame allocator won't try to free it)
+    /// - Is located below LOW_MEM (so frame allocator won't try to free it)
     pub unsafe fn from_static_addr(addr: u32) -> Self {
         use crate::mm::address::PhysPageNum;
         Self(PhysFrameRange {

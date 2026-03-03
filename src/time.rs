@@ -7,7 +7,7 @@ use core::ptr;
 
 use crate::{
     pmio::{inb_p, outb_p},
-    println, task,
+    task,
 };
 
 /// Unix timestamp at kernel boot (seconds since 1970-01-01 00:00:00 UTC).
@@ -67,7 +67,6 @@ pub fn init() {
     unsafe {
         ptr::write(ptr::addr_of_mut!(STARTUP_TIME), t);
     }
-    println!("startup time: {}", t);
 }
 
 /// Returns the Unix timestamp at kernel boot.

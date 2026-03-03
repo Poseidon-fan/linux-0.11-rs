@@ -25,7 +25,7 @@ unsafe extern "C" {
 
 /// Statically allocated memory for task 0 (idle process).
 ///
-/// Located in kernel memory (below 1MB), so the frame allocator
+/// Located in kernel memory below LOW_MEM (2MB in current layout), so the frame allocator
 /// won't try to free it when the Task is dropped.
 static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 
