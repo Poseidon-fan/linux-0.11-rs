@@ -6,31 +6,35 @@
 //!
 //! Synchronization contract:
 //! - Task state changes use `pcb.inner.exclusive` for IRQ exclusion.
-//! - `queue` itself is protected by the caller through `&mut WaitQueue`.
+//! - Queue slot mutation is protected internally by `KernelCell`.
 
 use alloc::sync::{Arc, Weak};
 
-use crate::task;
+use crate::{sync::KernelCell, task};
 
 use super::task_struct::{Task, TaskState, TaskState::Running};
 
 /// Single-slot wait queue.
 pub struct WaitQueue {
-    slot: Option<Weak<Task>>,
+    slot: KernelCell<Option<Weak<Task>>>,
 }
 
 impl WaitQueue {
     /// Create an empty wait queue.
     pub const fn new() -> Self {
-        Self { slot: None }
+        Self {
+            slot: KernelCell::new(None),
+        }
     }
 
     /// Put current task into uninterruptible sleep.
-    pub fn sleep_on(queue: &mut WaitQueue) {
+    pub fn sleep_on(&self) {
         let current = task::current_task();
         assert_ne!(current.pcb.slot, 0, "task[0] trying to sleep");
 
-        let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+        let handoff_slot = self
+            .slot
+            .exclusive(|slot| slot.replace(Arc::downgrade(&current)));
         current
             .pcb
             .inner
@@ -49,12 +53,14 @@ impl WaitQueue {
     ///
     /// If another task replaces this queue slot while we are sleeping,
     /// wake that task and retry until the slot settles.
-    pub fn interruptible_sleep_on(queue: &mut WaitQueue) {
+    pub fn interruptible_sleep_on(&self) {
         let current = task::current_task();
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
-        let handoff_slot = queue.slot.replace(Arc::downgrade(&current));
+        let handoff_slot = self
+            .slot
+            .exclusive(|slot| slot.replace(Arc::downgrade(&current)));
         current
             .pcb
             .inner
@@ -63,23 +69,29 @@ impl WaitQueue {
         loop {
             task::schedule();
 
-            match queue.slot.as_ref().and_then(Weak::upgrade) {
-                Some(task) if task.pcb.slot != current_slot => {
-                    // Another task replaced our queue slot while we slept.
-                    // Wake that task first, then mark ourselves interruptible
-                    // again and schedule once more until our slot settles.
-                    current.pcb.inner.exclusive(|current_inner| {
-                        current_inner.sched.state = TaskState::Interruptible;
-                        task.pcb
-                            .inner
-                            .exclusive(|task_inner| task_inner.sched.state = Running);
+            let replaced =
+                self.slot
+                    .exclusive(|slot| match slot.as_ref().and_then(Weak::upgrade) {
+                        Some(task) if task.pcb.slot != current_slot => Some(task),
+                        _ => {
+                            *slot = None;
+                            None
+                        }
                     });
-                }
-                _ => {
-                    queue.slot = None;
-                    break;
-                }
-            }
+
+            let Some(task) = replaced else {
+                break;
+            };
+
+            // Another task replaced our queue slot while we slept.
+            // Wake that task first, then mark ourselves interruptible
+            // again and schedule once more until our slot settles.
+            current.pcb.inner.exclusive(|current_inner| {
+                current_inner.sched.state = TaskState::Interruptible;
+            });
+            task.pcb
+                .inner
+                .exclusive(|task_inner| task_inner.sched.state = Running);
         }
 
         if let Some(task) = handoff_slot {
@@ -88,10 +100,16 @@ impl WaitQueue {
     }
 
     /// Wake one waiter, if present.
-    pub fn wake_up(queue: &mut WaitQueue) {
-        if let Some(task) = queue.slot.take() {
+    pub fn wake_up(&self) {
+        if let Some(task) = self.slot.exclusive(|slot| slot.take()) {
             Self::wake_task(task);
         }
+    }
+
+    /// Return whether the queue currently has a live waiter.
+    pub fn has_waiter(&self) -> bool {
+        self.slot
+            .exclusive(|slot| slot.as_ref().and_then(Weak::upgrade).is_some())
     }
 
     /// Wake one task by weak reference.

@@ -27,7 +27,8 @@ use crate::{
     driver::DevNum,
     fs::{BLOCK_SIZE, BlockNr},
     mm::frame::LOW_MEM,
-    sync::KernelCell,
+    sync::{KernelCell, cli, sti},
+    task::wait_queue::WaitQueue,
 };
 
 /// Block size as `u32` for address arithmetic.
@@ -43,7 +44,6 @@ pub struct BufferKey {
 }
 
 /// Mutable state protected by [`KernelCell`] inside each buffer handle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BufferState {
     /// Current `(dev, block)` binding. `None` means not indexed yet.
     pub key: Option<BufferKey>,
@@ -65,6 +65,8 @@ pub struct BufferHandle {
     pub data: NonNull<u8>,
     /// Mutable status flags and logical refcount.
     pub state: KernelCell<BufferState>,
+    /// Wait queue used by tasks waiting for this buffer's I/O lock.
+    pub wait_queue: WaitQueue,
 }
 
 intrusive_adapter!(
@@ -95,6 +97,13 @@ pub fn init(buffer_memory_end: u32) {
     });
 }
 
+/// Return a cloned handle to the first buffer in list order.
+///
+/// The returned handle can be used outside manager critical sections.
+pub fn first_buffer_handle() -> Option<Arc<BufferHandle>> {
+    BUFFER_MANAGER.exclusive(|manager| manager.buffers.front())
+}
+
 lazy_static! {
     /// Global singleton manager for the buffer-cache metadata graph.
     pub static ref BUFFER_MANAGER: KernelCell<BufferManager> =
@@ -121,7 +130,40 @@ impl BufferHandle {
             buffers_link: LinkedListLink::new(),
             data,
             state: KernelCell::new(BufferState::empty()),
+            wait_queue: WaitQueue::new(),
         }
+    }
+
+    /// Wait until this buffer is no longer marked as I/O locked.
+    ///
+    /// Use `cli` and `sti` manually instead of `TaskIrqGuard` to avoid task switching
+    /// across the lock check and sleep enqueue.
+    pub fn wait(&self) {
+        cli();
+        while self.state.exclusive(|state| state.io_locked) {
+            self.wait_queue.sleep_on();
+        }
+        sti();
+    }
+
+    /// Mark this buffer as I/O locked.
+    pub fn lock(&self) {
+        self.state.exclusive(|state| {
+            state.io_locked = true;
+        });
+    }
+
+    /// Clear I/O lock and wake one waiter.
+    pub fn unlock(&self) {
+        self.state.exclusive(|state| {
+            state.io_locked = false;
+        });
+        self.wait_queue.wake_up();
+    }
+
+    /// Return whether this buffer currently has a queued waiter.
+    pub fn has_waiter(&self) -> bool {
+        self.wait_queue.has_waiter()
     }
 }
 
@@ -140,11 +182,6 @@ impl BufferList {
         Self {
             list: LinkedList::new(BufferAdapter::new()),
         }
-    }
-
-    /// Returns `true` when the list has no buffer handles.
-    pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
     }
 
     /// Count current list nodes.
@@ -167,27 +204,6 @@ impl BufferList {
         self.list.front().clone_pointer()
     }
 
-    /// Move an existing node to list tail.
-    ///
-    /// Returns `false` if the node is not in this list.
-    pub fn move_to_back(&mut self, handle: &Arc<BufferHandle>) -> bool {
-        let ptr = Arc::as_ptr(handle);
-        if !self.contains_ptr(ptr) {
-            return false;
-        }
-
-        // SAFETY: Membership was verified by `contains_ptr`, and no mutation
-        // happens between the membership check and cursor creation.
-        let node = unsafe {
-            self.list
-                .cursor_mut_from_ptr(ptr)
-                .remove()
-                .expect("contains_ptr verified node membership")
-        };
-        self.list.push_back(node);
-        true
-    }
-
     /// Remove all nodes from the list.
     pub fn clear(&mut self) {
         while self.pop_front().is_some() {}
@@ -196,13 +212,6 @@ impl BufferList {
     /// Iterate over buffer handles in list order.
     pub fn iter(&self) -> impl Iterator<Item = &BufferHandle> {
         self.list.iter()
-    }
-
-    /// Check whether the list currently contains `ptr`.
-    fn contains_ptr(&self, ptr: *const BufferHandle) -> bool {
-        self.list
-            .iter()
-            .any(|item| core::ptr::eq(item as *const BufferHandle, ptr))
     }
 }
 

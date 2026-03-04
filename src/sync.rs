@@ -54,6 +54,11 @@ lazy_static! {
     static ref SYNC_IRQ_STATE: AtomicU32 = AtomicU32::new(0);
 }
 
+#[inline]
+pub fn current_irq_depth() -> u32 {
+    SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK
+}
+
 /// Save current EFLAGS and disable interrupts.
 #[inline]
 fn read_eflags_and_cli() -> u32 {

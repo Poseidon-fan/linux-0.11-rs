@@ -10,6 +10,7 @@ use crate::{
     pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
+    sync,
     task::task_struct::TaskState,
     trap::{set_intr_gate, set_system_gate},
 };
@@ -50,6 +51,10 @@ pub fn schedule() {
         offset: u32,
         selector: u16,
     }
+    assert!(
+        sync::current_irq_depth() == 0,
+        "TaskIrqGuard already nested on schedule"
+    );
 
     let Some(next) = TASK_MANAGER.exclusive(|manager| {
         const BLOCKABLE: u32 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));
