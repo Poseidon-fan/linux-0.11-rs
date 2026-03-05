@@ -44,6 +44,7 @@ pub extern "C" fn rust_main() -> ! {
 
     mm::init(main_memory_start, memory_end);
     trap::init();
+    driver::blk::blk_dev_init();
     time::init();
     task::init();
     fs::buffer::init(buffer_memory_end);

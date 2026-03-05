@@ -196,4 +196,3 @@ use_syscall!(NR_TIME => time(tloc: *mut u32) -> u32);
 use_syscall!(NR_TIMES => times(tbuf: *mut u8) -> u32);
 use_syscall!(NR_UNAME => uname(name: *mut u8) -> u32);
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
-use_syscall!(crate::syscall::NR_TEST1 => test1() -> u32);

@@ -11,8 +11,6 @@ use core::{
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use crate::sync::TaskIrqGuard;
-
 use super::task_struct::Task;
 
 /// Raw pointer to the current task object.
@@ -29,7 +27,6 @@ static CURRENT_TASK: AtomicPtr<Task> = AtomicPtr::new(null_mut());
 ///
 /// Panics if called before `task::init()` initializes current-task tracking.
 pub fn current_task() -> Arc<Task> {
-    let _guard = TaskIrqGuard::enter();
     let ptr = CURRENT_TASK.load(Ordering::Acquire);
     assert!(
         !ptr.is_null(),

@@ -18,6 +18,7 @@
 
 use alloc::sync::Arc;
 use core::ptr::NonNull;
+use log::warn;
 
 use hashbrown::HashMap;
 use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
@@ -27,7 +28,7 @@ use crate::{
     driver::DevNum,
     fs::{BLOCK_SIZE, BlockNr},
     mm::frame::LOW_MEM,
-    sync::{KernelCell, cli, sti},
+    sync::{self, KernelCell},
     task::wait_queue::WaitQueue,
 };
 
@@ -134,36 +135,53 @@ impl BufferHandle {
         }
     }
 
-    /// Wait until this buffer is no longer marked as I/O locked.
+    /// Wait until this buffer is no longer under I/O lock.
     ///
-    /// Use `cli` and `sti` manually instead of `TaskIrqGuard` to avoid task switching
-    /// across the lock check and sleep enqueue.
+    /// Design note:
+    /// This path may sleep and cross a scheduling point, so it must not hold
+    /// a `KernelCell` mutable borrow across `schedule()`. We therefore:
+    /// 1. mask interrupts,
+    /// 2. check lock flag and sleep if needed,
+    /// 3. re-check after wakeup in a loop,
+    /// 4. restore interrupt state to enabled on exit.
     pub fn wait(&self) {
-        cli();
-        while self.state.exclusive(|state| state.io_locked) {
-            self.wait_queue.sleep_on();
+        assert!(sync::current_irq_depth() == 0);
+        sync::cli();
+        unsafe {
+            while self.state.exclusive_unchecked(|state| state.io_locked) {
+                WaitQueue::sleep_on(&self.wait_queue);
+            }
         }
-        sti();
+        sync::sti();
     }
 
-    /// Mark this buffer as I/O locked.
+    /// Acquire this buffer's I/O lock, sleeping if another task holds it.
+    ///
+    /// Design note:
+    /// Lock ownership transition (`false -> true`) is done inside the same
+    /// IRQ-masked loop as the lock-state check so no wakeup edge is missed.
+    /// No guard is kept across sleep, because sleeping while holding a borrow
+    /// would conflict with scheduler requirements.
     pub fn lock(&self) {
-        self.state.exclusive(|state| {
-            state.io_locked = true;
-        });
+        assert!(sync::current_irq_depth() == 0);
+        sync::cli();
+        unsafe {
+            while self.state.exclusive_unchecked(|state| state.io_locked) {
+                WaitQueue::sleep_on(&self.wait_queue);
+            }
+            self.state
+                .exclusive_unchecked(|state| state.io_locked = true);
+        }
+        sync::sti();
     }
 
-    /// Clear I/O lock and wake one waiter.
+    /// Release this buffer's I/O lock and wake one waiter.
     pub fn unlock(&self) {
         self.state.exclusive(|state| {
+            (!state.io_locked).then(|| warn!("buffer not locked"));
             state.io_locked = false;
         });
-        self.wait_queue.wake_up();
-    }
-
-    /// Return whether this buffer currently has a queued waiter.
-    pub fn has_waiter(&self) -> bool {
-        self.wait_queue.has_waiter()
+        WaitQueue::wake_up(&self.wait_queue);
     }
 }
 
@@ -265,7 +283,15 @@ impl BufferManager {
         handle.state.exclusive(|state| {
             state.key = Some(key);
         });
-        self.buffer_index.insert(key, handle)
+        let replaced = self.buffer_index.insert(key, handle);
+        if let Some(old_handle) = replaced.as_ref() {
+            old_handle.state.exclusive(|state| {
+                if state.key == Some(key) {
+                    state.key = None;
+                }
+            });
+        }
+        replaced
     }
 
     /// Remove a key mapping and clear matching handle state key.

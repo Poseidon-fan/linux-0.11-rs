@@ -28,11 +28,11 @@ impl WaitQueue {
     }
 
     /// Put current task into uninterruptible sleep.
-    pub fn sleep_on(&self) {
+    pub fn sleep_on(wait_queue: &WaitQueue) {
         let current = task::current_task();
         assert_ne!(current.pcb.slot, 0, "task[0] trying to sleep");
 
-        let handoff_slot = self
+        let handoff_slot = wait_queue
             .slot
             .exclusive(|slot| slot.replace(Arc::downgrade(&current)));
         current
@@ -53,12 +53,12 @@ impl WaitQueue {
     ///
     /// If another task replaces this queue slot while we are sleeping,
     /// wake that task and retry until the slot settles.
-    pub fn interruptible_sleep_on(&self) {
+    pub fn interruptible_sleep_on(wait_queue: &WaitQueue) {
         let current = task::current_task();
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] trying to sleep");
 
-        let handoff_slot = self
+        let handoff_slot = wait_queue
             .slot
             .exclusive(|slot| slot.replace(Arc::downgrade(&current)));
         current
@@ -70,7 +70,8 @@ impl WaitQueue {
             task::schedule();
 
             let replaced =
-                self.slot
+                wait_queue
+                    .slot
                     .exclusive(|slot| match slot.as_ref().and_then(Weak::upgrade) {
                         Some(task) if task.pcb.slot != current_slot => Some(task),
                         _ => {
@@ -100,8 +101,8 @@ impl WaitQueue {
     }
 
     /// Wake one waiter, if present.
-    pub fn wake_up(&self) {
-        if let Some(task) = self.slot.exclusive(|slot| slot.take()) {
+    pub fn wake_up(wait_queue: &WaitQueue) {
+        if let Some(task) = wait_queue.slot.exclusive(|slot| slot.take()) {
             Self::wake_task(task);
         }
     }

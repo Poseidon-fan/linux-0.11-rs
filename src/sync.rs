@@ -70,7 +70,7 @@ fn read_eflags_and_cli() -> u32 {
 }
 
 /// RAII guard for per-task IRQ nesting in [`KernelCell::exclusive`].
-pub struct TaskIrqGuard;
+struct TaskIrqGuard;
 
 impl TaskIrqGuard {
     #[inline]
