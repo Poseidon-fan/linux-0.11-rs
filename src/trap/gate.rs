@@ -66,7 +66,7 @@ impl InterruptDescriptor {
             selector: KERNEL_CS,
             zero: 0,
             flags: 0x80 | ((dpl & 0x3) << 5) | (gate_type & 0x1F),
-            offset_high: ((addr >> 16) & 0xFFFF) as u16,
+            offset_high: (addr >> 16) as u16,
         }
     }
 }

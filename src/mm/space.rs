@@ -24,8 +24,7 @@ use crate::mm::{
 const PDES_PER_PROCESS: usize = 16;
 
 /// Linear address space size per task slot (64MB).
-pub const TASK_LINEAR_SIZE: u32 =
-    (PDES_PER_PROCESS as u32) * (ENTRIES_PER_TABLE as u32) * PAGE_SIZE;
+pub const TASK_LINEAR_SIZE: u32 = (PDES_PER_PROCESS * ENTRIES_PER_TABLE * PAGE_SIZE) as u32;
 
 /// Number of PTEs to copy when forking from task 0 (640KB / 4KB = 160).
 const TASK0_NR_PAGES: usize = 0xA0;

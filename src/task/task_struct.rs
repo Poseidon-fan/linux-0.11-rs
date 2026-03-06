@@ -19,7 +19,7 @@ pub const TASK_PAGE_FRAMES: usize = 4;
 pub const TASK_PAGE_FRAMES: usize = 2;
 
 /// Total bytes reserved for one task's PCB + kernel stack block.
-pub const TASK_PAGE_SIZE: u32 = PAGE_SIZE * TASK_PAGE_FRAMES as u32;
+pub const TASK_PAGE_SIZE: usize = PAGE_SIZE * TASK_PAGE_FRAMES;
 
 /// Process Control Block (PCB) for a task.
 ///
@@ -72,7 +72,7 @@ pub struct TaskControlBlockInner {
 pub struct TaskPage {
     pub pcb: TaskControlBlock,
 
-    stack: [u8; TASK_PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+    stack: [u8; TASK_PAGE_SIZE - size_of::<TaskControlBlock>()],
 }
 
 /// An owned task that holds ownership of its underlying physical frame range.
@@ -276,14 +276,14 @@ impl Deref for Task {
 
     fn deref(&self) -> &Self::Target {
         let addr = self.0.phys_addr();
-        unsafe { &*(addr as *const TaskPage) }
+        unsafe { &*addr.as_ptr::<TaskPage>() }
     }
 }
 
 impl DerefMut for Task {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let addr = self.0.phys_addr();
-        unsafe { &mut *(addr as *mut TaskPage) }
+        unsafe { &mut *addr.as_mut_ptr::<TaskPage>() }
     }
 }
 
@@ -301,12 +301,13 @@ impl TaskPage {
     pub fn new(pcb: TaskControlBlock) -> Self {
         Self {
             pcb,
-            stack: [0; TASK_PAGE_SIZE as usize - size_of::<TaskControlBlock>()],
+            stack: [0; TASK_PAGE_SIZE - size_of::<TaskControlBlock>()],
         }
     }
 
     pub fn stack_top(&self) -> u32 {
-        self as *const TaskPage as u32 + TASK_PAGE_SIZE
+        let top = self as *const TaskPage as usize + TASK_PAGE_SIZE;
+        top as u32
     }
 }
 

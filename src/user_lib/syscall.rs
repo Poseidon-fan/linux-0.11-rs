@@ -15,6 +15,10 @@
 //!    `raw_syscallN`, casting arguments to `u32` and the return value to
 //!    `RetType`.
 //!
+//! This layer intentionally keeps 32-bit syscall words (`u32`) for ABI
+//! compatibility with the i386 register convention. It does not use `usize`
+//! as the canonical syscall argument type.
+//!
 //! Special cases like `sys_exit` (diverging `!`) are hand-written because
 //! they cannot be expressed through the macro.
 //!

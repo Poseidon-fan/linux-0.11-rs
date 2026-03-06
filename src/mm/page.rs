@@ -100,9 +100,9 @@ pub struct PageDirectoryEntry(u32);
 
 impl PageDirectoryEntry {
     /// Create a PDE pointing to a page table with User + Writable + Present flags.
-    pub fn user_page_table(page_table_addr: u32) -> Self {
+    pub fn user_page_table(page_table_addr: PhysAddr) -> Self {
         let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-        Self(page_table_addr | flags.bits())
+        Self(page_table_addr.as_u32() | flags.bits())
     }
 
     /// Create a null (non-present) PDE.
@@ -162,18 +162,26 @@ impl PageTable {
     }
 
     /// Physical address of this page table (for writing into a PDE).
-    pub fn phys_addr(&self) -> u32 {
-        self.frame.ppn.0 << 12
+    pub fn phys_addr(&self) -> PhysAddr {
+        self.frame.ppn.addr()
     }
 
     /// Interpret the underlying frame as an array of 1024 page table entries.
     pub fn as_pte_array(&self) -> &[PageTableEntry; ENTRIES_PER_TABLE] {
-        unsafe { &*(self.phys_addr() as *const [PageTableEntry; ENTRIES_PER_TABLE]) }
+        unsafe {
+            &*self
+                .phys_addr()
+                .as_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>()
+        }
     }
 
     /// Mutable version of [`as_pte_array`](Self::as_pte_array).
     pub fn as_pte_array_mut(&mut self) -> &mut [PageTableEntry; ENTRIES_PER_TABLE] {
-        unsafe { &mut *(self.phys_addr() as *mut [PageTableEntry; ENTRIES_PER_TABLE]) }
+        unsafe {
+            &mut *self
+                .phys_addr()
+                .as_mut_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>()
+        }
     }
 }
 

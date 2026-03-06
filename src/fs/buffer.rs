@@ -26,14 +26,11 @@ use lazy_static::lazy_static;
 
 use crate::{
     driver::DevNum,
-    fs::{BLOCK_SIZE, BlockNr},
+    fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
     sync::{self, KernelCell},
     task::wait_queue::WaitQueue,
 };
-
-/// Block size as `u32` for address arithmetic.
-const BLOCK_SIZE_U32: u32 = BLOCK_SIZE as u32;
 
 /// Unique key for one cached filesystem block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,7 +38,7 @@ pub struct BufferKey {
     /// Device number (`major:minor` encoded).
     pub dev: DevNum,
     /// Filesystem block number on the device.
-    pub block_nr: BlockNr,
+    pub block_nr: u32,
 }
 
 /// Mutable state protected by [`KernelCell`] inside each buffer handle.
@@ -251,14 +248,13 @@ impl BufferManager {
     fn init(&mut self, buffer_memory_end: u32) {
         self.buffer_index.clear();
         self.buffers.clear();
-        let region_end = {
-            let clamped = buffer_memory_end.max(LOW_MEM);
-            clamped - (clamped % BLOCK_SIZE_U32)
-        };
-        let buffer_count = ((region_end - LOW_MEM) / BLOCK_SIZE_U32) as usize;
+        let region_start = LOW_MEM as usize;
+        let clamped_end = buffer_memory_end.max(LOW_MEM) as usize;
+        let region_end = (clamped_end / BLOCK_SIZE) * BLOCK_SIZE;
+        let buffer_count = (region_end - region_start) / BLOCK_SIZE;
 
         for index in 0..buffer_count {
-            let addr = LOW_MEM + (index as u32) * BLOCK_SIZE_U32;
+            let addr = region_start + index * BLOCK_SIZE;
             let data = NonNull::new(addr as *mut u8)
                 .expect("LOW_MEM and scanned block addresses are non-zero");
             self.buffers.push_back(Arc::new(BufferHandle::new(data)));

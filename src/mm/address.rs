@@ -1,6 +1,8 @@
 //! This module defines Memory Address structures.
 
-use crate::mm::frame::PAGE_SIZE;
+use crate::mm::frame::PAGE_SHIFT;
+
+const PAGE_OFFSET_MASK: u32 = (1u32 << PAGE_SHIFT) - 1;
 
 /// Linear address after segment translation.
 ///
@@ -147,17 +149,17 @@ impl LinAddr {
 
     /// Round this linear address down to the nearest page boundary.
     pub fn align_down(self) -> Self {
-        Self(self.0 & !(PAGE_SIZE - 1))
+        Self(self.0 & !PAGE_OFFSET_MASK)
     }
 
     /// Return the linear page number containing this address.
     pub fn floor(self) -> LinPageNum {
-        LinPageNum(self.0 / PAGE_SIZE)
+        LinPageNum(self.0 >> PAGE_SHIFT)
     }
 
     /// Return the byte offset within the 4KB page.
     pub fn page_offset(self) -> u32 {
-        self.0 & (PAGE_SIZE - 1)
+        self.0 & PAGE_OFFSET_MASK
     }
 
     /// Return the page-directory index (top 10 bits).
@@ -178,11 +180,11 @@ impl PhysAddr {
     }
 
     pub fn floor(&self) -> PhysPageNum {
-        PhysPageNum(self.0 / PAGE_SIZE)
+        PhysPageNum(self.0 >> PAGE_SHIFT)
     }
 
     pub fn page_offset(&self) -> u32 {
-        self.0 & (PAGE_SIZE - 1)
+        self.0 & PAGE_OFFSET_MASK
     }
 
     /// View this physical address as a typed const pointer.
@@ -204,7 +206,7 @@ impl PhysPageNum {
 
     /// Convert this page number to its page-aligned physical address.
     pub fn addr(self) -> PhysAddr {
-        PhysAddr(self.0 * PAGE_SIZE)
+        PhysAddr(self.0 << PAGE_SHIFT)
     }
 }
 
@@ -233,6 +235,6 @@ impl LinPageNum {
 
     /// Convert this linear page number to the page-aligned linear address.
     pub fn addr(self) -> LinAddr {
-        LinAddr(self.0 * PAGE_SIZE)
+        LinAddr(self.0 << PAGE_SHIFT)
     }
 }

@@ -37,7 +37,7 @@ const BLOCK_DEVICE_SLOT_COUNT: usize = 7;
 /// Number of fixed request slots in the global request pool.
 const REQUEST_POOL_CAPACITY: usize = 32;
 /// Hardware sector size used by block requests.
-pub(super) const SECTOR_SIZE: u32 = 512;
+pub(super) const SECTOR_SIZE: usize = 512;
 
 /// Initialize block-device request slots and queue heads.
 ///

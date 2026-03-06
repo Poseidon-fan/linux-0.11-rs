@@ -22,13 +22,17 @@ pub fn init(start_mem: u32, end_mem: u32) {
 /// Touches each present, write-protected (COW) page in the range to trigger
 /// copy-on-write before the kernel writes to user memory.  Matches the
 /// semantics of Linux 0.11's `verify_area`.
+///
+/// `addr` is a raw user-space virtual address passed from syscall context.
 pub fn ensure_user_area_writable(addr: u32, size: usize) {
     task::current_task().pcb.inner.exclusive(|inner| {
         let base = inner.ldt.data_segment().base();
         if let Some(ms) = inner.memory_space.as_mut() {
-            let first_page_offset = addr & (frame::PAGE_SIZE - 1);
-            let mut size = size as u32 + first_page_offset;
-            let mut linear_addr = (addr & !(frame::PAGE_SIZE - 1)).wrapping_add(base);
+            let page_offset_mask = (1u32 << frame::PAGE_SHIFT) - 1;
+            let page_size = 1u32 << frame::PAGE_SHIFT;
+            let first_page_offset = addr & page_offset_mask;
+            let mut size = (size as u32).saturating_add(first_page_offset);
+            let mut linear_addr = (addr & !page_offset_mask).wrapping_add(base);
 
             while size > 0 {
                 let lin_page = address::LinAddr(linear_addr).floor();
@@ -37,8 +41,8 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
                         ms.ensure_page_writable(lin_page);
                     }
                 }
-                size = size.saturating_sub(frame::PAGE_SIZE);
-                linear_addr += frame::PAGE_SIZE;
+                size = size.saturating_sub(page_size);
+                linear_addr = linear_addr.wrapping_add(page_size);
             }
         }
     });

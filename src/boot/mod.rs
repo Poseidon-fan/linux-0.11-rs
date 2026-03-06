@@ -11,7 +11,7 @@ use crate::mm::frame::PAGE_SIZE;
 ///
 /// The original Linux 0.11 used only 4KB (one page). Here we use 16KB because
 /// Rust debug builds use more stack space, so 4KB can overflow.
-const BOOT_STACK_WORDS: usize = (PAGE_SIZE >> 2) as usize * 4;
+const BOOT_STACK_WORDS: usize = (PAGE_SIZE >> 2) * 4;
 static mut USER_STACK: [u32; BOOT_STACK_WORDS] = [0; BOOT_STACK_WORDS];
 
 /// Stack pointer and segment selector for initial kernel stack.

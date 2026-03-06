@@ -14,7 +14,7 @@ const RAMDISK_MAJOR: usize = 1;
 /// Only minor 1 is valid for the original RAM disk device.
 const RAMDISK_MINOR: u8 = 1;
 /// Fixed RAM disk capacity in bytes.
-const RAMDISK_SIZE_BYTES: u32 = 512 * 1024;
+const RAMDISK_SIZE_BYTES: usize = 512 * 1024;
 
 /// Storage for the single boot-time RAM disk driver instance.
 static mut RAMDISK_DRIVER: MaybeUninit<Ramdisk> = MaybeUninit::uninit();
@@ -24,7 +24,7 @@ struct Ramdisk {
     /// Start address of the reserved RAM disk range.
     start: NonNull<u8>,
     /// Length in bytes of the reserved RAM disk range.
-    length: u32,
+    length: usize,
 }
 
 // SAFETY: The driver stores one fixed boot-time RAM range. The pointer is used
@@ -44,7 +44,7 @@ pub fn init(main_memory_start: u32) -> u32 {
 
         // The boot-time memory map is identity-mapped, so the physical start
         // address can be cleared through a raw kernel pointer here.
-        ptr::write_bytes(start.as_ptr(), 0, RAMDISK_SIZE_BYTES as usize);
+        ptr::write_bytes(start.as_ptr(), 0, RAMDISK_SIZE_BYTES);
 
         let driver = &*addr_of!(RAMDISK_DRIVER).cast::<Ramdisk>();
         BLOCK_MANAGER.exclusive_unchecked(|manager| {
@@ -52,7 +52,7 @@ pub fn init(main_memory_start: u32) -> u32 {
         });
     }
 
-    RAMDISK_SIZE_BYTES
+    RAMDISK_SIZE_BYTES as u32
 }
 
 impl BlockDeviceDriver for Ramdisk {
@@ -96,8 +96,10 @@ impl BlockDeviceDriver for Ramdisk {
 impl Ramdisk {
     /// Translate one block request into this driver's byte window.
     fn request_bytes(&self, request: &BlockRequest) -> Option<(*mut u8, usize)> {
-        let byte_offset = request.first_sector.checked_mul(SECTOR_SIZE)?;
-        let byte_len = request.sector_count.checked_mul(SECTOR_SIZE)?;
+        let first_sector = request.first_sector as usize;
+        let sector_count = request.sector_count as usize;
+        let byte_offset = first_sector.checked_mul(SECTOR_SIZE)?;
+        let byte_len = sector_count.checked_mul(SECTOR_SIZE)?;
         let byte_end = byte_offset.checked_add(byte_len)?;
         if byte_end > self.length {
             return None;
@@ -105,7 +107,7 @@ impl Ramdisk {
 
         // The request has already been range-checked against the reserved RAM
         // disk length, so this pointer arithmetic stays inside the allocation.
-        let rd_addr = unsafe { self.start.as_ptr().add(byte_offset as usize) };
-        Some((rd_addr, byte_len as usize))
+        let rd_addr = unsafe { self.start.as_ptr().add(byte_offset) };
+        Some((rd_addr, byte_len))
     }
 }

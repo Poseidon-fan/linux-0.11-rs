@@ -270,9 +270,10 @@ lazy_static! {
         // Initialize the static memory for task 0.
         let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
         let init_task_addr = init_task_ptr as u32;
+        let task_page_size_u32 = TASK_PAGE_SIZE as u32;
 
         // Zero the whole task page.
-        write_bytes(init_task_ptr.cast::<u8>(), 0, TASK_PAGE_SIZE as usize);
+        write_bytes(init_task_ptr.cast::<u8>(), 0, TASK_PAGE_SIZE);
 
         // Then initialize only the PCB.
         addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new(
@@ -321,7 +322,7 @@ lazy_static! {
                 },
                 tss: TaskStateSegment {
                     back_link: 0,
-                    esp0: init_task_addr + TASK_PAGE_SIZE,
+                    esp0: init_task_addr + task_page_size_u32,
                     ss0: KERNEL_DS.as_u32(),
                     esp1: 0,
                     ss1: 0,
