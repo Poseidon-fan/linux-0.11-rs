@@ -39,6 +39,9 @@ pub extern "C" fn rust_main() -> ! {
     };
     let main_memory_start = buffer_memory_end;
 
+    #[cfg(feature = "ramdisk")]
+    let main_memory_start = main_memory_start + driver::blk::ramdisk::init(main_memory_start);
+
     logging::init();
     println!("logging initialized");
 

@@ -15,7 +15,8 @@
 //!
 //! This module implements low-level request submission and queue ordering.
 
-extern crate alloc;
+#[cfg(feature = "ramdisk")]
+pub mod ramdisk;
 
 use alloc::sync::Arc;
 use core::array;
@@ -35,6 +36,8 @@ use crate::{
 const BLOCK_DEVICE_SLOT_COUNT: usize = 7;
 /// Number of fixed request slots in the global request pool.
 const REQUEST_POOL_CAPACITY: usize = 32;
+/// Hardware sector size used by block requests.
+pub(super) const SECTOR_SIZE: u32 = 512;
 
 /// Initialize block-device request slots and queue heads.
 ///
@@ -252,6 +255,38 @@ impl BlockManager {
             devices: array::from_fn(|_| BlockDevice::empty()),
             request_pool: array::from_fn(|_| RequestPoolEntry::empty()),
         }
+    }
+
+    /// Register one block driver for the given major slot during early boot.
+    fn register_block_driver(&mut self, major: usize, driver: &'static dyn BlockDeviceDriver) {
+        assert!(
+            major < BLOCK_DEVICE_SLOT_COUNT,
+            "invalid block major {}",
+            major
+        );
+
+        let slot = &mut self.devices[major];
+        assert!(
+            slot.driver.is_none(),
+            "block major {} already registered",
+            major
+        );
+        slot.driver = Some(driver);
+    }
+
+    /// Return the current queued request as a stable raw pointer.
+    ///
+    /// The request pool is a fixed array, so request entries do not move in
+    /// memory while they stay queued. The returned pointer remains valid until
+    /// the caller completes the current request for this major slot.
+    fn current_request(&self, major: usize) -> Option<NonNull<BlockRequest>> {
+        if major >= BLOCK_DEVICE_SLOT_COUNT {
+            return None;
+        }
+
+        let current_slot = self.devices[major].current_request?;
+        let request = self.request_pool[current_slot].request.as_ref()?;
+        Some(NonNull::from(request))
     }
 
     /// Find one free request slot using read/write reservation policy.
