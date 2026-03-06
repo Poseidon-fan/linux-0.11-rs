@@ -1,0 +1,9 @@
+[build]
+target = "../platform/i386-unknown-none.json"
+
+[unstable]
+build-std = ["core", "alloc"]
+
+[target.i386-unknown-none]
+rustflags = ["-Clink-arg=-Tlinker.ld", "-Cforce-frame-pointers=yes"]
+linker = "rust-lld"

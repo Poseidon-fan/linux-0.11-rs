@@ -22,7 +22,6 @@ mod syscall;
 mod task;
 mod time;
 mod trap;
-mod user_lib;
 
 use core::arch::global_asm;
 

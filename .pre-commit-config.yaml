@@ -1,10 +1,42 @@
 repos:
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
+  - repo: local
     hooks:
-      - id: fmt
-      - id: cargo-check
-      - id: clippy
+      - id: kernel-fmt
+        name: kernel-fmt
+        language: system
+        entry: bash -c 'cd kernel && cargo fmt'
+        pass_filenames: false
+        files: ^kernel/
+      - id: kernel-check
+        name: kernel-check
+        language: system
+        entry: bash -c 'cd kernel && cargo check'
+        pass_filenames: false
+        files: ^(kernel|user_lib)/
+      - id: kernel-clippy
+        name: kernel-clippy
+        language: system
+        entry: bash -c 'cd kernel && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^(kernel|user_lib)/
+      - id: user-lib-fmt
+        name: user-lib-fmt
+        language: system
+        entry: bash -c 'cd user_lib && cargo fmt'
+        pass_filenames: false
+        files: ^user_lib/
+      - id: user-lib-check
+        name: user-lib-check
+        language: system
+        entry: bash -c 'cd user_lib && cargo check'
+        pass_filenames: false
+        files: ^user_lib/
+      - id: user-lib-clippy
+        name: user-lib-clippy
+        language: system
+        entry: bash -c 'cd user_lib && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^user_lib/
   - repo: https://github.com/crate-ci/typos
     rev: v1.39.0
     hooks:

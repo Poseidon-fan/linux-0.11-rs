@@ -15,14 +15,14 @@ use crate::{
 };
 
 define_syscall_handler!(
-    NR_EXIT = 1,
+    user_lib::NR_EXIT = 1,
     fn sys_exit(_ctx: &SyscallContext) -> Result<u32, u32> {
         task::do_exit(0)
     }
 );
 
 define_syscall_handler!(
-    NR_FORK = 2,
+    user_lib::NR_FORK = 2,
     fn sys_fork(ctx: &SyscallContext) -> Result<u32, u32> {
         TASK_MANAGER
             .exclusive(|manager| manager.fork(ctx))
@@ -31,7 +31,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_WAITPID = 7,
+    user_lib::NR_WAITPID = 7,
     fn sys_waitpid(ctx: &SyscallContext) -> Result<u32, u32> {
         const WNOHANG: u32 = 1;
         const WUNTRACED: u32 = 2;
@@ -175,7 +175,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_ALARM = 27,
+    user_lib::NR_ALARM = 27,
     fn sys_alarm(ctx: &SyscallContext) -> Result<u32, u32> {
         let (seconds, _, _) = ctx.args();
         let old_seconds = task::current_task().pcb.inner.exclusive(|inner| {
@@ -192,7 +192,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_PAUSE = 29,
+    user_lib::NR_PAUSE = 29,
     fn sys_pause(_ctx: &SyscallContext) -> Result<u32, u32> {
         task::current_task()
             .pcb
@@ -208,7 +208,7 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    NR_KILL = 37,
+    user_lib::NR_KILL = 37,
     fn sys_kill(ctx: &SyscallContext) -> Result<u32, u32> {
         let (pid_arg, sig_arg, _) = ctx.args();
         let pid = pid_arg as i32;
@@ -261,7 +261,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SIGNAL = 48,
+    user_lib::NR_SIGNAL = 48,
     fn sys_signal(ctx: &SyscallContext) -> Result<u32, u32> {
         let (signum, handler, restorer) = ctx.args();
 
@@ -287,7 +287,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SGETMASK = 68,
+    user_lib::NR_SGETMASK = 68,
     fn sys_sgetmask(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -297,7 +297,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SSETMASK = 69,
+    user_lib::NR_SSETMASK = 69,
     fn sys_ssetmask(ctx: &SyscallContext) -> Result<u32, u32> {
         let (newmask, _, _) = ctx.args();
         let old = task::current_task().pcb.inner.exclusive(|inner| {
@@ -311,7 +311,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SIGACTION = 67,
+    user_lib::NR_SIGACTION = 67,
     fn sys_sigaction(ctx: &SyscallContext) -> Result<u32, u32> {
         let (signum, action_ptr, oldaction_ptr) = ctx.args();
 
@@ -363,14 +363,14 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    NR_GETPID = 20,
+    user_lib::NR_GETPID = 20,
     fn sys_getpid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task().pcb.pid)
     }
 );
 
 define_syscall_handler!(
-    NR_GETUID = 24,
+    user_lib::NR_GETUID = 24,
     fn sys_getuid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -380,7 +380,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETUID = 23,
+    user_lib::NR_SETUID = 23,
     fn sys_setuid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (uid, _, _) = ctx.args();
         sys_setreuid_impl(uid, uid)
@@ -388,7 +388,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_GETGID = 47,
+    user_lib::NR_GETGID = 47,
     fn sys_getgid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -398,7 +398,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETGID = 46,
+    user_lib::NR_SETGID = 46,
     fn sys_setgid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (gid, _, _) = ctx.args();
         sys_setregid_impl(gid, gid)
@@ -406,7 +406,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_GETEUID = 49,
+    user_lib::NR_GETEUID = 49,
     fn sys_geteuid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -416,7 +416,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_GETEGID = 50,
+    user_lib::NR_GETEGID = 50,
     fn sys_getegid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -426,7 +426,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETPGID = 57,
+    user_lib::NR_SETPGID = 57,
     fn sys_setpgid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (pid_arg, pgid_arg, _) = ctx.args();
         let current = task::current_task();
@@ -472,7 +472,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_GETPGRP = 65,
+    user_lib::NR_GETPGRP = 65,
     fn sys_getpgrp(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -482,7 +482,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETSID = 66,
+    user_lib::NR_SETSID = 66,
     fn sys_setsid(_ctx: &SyscallContext) -> Result<u32, u32> {
         let current = task::current_task();
         let (is_leader, pid) = current
@@ -503,7 +503,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_GETPPID = 64,
+    user_lib::NR_GETPPID = 64,
     fn sys_getppid(_ctx: &SyscallContext) -> Result<u32, u32> {
         Ok(task::current_task()
             .pcb
@@ -513,7 +513,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETREUID = 70,
+    user_lib::NR_SETREUID = 70,
     fn sys_setreuid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (ruid, euid, _) = ctx.args();
         sys_setreuid_impl(ruid, euid)
@@ -521,7 +521,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_SETREGID = 71,
+    user_lib::NR_SETREGID = 71,
     fn sys_setregid(ctx: &SyscallContext) -> Result<u32, u32> {
         let (rgid, egid, _) = ctx.args();
         sys_setregid_impl(rgid, egid)
@@ -533,7 +533,7 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    NR_TIME = 13,
+    user_lib::NR_TIME = 13,
     fn sys_time(ctx: &SyscallContext) -> Result<u32, u32> {
         let (tloc, _, _) = ctx.args();
         let t = time::current_time();
@@ -546,7 +546,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_TIMES = 43,
+    user_lib::NR_TIMES = 43,
     fn sys_times(ctx: &SyscallContext) -> Result<u32, u32> {
         // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
         //
@@ -581,7 +581,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    NR_UNAME = 59,
+    user_lib::NR_UNAME = 59,
     fn sys_uname(ctx: &SyscallContext) -> Result<u32, u32> {
         // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
         //

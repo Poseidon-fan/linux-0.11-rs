@@ -1,0 +1,5 @@
+[package]
+name = "user_lib"
+version = "0.1.1"
+authors = ["Poseidon <18646154381@163.com>"]
+edition = "2024"

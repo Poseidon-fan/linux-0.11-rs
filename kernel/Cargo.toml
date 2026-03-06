@@ -5,6 +5,7 @@ authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 
 [dependencies]
+user_lib = { path = "../user_lib" }
 bitflags = "2.10.0"
 buddy_system_allocator = "0.12.0"
 hashbrown = "0.16.1"
