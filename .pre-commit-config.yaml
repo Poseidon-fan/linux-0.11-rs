@@ -25,6 +25,18 @@ repos:
         entry: bash -c 'cd user_lib && cargo clippy -- -D warnings'
         pass_filenames: false
         files: ^user_lib/
+      - id: miniximg-fmt
+        name: miniximg-fmt
+        language: system
+        entry: bash -c 'cd miniximg && cargo fmt'
+        pass_filenames: false
+        files: ^miniximg/
+      - id: miniximg-clippy
+        name: miniximg-clippy
+        language: system
+        entry: bash -c 'cd miniximg && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^miniximg/
   - repo: https://github.com/crate-ci/typos
     rev: v1.39.0
     hooks:
