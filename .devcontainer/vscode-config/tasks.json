@@ -18,7 +18,7 @@
                 }
             },
             "options": {
-                "cwd": "${workspaceFolder}"
+                "cwd": "${workspaceFolder}/kernel"
             }
         }
     ]

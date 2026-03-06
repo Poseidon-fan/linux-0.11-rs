@@ -11,8 +11,8 @@
             "initCommands": [
                 "process handle SIGTRAP -s false"
             ],
-            "name": "lldb launch",
-            "program": "${workspaceFolder}/target/i386-unknown-none/debug/linux_rs",
+            "name": "debug kernel",
+            "program": "${workspaceFolder}/kernel/target/i386-unknown-none/debug/linux_rs",
             "breakpointMode": "file",
             "preLaunchTask": "debug"
         }
