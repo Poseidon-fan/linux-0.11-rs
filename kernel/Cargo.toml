@@ -15,7 +15,3 @@ intrusive-collections = { version = "0.10.0", default-features = false, features
 lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 linkme = { version = "0.3", features = ["used_linker"] }
 log = "0.4.29"
-
-[features]
-default = ["ramdisk"]
-ramdisk = []

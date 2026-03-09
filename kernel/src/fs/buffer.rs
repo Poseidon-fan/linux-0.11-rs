@@ -95,13 +95,6 @@ pub fn init(buffer_memory_end: u32) {
     });
 }
 
-/// Return a cloned handle to the first buffer in list order.
-///
-/// The returned handle can be used outside manager critical sections.
-pub fn first_buffer_handle() -> Option<Arc<BufferHandle>> {
-    BUFFER_MANAGER.exclusive(|manager| manager.buffers.front())
-}
-
 lazy_static! {
     /// Global singleton manager for the buffer-cache metadata graph.
     pub static ref BUFFER_MANAGER: KernelCell<BufferManager> =
@@ -212,11 +205,6 @@ impl BufferList {
     /// Remove and return list head.
     pub fn pop_front(&mut self) -> Option<Arc<BufferHandle>> {
         self.list.pop_front()
-    }
-
-    /// Clone and return list head without removing it.
-    pub fn front(&self) -> Option<Arc<BufferHandle>> {
-        self.list.front().clone_pointer()
     }
 
     /// Remove all nodes from the list.
