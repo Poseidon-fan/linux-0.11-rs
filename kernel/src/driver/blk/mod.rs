@@ -1,3 +1,4 @@
+pub mod hd;
 #[cfg(feature = "ramdisk")]
 pub mod ramdisk;
 
@@ -34,11 +35,6 @@ pub(super) fn register_device(
             manager.register_device(major, request_handler, activate, deactivate);
         });
     }
-}
-
-// Clone the current request state for one block-device major without popping it.
-pub(super) fn current_request(major: usize) -> Option<BlockRequestState> {
-    BLOCK_MANAGER.exclusive(|manager| manager.current_request(major))
 }
 
 pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<BufferHandle>) {
@@ -84,14 +80,12 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
 
     if let Some(request_handler) = BLOCK_MANAGER.exclusive(|manager| {
         manager.requests[request_slot] = Some(BlockRequest {
-            state: BlockRequestState {
-                dev: key.dev,
-                ty,
-                error_count: 0,
-                first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
-                sector_count: BUFFER_BLOCK_SECTOR_COUNT,
-                data_addr: buffer_handle.data,
-            },
+            dev: key.dev,
+            ty,
+            error_count: 0,
+            first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
+            sector_count: BUFFER_BLOCK_SECTOR_COUNT,
+            data_addr: buffer_handle.data,
             payload: RequestPayload::BufferCache(buffer_handle),
             next_request: None,
         });
@@ -104,10 +98,12 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
 /// Complete the current request for one block-device major.
 pub fn complete_current_request(major: usize, is_uptodate: bool) {
     let (request, device) = BLOCK_MANAGER.exclusive(|manager| manager.take_current_request(major));
-    let BlockRequest { state, payload, .. } = request;
-    let dev = state.dev;
-    let first_sector = state.first_sector;
-
+    let BlockRequest {
+        dev,
+        first_sector,
+        payload,
+        ..
+    } = request;
     if let Some(deactivate) = device.deactivate {
         deactivate(dev);
     }
@@ -146,19 +142,13 @@ enum RequestPayload {
     Paging(WaitQueue),
 }
 
-/// Shared block-request state used by queued entries and driver snapshots.
-#[derive(Clone)]
-pub(super) struct BlockRequestState {
+struct BlockRequest {
     dev: DevNum,
     ty: BlockRequestType,
     error_count: u32,
     first_sector: u32,
     sector_count: u32,
     data_addr: NonNull<u8>,
-}
-
-struct BlockRequest {
-    state: BlockRequestState,
     payload: RequestPayload,
     next_request: Option<usize>,
 }
@@ -206,6 +196,16 @@ impl BlockManager {
         });
     }
 
+    pub fn current_request_mut(&mut self, major: usize) -> Option<&mut BlockRequest> {
+        let device = self.devices[major].expect("block device not found");
+        let request_slot = device.current_request?;
+        Some(
+            self.requests[request_slot]
+                .as_mut()
+                .expect("request slot must contain a request"),
+        )
+    }
+
     /// Find one free request slot using read/write reservation policy.
     ///
     /// Read requests can use the whole pool, while write requests are
@@ -233,14 +233,6 @@ impl BlockManager {
             .expect("request slot must contain a request")
     }
 
-    fn current_request(&self, major: usize) -> Option<BlockRequestState> {
-        let device = self.devices[major].expect("block device not found");
-        let request_slot = device.current_request?;
-        let request = self.request(request_slot);
-
-        Some(request.state.clone())
-    }
-
     fn take_current_request(&mut self, major: usize) -> (BlockRequest, BlockDevice) {
         let device = self.devices[major].expect("block device not found");
         let current_slot = device.current_request.expect("current request missing");
@@ -256,15 +248,8 @@ impl BlockManager {
     }
 
     fn request_in_order(left: &BlockRequest, right: &BlockRequest) -> bool {
-        (
-            left.state.ty as u8,
-            left.state.dev.0,
-            left.state.first_sector,
-        ) < (
-            right.state.ty as u8,
-            right.state.dev.0,
-            right.state.first_sector,
-        )
+        (left.ty as u8, left.dev.0, left.first_sector)
+            < (right.ty as u8, right.dev.0, right.first_sector)
     }
 
     fn add_request(&mut self, major: usize, request_slot: usize) -> Option<fn()> {
@@ -272,7 +257,7 @@ impl BlockManager {
         debug_assert!(request_slot < REQUEST_POOL_CAPACITY);
         debug_assert!(self.requests[request_slot].is_some());
         debug_assert_eq!(
-            self.request(request_slot).state.dev.major() as usize,
+            self.request(request_slot).dev.major() as usize,
             major,
             "request major must match target device queue"
         );

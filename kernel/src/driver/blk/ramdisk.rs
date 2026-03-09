@@ -1,118 +1,113 @@
-//! In-memory block device backed by one reserved physical memory window.
+//! RAM disk block driver.
 //!
-//! Memory layout:
-//!
-//! ```text
-//! main_memory_start
-//!      |
-//!      v
-//! +---------------------------+---------------------------+
-//! |      ramdisk storage      |  normal allocatable RAM   |
-//! +---------------------------+---------------------------+
-//! ^                           ^
-//! |                           |
-//! rd_start                    rd_start + rd_length
-//! ```
-//!
-//! The ramdisk consumes a fixed memory range before the page-frame allocator
-//! starts. Requests are completed synchronously by copying bytes between this
-//! reserved region and the buffer-cache block memory.
+//! The RAM disk reserves one contiguous physical memory range during early
+//! boot and exposes it as block major 1, minor 1. Requests are completed by
+//! directly copying bytes between the queued buffer and that reserved memory.
 
-use core::ptr::{self, NonNull};
+use core::{
+    ptr::{self, NonNull},
+    sync::atomic::{AtomicPtr, Ordering},
+};
 
-use super::BlockRequestType;
+use super::{BlockRequest, BlockRequestType, SECTOR_SIZE};
 
-/// Block-device major reserved for the ramdisk.
+/// Block major used by the RAM disk driver.
 const RAMDISK_MAJOR: usize = 1;
-/// The active ramdisk minor matches the original Linux 0.11 layout.
+/// Only minor 1 is valid for the RAM disk device.
 const RAMDISK_MINOR: u8 = 1;
-/// Fixed ramdisk capacity reserved during boot.
-const RAMDISK_SIZE: usize = 512 * 1024;
+/// Fixed RAM disk capacity in bytes.
+const RAMDISK_SIZE_BYTES: usize = 512 * 1024;
 
-/// One immutable snapshot of the reserved ramdisk memory window.
-#[derive(Clone, Copy)]
-struct RamDisk {
-    start: NonNull<u8>,
-    length: usize,
-}
-
-static mut RAMDISK: Option<RamDisk> = None;
-
-/// Reserve and zero the ramdisk memory window.
+/// Start address of the reserved RAM disk range.
 ///
-/// Returns the number of bytes that must be excluded from normal RAM
-/// allocation after boot.
-pub fn init(mem_start: u32) -> usize {
-    let start = NonNull::new(mem_start as *mut u8).expect("ramdisk start must be non-zero");
+/// The address is written exactly once during early boot before the request
+/// handler is registered, then read by the request path for address
+/// translation.
+static RAMDISK_START: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+
+/// Reserve RAM for the RAM disk and register the request handler.
+pub fn init(main_memory_start: u32) -> usize {
+    let start = NonNull::new(main_memory_start as *mut u8).expect("ramdisk start must be non-null");
 
     unsafe {
-        // SAFETY: Boot-time initialization runs before the general allocator
-        // and before any ramdisk request can be submitted.
-        ptr::write_bytes(start.as_ptr(), 0, RAMDISK_SIZE);
-        RAMDISK = Some(RamDisk {
-            start,
-            length: RAMDISK_SIZE,
-        });
+        // Early boot keeps this reserved physical range identity mapped, so it
+        // can be cleared through a raw kernel pointer here.
+        ptr::write_bytes(start.as_ptr(), 0, RAMDISK_SIZE_BYTES);
     }
 
-    super::register_device(RAMDISK_MAJOR, do_request, None, None);
+    RAMDISK_START
+        .compare_exchange(
+            ptr::null_mut(),
+            start.as_ptr(),
+            Ordering::Release,
+            Ordering::Relaxed,
+        )
+        .expect("ramdisk initialized twice");
 
-    RAMDISK_SIZE
+    super::register_device(RAMDISK_MAJOR, handle_request, None, None);
+    RAMDISK_SIZE_BYTES
 }
 
-/// Drain queued requests for the ramdisk device.
-fn do_request() {
+/// Process queued RAM disk requests until the device queue becomes empty.
+fn handle_request() {
     loop {
-        let Some(request) = super::current_request(RAMDISK_MAJOR) else {
+        let Some(request_ptr) = super::BLOCK_MANAGER.exclusive(|manager| {
+            let request_slot =
+                manager.devices[RAMDISK_MAJOR].and_then(|device| device.current_request)?;
+            manager.requests[request_slot].as_mut().map(NonNull::from)
+        }) else {
             return;
         };
-        let success = transfer(request);
-        super::complete_current_request(RAMDISK_MAJOR, success);
+
+        // The request slot remains stable until `complete_current_request`
+        // removes the queue head after the copy completes.
+        let request = unsafe { request_ptr.as_ref() };
+        if request.dev.minor() != RAMDISK_MINOR {
+            super::complete_current_request(RAMDISK_MAJOR, false);
+            continue;
+        }
+
+        let Some((ramdisk_addr, byte_len)) = request_bytes(request) else {
+            super::complete_current_request(RAMDISK_MAJOR, false);
+            continue;
+        };
+
+        unsafe {
+            match request.ty {
+                BlockRequestType::Write => {
+                    ptr::copy_nonoverlapping(request.data_addr.as_ptr(), ramdisk_addr, byte_len);
+                }
+                BlockRequestType::Read => {
+                    ptr::copy_nonoverlapping(ramdisk_addr, request.data_addr.as_ptr(), byte_len);
+                }
+            }
+        }
+
+        super::complete_current_request(RAMDISK_MAJOR, true);
     }
 }
 
-/// Execute one memory-to-memory block transfer.
-fn transfer(request: super::BlockRequestState) -> bool {
-    let ramdisk = unsafe {
-        // SAFETY: `init()` installs the ramdisk state before registration,
-        // so the request path can only run after the storage window exists.
-        RAMDISK.expect("ramdisk not initialized")
-    };
+/// Return the reserved RAM disk base address after initialization.
+fn ramdisk_start() -> NonNull<u8> {
+    NonNull::new(RAMDISK_START.load(Ordering::Acquire))
+        .expect("ramdisk request handler called before initialization")
+}
 
-    if request.dev.minor() != RAMDISK_MINOR {
-        return false;
+/// Translate one block request into the RAM disk byte window.
+fn request_bytes(request: &BlockRequest) -> Option<(*mut u8, usize)> {
+    let first_sector = request.first_sector as usize;
+    let sector_count = request.sector_count as usize;
+    let byte_offset = first_sector.checked_mul(SECTOR_SIZE)?;
+    let byte_len = sector_count.checked_mul(SECTOR_SIZE)?;
+    let byte_end = byte_offset.checked_add(byte_len)?;
+    if byte_end > RAMDISK_SIZE_BYTES {
+        return None;
     }
 
-    let Some(offset) = (request.first_sector as usize).checked_mul(super::SECTOR_SIZE) else {
-        return false;
-    };
-    let Some(length) = (request.sector_count as usize).checked_mul(super::SECTOR_SIZE) else {
-        return false;
-    };
-    let Some(end) = offset.checked_add(length) else {
-        return false;
-    };
-    if end > ramdisk.length {
-        return false;
-    }
+    let start = ramdisk_start();
 
-    unsafe {
-        // SAFETY:
-        // - `offset..end` is range-checked against the reserved ramdisk region.
-        // - `data_addr` comes from the block-request queue and points to one
-        //   locked buffer-cache block for the lifetime of the request.
-        // - Source and destination do not overlap because ramdisk storage lives
-        //   in a dedicated reserved memory range outside the buffer-cache pool.
-        let ramdisk_addr = ramdisk.start.as_ptr().add(offset);
-        match request.ty {
-            BlockRequestType::Write => {
-                ptr::copy_nonoverlapping(request.data_addr.as_ptr(), ramdisk_addr, length);
-            }
-            BlockRequestType::Read => {
-                ptr::copy_nonoverlapping(ramdisk_addr, request.data_addr.as_ptr(), length);
-            }
-        }
-    }
-
-    true
+    // The request range has been validated against the reserved RAM disk
+    // capacity, so this pointer arithmetic stays inside the backing area.
+    let ramdisk_addr = unsafe { start.as_ptr().add(byte_offset) };
+    Some((ramdisk_addr, byte_len))
 }
