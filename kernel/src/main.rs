@@ -4,6 +4,7 @@
 #![feature(naked_functions)]
 #![feature(asm_goto)]
 #![feature(used_with_arg)]
+#![feature(stmt_expr_attributes)]
 #![allow(dead_code)]
 
 extern crate alloc;
@@ -36,14 +37,16 @@ pub extern "C" fn rust_main() -> ! {
         m if m > 6 * 1024 * 1024 => 3 * 1024 * 1024,
         _ => panic!("memory must be > 6MB"),
     };
-    let main_memory_start = buffer_memory_end;
+    let mut main_memory_start = buffer_memory_end;
+
+    #[cfg(feature = "ramdisk")]
+    main_memory_start += driver::blk::ramdisk::init(main_memory_start) as u32;
 
     logging::init();
     println!("logging initialized");
 
     mm::init(main_memory_start, memory_end);
     trap::init();
-    driver::blk::init();
     time::init();
     task::init();
     fs::buffer::init(buffer_memory_end);
