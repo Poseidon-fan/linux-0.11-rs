@@ -32,6 +32,49 @@ use crate::{
     task::wait_queue::WaitQueue,
 };
 
+lazy_static! {
+    /// Global singleton manager for the buffer-cache metadata graph.
+    pub static ref BUFFER_MANAGER: KernelCell<BufferManager> =
+        KernelCell::new(BufferManager::empty());
+}
+
+/// Wait queue for tasks blocked in [`acquire_block`].
+static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
+
+/// Initialize global buffer metadata by scanning `[LOW_MEM, buffer_memory_end)`.
+pub fn init(buffer_memory_end: u32) {
+    unsafe {
+        BUFFER_MANAGER.exclusive_unchecked(|manager| {
+            manager.init(buffer_memory_end);
+        });
+    }
+}
+
+/// Acquire one cache entry for `key`, reusing an existing binding when present.
+pub fn acquire_block(key: BufferKey) -> Arc<BufferHandle> {
+    loop {
+        if let Some(handle) = try_acquire_cached(key) {
+            return handle;
+        }
+
+        if let Some(handle) = try_acquire_victim(key) {
+            return handle;
+        }
+    }
+}
+
+/// Release one logical reference obtained from [`acquire_block`].
+pub fn release_block(handle: Arc<BufferHandle>) {
+    handle.wait();
+    handle.state.exclusive(|state| {
+        if state.ref_count == 0 {
+            panic!("Trying to free free buffer");
+        }
+        state.ref_count -= 1;
+    });
+    WaitQueue::wake_up(&BUFFER_WAIT_QUEUE);
+}
+
 /// Unique key for one cached filesystem block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferKey {
@@ -45,7 +88,7 @@ pub struct BufferKey {
 pub struct BufferState {
     /// Current `(dev, block)` binding. `None` means not indexed yet.
     pub key: Option<BufferKey>,
-    /// Logical user count, equivalent to Linux 0.11 `b_count` semantics.
+    /// Logical user count for this cache entry.
     pub ref_count: u16,
     /// Dirty flag: data differs from on-disk copy.
     pub dirty: bool,
@@ -88,19 +131,6 @@ pub struct BufferManager {
     pub buffer_index: HashMap<BufferKey, Arc<BufferHandle>>,
 }
 
-/// Initialize global buffer metadata by scanning `[LOW_MEM, buffer_memory_end)`.
-pub fn init(buffer_memory_end: u32) {
-    BUFFER_MANAGER.exclusive(|manager| {
-        manager.init(buffer_memory_end);
-    });
-}
-
-lazy_static! {
-    /// Global singleton manager for the buffer-cache metadata graph.
-    pub static ref BUFFER_MANAGER: KernelCell<BufferManager> =
-        KernelCell::new(BufferManager::empty());
-}
-
 impl BufferState {
     /// Construct an empty state for a newly created buffer handle.
     pub const fn empty() -> Self {
@@ -111,6 +141,14 @@ impl BufferState {
             uptodate: false,
             io_locked: false,
         }
+    }
+
+    /// Return the victim-selection penalty for this buffer.
+    ///
+    /// Lower scores are preferred during reclaim.
+    #[inline]
+    fn reclaim_penalty(&self) -> u8 {
+        ((self.dirty as u8) << 1) | self.io_locked as u8
     }
 }
 
@@ -216,6 +254,45 @@ impl BufferList {
     pub fn iter(&self) -> impl Iterator<Item = &BufferHandle> {
         self.list.iter()
     }
+
+    /// Return the best reclaim candidate in current list order.
+    fn find_reclaim_candidate(&self) -> Option<Arc<BufferHandle>> {
+        let mut cursor = self.list.front();
+        let mut best: Option<(Arc<BufferHandle>, u8)> = None;
+
+        while let Some(handle) = cursor.get() {
+            let state = handle
+                .state
+                .exclusive(|state| (state.ref_count, state.reclaim_penalty()));
+
+            if state.0 == 0 && best.as_ref().is_none_or(|(_, penalty)| state.1 < *penalty) {
+                let handle = cursor
+                    .clone_pointer()
+                    .expect("cursor must point at a live buffer handle");
+                best = Some((handle, state.1));
+                if state.1 == 0 {
+                    break;
+                }
+            }
+
+            cursor.move_next();
+        }
+
+        best.map(|(handle, _)| handle)
+    }
+
+    /// Move one buffer handle to the free-list tail.
+    fn move_to_back(&mut self, handle: &Arc<BufferHandle>) {
+        let ptr = Arc::as_ptr(handle);
+        let removed = unsafe {
+            self.list
+                .cursor_mut_from_ptr(ptr)
+                .remove()
+                .expect("buffer handle must stay linked in the list")
+        };
+        debug_assert!(Arc::ptr_eq(&removed, handle));
+        self.list.push_back(removed);
+    }
 }
 
 impl BufferManager {
@@ -256,6 +333,38 @@ impl BufferManager {
     /// Return the current number of managed buffers.
     fn buffer_count(&self) -> usize {
         self.buffers.len()
+    }
+
+    /// Pin an existing buffer and increment its logical reference count.
+    fn pin_buffer(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
+        let handle = self.buffer_index.get(&key)?.clone();
+        handle.state.exclusive(|state| {
+            state.ref_count += 1;
+        });
+        Some(handle)
+    }
+
+    /// Rebind one reclaim candidate to a new key.
+    fn try_rebind_buffer(&mut self, key: BufferKey, handle: Arc<BufferHandle>) -> bool {
+        if self.buffer_index.contains_key(&key) {
+            return false;
+        }
+
+        let old_key = handle.state.exclusive(|state| state.key);
+        if let Some(old_key) = old_key {
+            self.index_remove(old_key);
+        }
+
+        handle.state.exclusive(|state| {
+            state.ref_count = 1;
+            state.dirty = false;
+            state.uptodate = false;
+        });
+
+        let replaced = self.index_insert(key, handle.clone());
+        debug_assert!(replaced.is_none(), "buffer key must stay unique");
+        self.buffers.move_to_back(&handle);
+        true
     }
 
     /// Insert a key mapping and update handle state key.
@@ -300,5 +409,55 @@ impl BufferManager {
             let key = unsafe { handle.state.exclusive_unchecked(|state| state.key) };
             debug_assert!(key.is_some(), "indexed buffer must have a key");
         }
+    }
+}
+
+fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
+    let handle = BUFFER_MANAGER.exclusive(|manager| manager.pin_buffer(key))?;
+    handle.wait();
+
+    if handle.state.exclusive(|state| state.key == Some(key)) {
+        return Some(handle);
+    }
+
+    handle.state.exclusive(|state| {
+        state.ref_count -= 1;
+    });
+
+    None
+}
+
+fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
+    let Some(handle) = BUFFER_MANAGER.exclusive(|manager| manager.buffers.find_reclaim_candidate())
+    else {
+        WaitQueue::sleep_on(&BUFFER_WAIT_QUEUE);
+        return None;
+    };
+
+    handle.wait();
+    if handle.state.exclusive(|state| state.ref_count != 0) {
+        // Another task claimed this victim while we were sleeping.
+        // Restart from the outer acquire loop so a newly cached target
+        // block is observed before we scan for another victim.
+        return None;
+    }
+
+    flush_dirty_victim(&handle);
+
+    if BUFFER_MANAGER.exclusive(|manager| manager.try_rebind_buffer(key, handle.clone())) {
+        return Some(handle);
+    }
+
+    None
+}
+
+fn flush_dirty_victim(handle: &Arc<BufferHandle>) {
+    while handle.state.exclusive(|state| state.dirty) {
+        let _dev = handle
+            .state
+            .exclusive(|state| state.key.map(|buffer_key| buffer_key.dev));
+
+        // Dirty victims must be written back before they can be rebound.
+        todo!("buffer writeback not implemented");
     }
 }
