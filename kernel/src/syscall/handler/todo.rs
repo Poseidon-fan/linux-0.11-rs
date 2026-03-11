@@ -9,12 +9,6 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_SETUP = 0,
-    fn sys_setup(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_READ = 3,
     fn sys_read(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()

@@ -243,6 +243,7 @@ macro_rules! use_syscall {
     };
 }
 
+use_syscall!(NR_SETUP => setup(drive_info_addr: *const u8) -> u32);
 use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_WAITPID => waitpid(pid: i32, stat_addr: *mut u32, options: u32) -> u32);

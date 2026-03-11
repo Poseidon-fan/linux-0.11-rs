@@ -18,6 +18,7 @@ SETUP_BINARY := $(TARGET_DIR)/setup
 BOOTSECT_SRC := $(SRC_DIR)/boot/bootsect.s
 SETUP_SRC := $(SRC_DIR)/boot/setup.s
 BUILD_SCRIPT := scripts/build.sh
+HAD_IMG := ../rootfs.img
 
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -Ttext 0
@@ -57,10 +58,10 @@ $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 	@$(OBJCOPY) $(OBJCOPY_BOOT_FLAGS) $(TARGET_DIR)/$* $(TARGET_DIR)/$*
 
 run: Image-$(RUN_MODE)
-	@qemu-system-i386 -m 16M -boot a -fda Image-$(RUN_MODE) -display curses
+	@qemu-system-i386 -m 16M -boot a -fda Image-$(RUN_MODE) -had $(HAD_IMG) -display curses
 
 dbg: Image-debug
-	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -fda Image-debug -display curses -s -S
+	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -fda Image-debug -had $(HAD_IMG) -display curses -s -S
 
 clean:
 	@echo "Cleaning..."

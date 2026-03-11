@@ -4,6 +4,7 @@ mod interrupt;
 use crate::{
     driver::blk::hd::controller::{AtaTaskFile, ControllerCommand, StatusFlags},
     pmio::{inb_p, outb, outb_p, port_write_words},
+    segment::{get_fs_byte, get_fs_word},
     sync::KernelCell,
     trap::set_intr_gate,
 };
@@ -24,6 +25,10 @@ const SECTOR_WORD_COUNT: usize = super::SECTOR_SIZE / 2;
 const WRITE_DATA_READY_RETRIES: usize = 3_000;
 /// Maximum per-request error count from the original driver.
 const MAX_REQUEST_ERRORS: u32 = 7;
+/// One BIOS hard disk geometry entry occupies 16 bytes.
+const BIOS_DRIVE_INFO_STRIDE: usize = 16;
+/// CMOS register containing the installed AT hard disk types.
+const CMOS_DISK_TYPE_REGISTER: u8 = 0x12;
 
 /// Legacy CHS geometry reported for one ATA drive.
 #[derive(Clone)]
@@ -86,6 +91,8 @@ struct DriveDescriptor {
 struct HardDiskManager {
     /// Static descriptors for both ATA drive slots.
     pub drives: [Option<DriveDescriptor>; MAX_DRIVE_COUNT],
+    /// Indicates whether drive geometry has already been initialized.
+    pub setup_completed: bool,
     /// Recovery step that must run before the next request retry.
     pub recovery_state: RecoveryState,
     /// Interrupt continuation currently expected from the controller.
@@ -96,6 +103,7 @@ impl HardDiskManager {
     const fn new() -> Self {
         Self {
             drives: [const { None }; MAX_DRIVE_COUNT],
+            setup_completed: false,
             recovery_state: RecoveryState::None,
             interrupt_phase: InterruptPhase::None,
         }
@@ -110,6 +118,57 @@ pub fn init() {
     // Keep the cascade IRQ enabled on the master PIC and unmask IRQ14 on the slave PIC.
     outb_p(inb_p(0x21) & !0x04, 0x21);
     outb(inb_p(0xA1) & !0x40, 0xA1);
+}
+
+/// Initialize hard disk geometry from the BIOS drive table.
+pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
+    HARD_DISK_MANAGER.exclusive(|manager| {
+        if manager.setup_completed {
+            return Err(());
+        }
+
+        manager.drives = core::array::from_fn(|drive_index| {
+            let entry_addr = unsafe { drive_info_addr.add(drive_index * BIOS_DRIVE_INFO_STRIDE) };
+            let geometry = unsafe {
+                DriveGeometry {
+                    cylinder_count: get_fs_word(entry_addr.cast::<u16>()),
+                    head_count: u16::from(get_fs_byte(entry_addr.add(2))),
+                    write_precompensation: get_fs_word(entry_addr.add(5).cast::<u16>()),
+                    control: get_fs_byte(entry_addr.add(8)),
+                    landing_zone: get_fs_word(entry_addr.add(12).cast::<u16>()),
+                    sectors_per_track: u16::from(get_fs_byte(entry_addr.add(14))),
+                }
+            };
+
+            (geometry.cylinder_count != 0).then(|| DriveDescriptor {
+                whole_disk: DrivePartition {
+                    start_sector: 0,
+                    sector_count: u32::from(geometry.head_count)
+                        .saturating_mul(u32::from(geometry.sectors_per_track))
+                        .saturating_mul(u32::from(geometry.cylinder_count)),
+                },
+                geometry,
+                primary_partitions: [const { None }; PRIMARY_PARTITION_COUNT],
+            })
+        });
+
+        let cmos_disks = {
+            outb_p(0x80 | CMOS_DISK_TYPE_REGISTER, 0x70);
+            inb_p(0x71)
+        };
+        let drive_count = match (cmos_disks & 0xF0 != 0, cmos_disks & 0x0F != 0) {
+            (false, _) => 0,
+            (true, false) => 1,
+            (true, true) => 2,
+        };
+
+        manager.drives[drive_count..]
+            .iter_mut()
+            .for_each(|slot| *slot = None);
+
+        manager.setup_completed = true;
+        Ok(())
+    })
 }
 
 fn handle_request() {
