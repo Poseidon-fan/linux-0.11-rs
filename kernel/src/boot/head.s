@@ -145,9 +145,7 @@ L6:
 	jmp L6			# main should never return here, but
 				# just in case, we know what happens.
 
-/* This is the default interrupt "handler" :-) */
-int_msg:
-	.asciz "Unknown interrupt\n\r"
+/* This is the default interrupt handler. */
 .align 2
 ignore_int:
 	pushl %eax
@@ -160,9 +158,7 @@ ignore_int:
 	mov %ax,%ds
 	mov %ax,%es
 	mov %ax,%fs
-	pushl $int_msg
-	call printk
-	popl %eax
+	call handle_unknown_interrupt
 	pop %fs
 	pop %es
 	pop %ds

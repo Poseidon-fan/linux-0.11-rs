@@ -1,3 +1,5 @@
+use log::error;
+
 use crate::println;
 
 #[panic_handler]
@@ -16,4 +18,9 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         }
     }
     loop {}
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn handle_unknown_interrupt() {
+    error!("Unknown interrupt");
 }

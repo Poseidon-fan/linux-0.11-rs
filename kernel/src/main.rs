@@ -76,10 +76,3 @@ fn user_init() -> ! {
     #[allow(clippy::empty_loop)]
     loop {}
 }
-
-// Dummy function, currently referenced by `ignore_int` in `head.s`.
-// Remove it later, replace with rust kernel print.
-#[unsafe(no_mangle)]
-pub extern "C" fn printk() {
-    panic!("printk is not implemented");
-}
