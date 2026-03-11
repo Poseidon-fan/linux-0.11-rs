@@ -25,7 +25,7 @@ use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
 use lazy_static::lazy_static;
 
 use crate::{
-    driver::DevNum,
+    driver::{DevNum, blk},
     fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
     sync::{self, KernelCell},
@@ -73,6 +73,22 @@ pub fn release_block(handle: Arc<BufferHandle>) {
         state.ref_count -= 1;
     });
     WaitQueue::wake_up(&BUFFER_WAIT_QUEUE);
+}
+
+pub fn read_block(key: BufferKey) -> Option<Arc<BufferHandle>> {
+    let handle = acquire_block(key);
+
+    if handle.state.exclusive(|state| state.uptodate) {
+        return Some(handle);
+    }
+    blk::submit_request(blk::BlockRequestType::Read, false, Arc::clone(&handle));
+    handle.wait();
+    if handle.state.exclusive(|state| state.uptodate) {
+        return Some(handle);
+    }
+
+    release_block(handle);
+    None
 }
 
 /// Unique key for one cached filesystem block.
