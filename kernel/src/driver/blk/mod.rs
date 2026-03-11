@@ -80,12 +80,14 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
 
     if let Some(request_handler) = BLOCK_MANAGER.exclusive(|manager| {
         manager.requests[request_slot] = Some(BlockRequest {
-            dev: key.dev,
-            ty,
+            io: BlockRequestIo {
+                dev: key.dev,
+                ty,
+                first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
+                sector_count: BUFFER_BLOCK_SECTOR_COUNT,
+                data_addr: buffer_handle.data,
+            },
             error_count: 0,
-            first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
-            sector_count: BUFFER_BLOCK_SECTOR_COUNT,
-            data_addr: buffer_handle.data,
             payload: RequestPayload::BufferCache(buffer_handle),
             next_request: None,
         });
@@ -98,14 +100,9 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
 /// Complete the current request for one block-device major.
 pub fn complete_current_request(major: usize, is_uptodate: bool) {
     let (request, device) = BLOCK_MANAGER.exclusive(|manager| manager.take_current_request(major));
-    let BlockRequest {
-        dev,
-        first_sector,
-        payload,
-        ..
-    } = request;
+    let BlockRequest { io, payload, .. } = request;
     if let Some(deactivate) = device.deactivate {
-        deactivate(dev);
+        deactivate(io.dev);
     }
 
     match payload {
@@ -121,7 +118,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
     if !is_uptodate {
         warn!(
             "block I/O error: dev {:04x}, sector {}",
-            dev.0, first_sector
+            io.dev.0, io.first_sector
         );
     }
 
@@ -135,6 +132,16 @@ pub enum BlockRequestType {
     Write = 1,
 }
 
+/// Cloneable request fields consumed by device request handlers.
+#[derive(Clone)]
+pub(super) struct BlockRequestIo {
+    pub dev: DevNum,
+    pub ty: BlockRequestType,
+    pub first_sector: u32,
+    pub sector_count: u32,
+    pub data_addr: NonNull<u8>,
+}
+
 enum RequestPayload {
     /// Request originated from buffer-cache metadata.
     BufferCache(Arc<BufferHandle>),
@@ -143,12 +150,8 @@ enum RequestPayload {
 }
 
 struct BlockRequest {
-    dev: DevNum,
-    ty: BlockRequestType,
+    io: BlockRequestIo,
     error_count: u32,
-    first_sector: u32,
-    sector_count: u32,
-    data_addr: NonNull<u8>,
     payload: RequestPayload,
     next_request: Option<usize>,
 }
@@ -248,8 +251,8 @@ impl BlockManager {
     }
 
     fn request_in_order(left: &BlockRequest, right: &BlockRequest) -> bool {
-        (left.ty as u8, left.dev.0, left.first_sector)
-            < (right.ty as u8, right.dev.0, right.first_sector)
+        (left.io.ty as u8, left.io.dev.0, left.io.first_sector)
+            < (right.io.ty as u8, right.io.dev.0, right.io.first_sector)
     }
 
     fn add_request(&mut self, major: usize, request_slot: usize) -> Option<fn()> {
@@ -257,7 +260,7 @@ impl BlockManager {
         debug_assert!(request_slot < REQUEST_POOL_CAPACITY);
         debug_assert!(self.requests[request_slot].is_some());
         debug_assert_eq!(
-            self.request(request_slot).dev.major() as usize,
+            self.request(request_slot).io.dev.major() as usize,
             major,
             "request major must match target device queue"
         );

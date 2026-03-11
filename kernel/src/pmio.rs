@@ -63,3 +63,39 @@ pub fn inb_p(port: u16) -> u8 {
     }
     value
 }
+
+/// Read one PIO word stream from the specified I/O port.
+#[inline]
+pub fn port_read_words(port: u16, dst: *mut u16, word_count: usize) {
+    unsafe {
+        asm!(
+            "push %edi",
+            "cld",
+            "movl {dst:e}, %edi",
+            "rep insw",
+            "pop %edi",
+            dst = in(reg) dst,
+            in("dx") port,
+            inout("ecx") word_count => _,
+            options(att_syntax)
+        );
+    }
+}
+
+/// Write one PIO word stream to the specified I/O port.
+#[inline]
+pub fn port_write_words(port: u16, src: *const u16, word_count: usize) {
+    unsafe {
+        asm!(
+            "push %esi",
+            "cld",
+            "movl {src:e}, %esi",
+            "rep outsw",
+            "pop %esi",
+            src = in(reg) src,
+            in("dx") port,
+            inout("ecx") word_count => _,
+            options(att_syntax)
+        );
+    }
+}

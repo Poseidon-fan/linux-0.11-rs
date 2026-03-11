@@ -9,7 +9,7 @@ use core::{
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use super::{BlockRequest, BlockRequestType, SECTOR_SIZE};
+use super::{BlockRequestIo, BlockRequestType, SECTOR_SIZE};
 
 /// Block major used by the RAM disk driver.
 const RAMDISK_MAJOR: usize = 1;
@@ -51,23 +51,22 @@ pub fn init(main_memory_start: u32) -> usize {
 /// Process queued RAM disk requests until the device queue becomes empty.
 fn handle_request() {
     loop {
-        let Some(request_ptr) = super::BLOCK_MANAGER.exclusive(|manager| {
+        let Some(request) = super::BLOCK_MANAGER.exclusive(|manager| {
             let request_slot =
                 manager.devices[RAMDISK_MAJOR].and_then(|device| device.current_request)?;
-            manager.requests[request_slot].as_mut().map(NonNull::from)
+            manager.requests[request_slot]
+                .as_ref()
+                .map(|request| request.io.clone())
         }) else {
             return;
         };
 
-        // The request slot remains stable until `complete_current_request`
-        // removes the queue head after the copy completes.
-        let request = unsafe { request_ptr.as_ref() };
         if request.dev.minor() != RAMDISK_MINOR {
             super::complete_current_request(RAMDISK_MAJOR, false);
             continue;
         }
 
-        let Some((ramdisk_addr, byte_len)) = request_bytes(request) else {
+        let Some((ramdisk_addr, byte_len)) = request_bytes(&request) else {
             super::complete_current_request(RAMDISK_MAJOR, false);
             continue;
         };
@@ -94,7 +93,7 @@ fn ramdisk_start() -> NonNull<u8> {
 }
 
 /// Translate one block request into the RAM disk byte window.
-fn request_bytes(request: &BlockRequest) -> Option<(*mut u8, usize)> {
+fn request_bytes(request: &BlockRequestIo) -> Option<(*mut u8, usize)> {
     let first_sector = request.first_sector as usize;
     let sector_count = request.sector_count as usize;
     let byte_offset = first_sector.checked_mul(SECTOR_SIZE)?;
