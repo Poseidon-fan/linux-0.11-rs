@@ -4,7 +4,7 @@ pub mod todo;
 
 use linkme::distributed_slice;
 
-use crate::syscall::context::SyscallContext;
+use crate::{define_syscall_handler, syscall::SyscallContext};
 
 #[distributed_slice]
 pub static SYSCALL_TABLE: [fn(&SyscallContext) -> Result<u32, u32>];
