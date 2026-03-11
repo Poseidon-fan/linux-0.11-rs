@@ -30,7 +30,12 @@ global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main() -> ! {
-    let memory_end = ((1 << 20) + ((ext_mem_k() as u32) << 10)) & 0xfffff000;
+    let ext_mem_k = {
+        /// BIOS extended memory info address (set up by setup.s).
+        const EXT_MEM_K_ADDR: u32 = 0x90002;
+        unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
+    };
+    let memory_end = ((1 << 20) + ((ext_mem_k as u32) << 10)) & 0xfffff000;
     let memory_end = memory_end.min(16 * 1024 * 1024);
     let buffer_memory_end = match memory_end {
         m if m > 12 * 1024 * 1024 => 5 * 1024 * 1024,
@@ -55,18 +60,21 @@ pub extern "C" fn rust_main() -> ! {
 
     sync::sti();
     sync::move_to_user_mode();
-    (user_lib::fork().unwrap() == 0).then(|| user_lib::init());
+    (user_lib::fork().unwrap() == 0).then(|| user_init());
 
     loop {
         user_lib::pause().unwrap();
     }
 }
 
-#[inline]
-pub fn ext_mem_k() -> u16 {
-    /// BIOS extended memory info address (set up by setup.s).
-    const EXT_MEM_K_ADDR: u32 = 0x90002;
-    unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
+fn user_init() -> ! {
+    /// Boot-time location of the BIOS drive table.
+    const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
+    user_lib::setup(DRIVE_INFO_ADDR).unwrap();
+    user_lib::exit().unwrap();
+
+    #[allow(clippy::empty_loop)]
+    loop {}
 }
 
 // Dummy function, currently referenced by `ignore_int` in `head.s`.
