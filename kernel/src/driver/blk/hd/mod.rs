@@ -25,24 +25,8 @@ const PRIMARY_PARTITION_COUNT: usize = 4;
 const PARTITION_SLOTS_PER_DRIVE: usize = PRIMARY_PARTITION_COUNT + 1;
 /// One ATA sector is transferred as 256 16-bit words.
 const SECTOR_WORD_COUNT: usize = super::SECTOR_SIZE / 2;
-/// Maximum DRQ wait loop for the first write sector.
-const WRITE_DATA_READY_RETRIES: usize = 3_000;
 /// Maximum per-request error count from the original driver.
 const MAX_REQUEST_ERRORS: u32 = 7;
-/// One BIOS hard disk geometry entry occupies 16 bytes.
-const BIOS_DRIVE_INFO_STRIDE: usize = 16;
-/// CMOS register containing the installed AT hard disk types.
-const CMOS_DISK_TYPE_REGISTER: u8 = 0x12;
-/// First partition entry offset inside an MBR sector.
-const PARTITION_TABLE_OFFSET: usize = 0x1BE;
-/// Size of one DOS partition table entry.
-const PARTITION_TABLE_ENTRY_SIZE: usize = 16;
-/// Offset of the little-endian start-sector field in one entry.
-const PARTITION_START_SECTOR_OFFSET: usize = 8;
-/// Offset of the little-endian sector-count field in one entry.
-const PARTITION_SECTOR_COUNT_OFFSET: usize = 12;
-/// Offset of the 0x55AA boot signature in an MBR sector.
-const MBR_SIGNATURE_OFFSET: usize = 510;
 
 /// Legacy CHS geometry reported for one ATA drive.
 #[derive(Clone)]
@@ -153,6 +137,15 @@ impl DriveGeometry {
 impl DrivePartition {
     /// Parse one partition entry from an MBR sector. Returns `None` for empty entries.
     fn from_mbr_entry(sector: &[u8], index: usize) -> Option<Self> {
+        /// First partition entry offset inside an MBR sector.
+        const PARTITION_TABLE_OFFSET: usize = 0x1BE;
+        /// Size of one DOS partition table entry.
+        const PARTITION_TABLE_ENTRY_SIZE: usize = 16;
+        /// Offset of the little-endian start-sector field in one entry.
+        const PARTITION_START_SECTOR_OFFSET: usize = 8;
+        /// Offset of the little-endian sector-count field in one entry.
+        const PARTITION_SECTOR_COUNT_OFFSET: usize = 12;
+
         let off = PARTITION_TABLE_OFFSET + index * PARTITION_TABLE_ENTRY_SIZE;
         let start_sector = u32::from_le_bytes(
             sector[off + PARTITION_START_SECTOR_OFFSET..][..4]
@@ -197,6 +190,13 @@ pub fn init() {
 
 /// Initialize hard disk geometry from the BIOS drive table.
 pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
+    /// One BIOS hard disk geometry entry occupies 16 bytes.
+    const BIOS_DRIVE_INFO_STRIDE: usize = 16;
+    /// CMOS register containing the installed AT hard disk types.
+    const CMOS_DISK_TYPE_REGISTER: u8 = 0x12;
+    /// Offset of the 0x55AA boot signature in an MBR sector.
+    const MBR_SIGNATURE_OFFSET: usize = 510;
+
     if HARD_DISK_MANAGER.exclusive(|m| m.setup_completed) {
         return Err(());
     }
@@ -272,6 +272,8 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
 }
 
 fn handle_request() {
+    /// Maximum DRQ wait loop for the first write sector.
+    const WRITE_DATA_READY_RETRIES: usize = 3_000;
     loop {
         let Some(request) = super::BLOCK_MANAGER.exclusive(|manager| {
             let request_slot =
