@@ -1,13 +1,13 @@
 [package]
 name = "mbrkit"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 description = "A CLI for building, inspecting, extracting, and verifying MBR-backed disk images"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/Poseidon-fan/linux-0.11-rs"
-homepage = "https://github.com/Poseidon-fan/linux-0.11-rs/tree/main/mbrkit"
+homepage = "https://github.com/Poseidon-fan/linux-0.11-rs/tree/master/mbrkit"
 documentation = "https://docs.rs/mbrkit"
 keywords = ["mbr", "disk-image", "partition", "cli", "boot"]
 categories = ["command-line-utilities", "filesystem"]
