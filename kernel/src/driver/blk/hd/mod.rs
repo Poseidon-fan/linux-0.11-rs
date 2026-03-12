@@ -1,6 +1,8 @@
 mod controller;
 mod interrupt;
 
+use log::info;
+
 use crate::{
     driver::blk::hd::controller::{AtaTaskFile, ControllerCommand, StatusFlags},
     fs::buffer::{self, BufferKey},
@@ -122,6 +124,67 @@ impl HardDiskManager {
     }
 }
 
+impl DriveGeometry {
+    /// Parse drive geometry from a BIOS drive-info table entry (in user segment).
+    /// Returns `None` when the entry describes no drive (cylinder count is zero).
+    unsafe fn from_bios_entry(entry_addr: *const u8) -> Option<Self> {
+        // SAFETY: caller guarantees `entry_addr` points to a valid BIOS drive-info entry.
+        let geo = unsafe {
+            Self {
+                cylinder_count: get_fs_word(entry_addr.cast::<u16>()),
+                head_count: u16::from(get_fs_byte(entry_addr.add(2))),
+                write_precompensation: get_fs_word(entry_addr.add(5).cast::<u16>()),
+                control: get_fs_byte(entry_addr.add(8)),
+                landing_zone: get_fs_word(entry_addr.add(12).cast::<u16>()),
+                sectors_per_track: u16::from(get_fs_byte(entry_addr.add(14))),
+            }
+        };
+        (geo.cylinder_count != 0).then_some(geo)
+    }
+
+    /// Total addressable sectors for this CHS geometry (saturating arithmetic).
+    fn total_sectors(&self) -> u32 {
+        [self.head_count, self.sectors_per_track, self.cylinder_count]
+            .into_iter()
+            .fold(1u32, |acc, v| acc.saturating_mul(u32::from(v)))
+    }
+}
+
+impl DrivePartition {
+    /// Parse one partition entry from an MBR sector. Returns `None` for empty entries.
+    fn from_mbr_entry(sector: &[u8], index: usize) -> Option<Self> {
+        let off = PARTITION_TABLE_OFFSET + index * PARTITION_TABLE_ENTRY_SIZE;
+        let start_sector = u32::from_le_bytes(
+            sector[off + PARTITION_START_SECTOR_OFFSET..][..4]
+                .try_into()
+                .unwrap(),
+        );
+        let sector_count = u32::from_le_bytes(
+            sector[off + PARTITION_SECTOR_COUNT_OFFSET..][..4]
+                .try_into()
+                .unwrap(),
+        );
+        (sector_count != 0).then_some(Self {
+            start_sector,
+            sector_count,
+        })
+    }
+}
+
+impl DriveDescriptor {
+    /// Build a descriptor from BIOS geometry with empty partition slots.
+    fn from_geometry(geometry: DriveGeometry) -> Self {
+        Self {
+            whole_disk: DrivePartition {
+                start_sector: 0,
+                sector_count: geometry.total_sectors(),
+            },
+            geometry,
+            primary_partitions: [const { None }; PRIMARY_PARTITION_COUNT],
+        }
+    }
+}
+
 /// Register the hard disk block device and install its interrupt gate.
 pub fn init() {
     super::register_device(HARD_DISK_MAJOR, handle_request, None, None);
@@ -134,34 +197,14 @@ pub fn init() {
 
 /// Initialize hard disk geometry from the BIOS drive table.
 pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
-    if HARD_DISK_MANAGER.exclusive(|manager| manager.setup_completed) {
+    if HARD_DISK_MANAGER.exclusive(|m| m.setup_completed) {
         return Err(());
     }
 
     // Stage 1: load BIOS geometry so whole-disk minors can serve MBR reads.
-    let mut drives = core::array::from_fn(|drive_index| {
-        let entry_addr = unsafe { drive_info_addr.add(drive_index * BIOS_DRIVE_INFO_STRIDE) };
-        let geometry = unsafe {
-            DriveGeometry {
-                cylinder_count: get_fs_word(entry_addr.cast::<u16>()),
-                head_count: u16::from(get_fs_byte(entry_addr.add(2))),
-                write_precompensation: get_fs_word(entry_addr.add(5).cast::<u16>()),
-                control: get_fs_byte(entry_addr.add(8)),
-                landing_zone: get_fs_word(entry_addr.add(12).cast::<u16>()),
-                sectors_per_track: u16::from(get_fs_byte(entry_addr.add(14))),
-            }
-        };
-
-        (geometry.cylinder_count != 0).then(|| DriveDescriptor {
-            whole_disk: DrivePartition {
-                start_sector: 0,
-                sector_count: u32::from(geometry.head_count)
-                    .saturating_mul(u32::from(geometry.sectors_per_track))
-                    .saturating_mul(u32::from(geometry.cylinder_count)),
-            },
-            geometry,
-            primary_partitions: [const { None }; PRIMARY_PARTITION_COUNT],
-        })
+    let mut drives: [Option<DriveDescriptor>; MAX_DRIVE_COUNT] = core::array::from_fn(|i| {
+        let addr = unsafe { drive_info_addr.add(i * BIOS_DRIVE_INFO_STRIDE) };
+        unsafe { DriveGeometry::from_bios_entry(addr) }.map(DriveDescriptor::from_geometry)
     });
 
     let cmos_disks = {
@@ -175,77 +218,51 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
     }
     .min(drives.iter().flatten().count());
 
-    drives[drive_count..]
-        .iter_mut()
-        .for_each(|slot| *slot = None);
+    for slot in &mut drives[drive_count..] {
+        *slot = None;
+    }
 
-    HARD_DISK_MANAGER.exclusive(|manager| {
-        if manager.setup_completed {
+    HARD_DISK_MANAGER.exclusive(|m| {
+        if m.setup_completed {
             return Err(());
         }
-        manager.drives = drives;
+        m.drives = drives;
         Ok(())
     })?;
 
     // Stage 2: read each MBR and fill the four primary partition slots.
     for drive_index in 0..drive_count {
-        let Some(buffer_handle) = buffer::read_block(BufferKey {
-            dev: crate::driver::DevNum::new(
-                HARD_DISK_MAJOR as u8,
-                (drive_index * PARTITION_SLOTS_PER_DRIVE) as u8,
-            ),
-            block_nr: 0,
-        }) else {
+        let dev = crate::driver::DevNum::new(
+            HARD_DISK_MAJOR as u8,
+            (drive_index * PARTITION_SLOTS_PER_DRIVE) as u8,
+        );
+        let Some(handle) = buffer::read_block(BufferKey { dev, block_nr: 0 }) else {
             println!("Unable to read partition table of drive {}", drive_index);
             return Err(());
         };
-
-        let partitions = (|| {
-            let sector = unsafe {
-                core::slice::from_raw_parts(buffer_handle.data.as_ptr(), super::SECTOR_SIZE)
-            };
-            if sector[MBR_SIGNATURE_OFFSET] != 0x55 || sector[MBR_SIGNATURE_OFFSET + 1] != 0xAA {
+        let sector =
+            unsafe { core::slice::from_raw_parts(handle.data.as_ptr(), super::SECTOR_SIZE) };
+        let partitions: Result<[_; PRIMARY_PARTITION_COUNT], ()> =
+            if sector[MBR_SIGNATURE_OFFSET..][..2] != [0x55, 0xAA] {
                 println!("Bad partition table on drive {}", drive_index);
-                return Err(());
-            }
+                Err(())
+            } else {
+                Ok(core::array::from_fn(|i| {
+                    DrivePartition::from_mbr_entry(sector, i)
+                }))
+            };
+        buffer::release_block(handle);
 
-            Ok(core::array::from_fn(|partition_index| {
-                let entry_offset =
-                    PARTITION_TABLE_OFFSET + partition_index * PARTITION_TABLE_ENTRY_SIZE;
-                let start_sector = u32::from_le_bytes(
-                    sector[entry_offset + PARTITION_START_SECTOR_OFFSET
-                        ..entry_offset + PARTITION_START_SECTOR_OFFSET + 4]
-                        .try_into()
-                        .unwrap(),
-                );
-                let sector_count = u32::from_le_bytes(
-                    sector[entry_offset + PARTITION_SECTOR_COUNT_OFFSET
-                        ..entry_offset + PARTITION_SECTOR_COUNT_OFFSET + 4]
-                        .try_into()
-                        .unwrap(),
-                );
-
-                (sector_count != 0).then_some(DrivePartition {
-                    start_sector,
-                    sector_count,
-                })
-            }))
-        })();
-        buffer::release_block(buffer_handle);
-
-        HARD_DISK_MANAGER.exclusive(|manager| {
-            let drive = manager.drives[drive_index].as_mut().ok_or(())?;
-            drive.primary_partitions = partitions?;
+        HARD_DISK_MANAGER.exclusive(|m| {
+            m.drives[drive_index].as_mut().ok_or(())?.primary_partitions = partitions?;
             Ok(())
         })?;
     }
 
-    HARD_DISK_MANAGER.exclusive(|manager| {
-        manager.setup_completed = true;
-    });
+    HARD_DISK_MANAGER.exclusive(|m| m.setup_completed = true);
 
     if drive_count != 0 {
-        println!(
+        info!(
             "Partition table{} ok.",
             if drive_count > 1 { "s" } else { "" }
         );
