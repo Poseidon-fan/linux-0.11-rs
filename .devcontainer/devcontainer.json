@@ -16,7 +16,8 @@
                 "rust-analyzer.linkedProjects": [
                     "kernel/Cargo.toml",
                     "user_lib/Cargo.toml",
-                    "miniximg/Cargo.toml"
+                    "miniximg/Cargo.toml",
+                    "mbrkit/Cargo.toml"
                 ],
                 "rust-analyzer.check.allTargets": false,
                 "rust-analyzer.procMacro.enable": true,

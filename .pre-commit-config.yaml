@@ -37,6 +37,18 @@ repos:
         entry: bash -c 'cd miniximg && cargo clippy -- -D warnings'
         pass_filenames: false
         files: ^miniximg/
+      - id: mbrkit-fmt
+        name: mbrkit-fmt
+        language: system
+        entry: bash -c 'cd mbrkit && cargo fmt'
+        pass_filenames: false
+        files: ^mbrkit/
+      - id: mbrkit-clippy
+        name: mbrkit-clippy
+        language: system
+        entry: bash -c 'cd mbrkit && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^mbrkit/
   - repo: https://github.com/crate-ci/typos
     rev: v1.39.0
     hooks:
