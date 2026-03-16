@@ -1,3 +1,5 @@
+use core::mem::size_of;
+
 use crate::fs::BLOCK_SIZE;
 
 const NAME_LEN_LIMIT: usize = 14;
@@ -23,8 +25,8 @@ struct DiskInode {
     uid: u16,
     size: u32,
     time: u32,
-    gid: u16,
-    link_count: u16,
+    gid: u8,
+    link_count: u8,
     direct: [u16; 7],
     indirect1: u16,
     indirect2: u16,
@@ -35,3 +37,7 @@ struct DirEntry {
     inode_number: u16,
     name: [u8; NAME_LEN_LIMIT],
 }
+
+const _: () = assert!(size_of::<SuperBlock>() == 20);
+const _: () = assert!(size_of::<DiskInode>() == 32);
+const _: () = assert!(size_of::<DirEntry>() == 16);
