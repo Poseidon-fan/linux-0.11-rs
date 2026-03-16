@@ -95,3 +95,16 @@ pub extern "C" fn move_to_user_mode() {
         );
     }
 }
+
+/// EFLAGS bit for IF (Interrupt Flag).
+const EFLAGS_IF: u32 = 1 << 9;
+
+/// Save current EFLAGS and disable interrupts.
+#[inline]
+fn read_eflags_and_cli() -> u32 {
+    let flags: u32;
+    unsafe {
+        asm!("pushfl", "popl {0}", "cli", out(reg) flags, options(att_syntax));
+    }
+    flags
+}

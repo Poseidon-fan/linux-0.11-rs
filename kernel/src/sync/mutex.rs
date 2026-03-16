@@ -10,7 +10,7 @@ use core::{
 };
 
 use crate::{
-    sync::{self, KernelCell},
+    sync::{self, EFLAGS_IF, KernelCell, read_eflags_and_cli},
     task::{self, wait_queue::WaitQueue},
 };
 
@@ -47,9 +47,6 @@ pub struct Mutex<T> {
 // mutex between tasks is sound when `T` can be transferred across task
 // boundaries.
 unsafe impl<T: Send> Sync for Mutex<T> {}
-// SAFETY: The mutex contains no thread-local resources; ownership of `T`
-// may move with the mutex as long as `T: Send`.
-unsafe impl<T: Send> Send for Mutex<T> {}
 
 /// RAII guard returned by [`Mutex::lock`].
 #[must_use = "holding the guard keeps the mutex locked; dropping it unlocks"]
@@ -84,10 +81,10 @@ impl<T> Mutex<T> {
         );
 
         let current_slot = task::current_slot();
+        let saved_if_enabled = (read_eflags_and_cli() & EFLAGS_IF) != 0;
 
         // Keep interrupts masked across the check-sleep loop so unlock cannot
         // race between "saw locked" and "queued ourselves to sleep".
-        sync::cli();
         loop {
             let acquired = unsafe {
                 self.state.exclusive_unchecked(|state| {
@@ -106,7 +103,11 @@ impl<T> Mutex<T> {
             };
 
             if acquired {
-                sync::sti();
+                if saved_if_enabled {
+                    sync::sti();
+                } else {
+                    sync::cli();
+                }
                 return MutexGuard {
                     mutex: self,
                     _marker: PhantomData,

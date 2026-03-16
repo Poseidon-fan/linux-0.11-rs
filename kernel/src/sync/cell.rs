@@ -1,15 +1,14 @@
 //! Interior mutability wrapper for shared kernel state.
 
 use core::{
-    arch::asm,
     cell::RefCell,
     sync::atomic::{AtomicU32, Ordering},
 };
 
+use crate::sync::{EFLAGS_IF, read_eflags_and_cli};
+
 use super::{cli, sti};
 
-/// EFLAGS bit for IF (Interrupt Flag).
-const EFLAGS_IF: u32 = 1 << 9;
 /// Low 31 bits store nested `exclusive` depth.
 const IRQ_DEPTH_MASK: u32 = 0x7fff_ffff;
 /// High bit stores IF value captured at outermost entry.
@@ -47,16 +46,6 @@ unsafe impl<T> Sync for KernelCell<T> {}
 #[inline]
 pub fn current_irq_depth() -> u32 {
     SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK
-}
-
-/// Save current EFLAGS and disable interrupts.
-#[inline]
-fn read_eflags_and_cli() -> u32 {
-    let flags: u32;
-    unsafe {
-        asm!("pushfl", "popl {0}", "cli", out(reg) flags, options(att_syntax));
-    }
-    flags
 }
 
 /// RAII guard for per-task IRQ nesting in `KernelCell::exclusive`.
