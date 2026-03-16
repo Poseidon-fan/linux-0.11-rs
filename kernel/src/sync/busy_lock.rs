@@ -11,7 +11,7 @@
 
 use crate::task::wait_queue::WaitQueue;
 
-use super::{KernelCell, TaskIrqGuard, assert_can_schedule};
+use super::{IrqSaveGuard, KernelCell, assert_can_schedule};
 
 /// Sleepable ownerless busy lock for single-core kernel code.
 pub struct BusyLock {
@@ -32,7 +32,7 @@ impl BusyLock {
     pub fn wait(&self) {
         assert_can_schedule("BusyLock::wait");
 
-        let _irq_guard = TaskIrqGuard::enter();
+        let _irq_guard = IrqSaveGuard::enter();
         unsafe {
             while self.locked.exclusive_unchecked(|locked| *locked) {
                 WaitQueue::sleep_on(&self.wait_queue);
@@ -44,7 +44,7 @@ impl BusyLock {
     pub fn acquire(&self) {
         assert_can_schedule("BusyLock::acquire");
 
-        let _irq_guard = TaskIrqGuard::enter();
+        let _irq_guard = IrqSaveGuard::enter();
         unsafe {
             while self.locked.exclusive_unchecked(|locked| *locked) {
                 WaitQueue::sleep_on(&self.wait_queue);

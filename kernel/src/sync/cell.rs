@@ -4,7 +4,7 @@ use core::cell::RefCell;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::TaskIrqGuard;
+use super::IrqSaveGuard;
 
 #[cfg(debug_assertions)]
 static KERNEL_CELL_BORROW_DEPTH: AtomicU32 = AtomicU32::new(0);
@@ -99,7 +99,7 @@ impl<T> KernelCell<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        let _irq_guard = TaskIrqGuard::enter();
+        let _irq_guard = IrqSaveGuard::enter();
         let _borrow_guard = KernelCellBorrowGuard::enter();
         self.with_borrow(f)
     }

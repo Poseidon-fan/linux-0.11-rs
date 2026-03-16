@@ -1,6 +1,6 @@
 //! IRQ state helpers shared by synchronization primitives.
 //!
-//! External kernel code should prefer [`TaskIrqGuard`] over issuing raw
+//! External kernel code should prefer [`IrqSaveGuard`] over issuing raw
 //! `cli`/`sti` instructions. The guard only tracks nested IRQ-masked regions
 //! and restores the original IF state on final drop.
 
@@ -40,9 +40,9 @@ fn irq_restore(saved_if_enabled: bool) {
 }
 
 /// RAII guard for nested IRQ-masked regions.
-pub struct TaskIrqGuard;
+pub struct IrqSaveGuard;
 
-impl TaskIrqGuard {
+impl IrqSaveGuard {
     /// Enter one IRQ-masked region, recording IF on outermost entry only.
     #[inline]
     pub fn enter() -> Self {
@@ -54,7 +54,7 @@ impl TaskIrqGuard {
         let next_depth = depth + 1;
         let saved_if_bit = if depth == 0 {
             let if_enabled =
-                outer_if_enabled.expect("TaskIrqGuard::enter missing outer IRQ snapshot");
+                outer_if_enabled.expect("IrqSaveGuard::enter missing outer IRQ snapshot");
             if if_enabled { IRQ_SAVED_IF_BIT } else { 0 }
         } else {
             packed & IRQ_SAVED_IF_BIT
@@ -65,11 +65,11 @@ impl TaskIrqGuard {
     }
 }
 
-impl Drop for TaskIrqGuard {
+impl Drop for IrqSaveGuard {
     fn drop(&mut self) {
         let packed = SYNC_IRQ_STATE.load(Ordering::Relaxed);
         let depth = packed & IRQ_DEPTH_MASK;
-        assert!(depth > 0, "TaskIrqGuard depth underflow at guard drop");
+        assert!(depth > 0, "IrqSaveGuard depth underflow at guard drop");
 
         let next_depth = depth - 1;
         let saved_if_enabled = (packed & IRQ_SAVED_IF_BIT) != 0;
