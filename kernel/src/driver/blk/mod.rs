@@ -38,7 +38,7 @@ pub(super) fn register_device(
 }
 
 pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<BufferHandle>) {
-    let Some(key) = buffer_handle.state.exclusive(|state| state.key) else {
+    let Some(key) = buffer_handle.key() else {
         warn!("Buffer key not set");
         return;
     };
@@ -53,15 +53,14 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
     }
 
     // If the buffer is locked, we don't prefetch.
-    if prefetch && buffer_handle.state.exclusive(|state| state.io_locked) {
+    if prefetch && buffer_handle.is_locked() {
         return;
     }
 
     buffer_handle.lock();
-    if buffer_handle.state.exclusive(|state| {
-        ty == BlockRequestType::Read && state.uptodate
-            || ty == BlockRequestType::Write && !state.dirty
-    }) {
+    if ty == BlockRequestType::Read && buffer_handle.is_uptodate()
+        || ty == BlockRequestType::Write && !buffer_handle.is_dirty()
+    {
         buffer_handle.unlock();
         return;
     }
@@ -107,9 +106,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
 
     match payload {
         RequestPayload::BufferCache(buffer_handle) => {
-            buffer_handle
-                .state
-                .exclusive(|state| state.uptodate = is_uptodate);
+            buffer_handle.set_uptodate(is_uptodate);
             buffer_handle.unlock();
         }
         RequestPayload::Paging(wait_queue) => WaitQueue::wake_up(&wait_queue),
@@ -266,7 +263,7 @@ impl BlockManager {
         );
 
         if let RequestPayload::BufferCache(buffer_handle) = &self.request(request_slot).payload {
-            buffer_handle.state.exclusive(|state| state.dirty = false);
+            buffer_handle.set_dirty(false);
         }
 
         self.request_mut(request_slot).next_request = None;

@@ -51,10 +51,7 @@ pub fn schedule() {
         offset: u32,
         selector: u16,
     }
-    assert!(
-        sync::current_irq_depth() == 0,
-        "TaskIrqGuard already nested on schedule"
-    );
+    sync::assert_can_schedule("schedule");
 
     let Some(next) = TASK_MANAGER.exclusive(|manager| {
         const BLOCKABLE: u32 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));

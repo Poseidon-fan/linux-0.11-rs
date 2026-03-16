@@ -13,36 +13,25 @@
 //! # Interrupt protection
 //!
 //! If data is accessed by both normal kernel paths and interrupt handlers,
-//! use [`KernelCell::exclusive`] to enter a per-task IRQ-nested critical
-//! section. Code running before `task::init()` or in contexts that already
+//! use [`KernelCell::exclusive`] to enter a nested IRQ-masked critical
+//! section. Code running in contexts that already
 //! guarantee IRQ exclusion can use [`KernelCell::exclusive_unchecked`].
 
-use core::arch::{asm, naked_asm};
+use core::arch::naked_asm;
 
 use crate::segment::selectors::{USER_CS, USER_DS};
 
+mod busy_lock;
 mod cell;
+mod irq;
 mod mutex;
 
-pub use cell::{KernelCell, current_irq_depth};
+pub use busy_lock::BusyLock;
+pub use cell::KernelCell;
+pub(crate) use cell::assert_can_schedule;
+pub(crate) use irq::TaskIrqGuard;
 #[allow(unused_imports)]
 pub use mutex::{Mutex, MutexGuard};
-
-/// Enables interrupts by setting the IF flag in EFLAGS.
-#[inline]
-pub fn sti() {
-    unsafe {
-        asm!("sti", options(att_syntax));
-    }
-}
-
-/// Disables interrupts by clearing the IF flag in EFLAGS.
-#[inline]
-pub fn cli() {
-    unsafe {
-        asm!("cli", options(att_syntax));
-    }
-}
 
 /// Switch from kernel mode (ring 0) to user mode (ring 3).
 ///
@@ -54,9 +43,10 @@ pub fn cli() {
 ///
 /// 1. Save the current stack pointer (ESP)
 /// 2. Push a fake interrupt frame: SS, ESP, EFLAGS, CS, EIP
-/// 3. Execute `iret` which pops the frame and switches to ring 3
-/// 4. Continue execution at the return address, now in user mode
-/// 5. Set all data segment registers to user data segment
+/// 3. Force IF=1 in the saved EFLAGS image for user-mode execution
+/// 4. Execute `iret` which pops the frame and switches to ring 3
+/// 5. Continue execution at the return address, now in user mode
+/// 6. Set all data segment registers to user data segment
 ///
 /// # Safety
 ///
@@ -74,6 +64,7 @@ pub extern "C" fn move_to_user_mode() {
             "pushl ${user_ds}",      // SS  = user data segment (0x17)
             "pushl %eax",            // ESP = current stack pointer
             "pushfl",                // EFLAGS
+            "orl $0x200, (%esp)",    // Force IF=1 in the saved EFLAGS image
             "pushl ${user_cs}",      // CS  = user code segment (0x0f)
             "pushl $2f",             // EIP = address of label "2"
 
@@ -94,17 +85,4 @@ pub extern "C" fn move_to_user_mode() {
             options(att_syntax),
         );
     }
-}
-
-/// EFLAGS bit for IF (Interrupt Flag).
-const EFLAGS_IF: u32 = 1 << 9;
-
-/// Save current EFLAGS and disable interrupts.
-#[inline]
-fn read_eflags_and_cli() -> u32 {
-    let flags: u32;
-    unsafe {
-        asm!("pushfl", "popl {0}", "cli", out(reg) flags, options(att_syntax));
-    }
-    flags
 }

@@ -1,7 +1,7 @@
-//! Blocking mutex built on top of [`KernelCell`] and [`WaitQueue`].
+//! Blocking mutex built on top of [`BusyLock`] and [`KernelCell`].
 //!
-//! The mutex metadata is protected by short IRQ-masked critical sections,
-//! while contended callers sleep on a wait queue until another task unlocks.
+//! The underlying sleep/wakeup mechanics live in [`BusyLock`], while this
+//! layer adds owner tracking and RAII access to a protected value.
 
 use core::{
     cell::UnsafeCell,
@@ -10,24 +10,16 @@ use core::{
 };
 
 use crate::{
-    sync::{self, EFLAGS_IF, KernelCell, read_eflags_and_cli},
-    task::{self, wait_queue::WaitQueue},
+    sync::{self, BusyLock, KernelCell},
+    task,
 };
-
-/// Internal metadata for one blocking mutex.
-struct MutexState {
-    /// Whether the mutex is currently held by some task.
-    locked: bool,
-    /// Task-table slot of the current owner.
-    owner_slot: Option<usize>,
-}
 
 /// A task-blocking mutex for single-core kernel code.
 ///
 /// # Design
 ///
-/// - Lock metadata is serialized by [`KernelCell`].
-/// - Contended callers sleep on [`WaitQueue`] instead of spinning.
+/// - The sleepable lock state lives in [`BusyLock`].
+/// - Owner tracking is serialized by [`KernelCell`].
 /// - The protected value itself lives in [`UnsafeCell`] and is only accessed
 ///   while the mutex is held.
 ///
@@ -38,33 +30,34 @@ struct MutexState {
 ///   critical section when calling [`lock`](Self::lock).
 /// - Interrupt handlers must not acquire this mutex.
 pub struct Mutex<T> {
-    state: KernelCell<MutexState>,
+    lock: BusyLock,
+    owner_slot: KernelCell<Option<usize>>,
     value: UnsafeCell<T>,
-    wait_queue: WaitQueue,
 }
 
 // SAFETY: `Mutex` serializes mutable access to `value`. Sharing the
 // mutex between tasks is sound when `T` can be transferred across task
 // boundaries.
 unsafe impl<T: Send> Sync for Mutex<T> {}
+// SAFETY: The mutex contains no task-local resources; ownership of `T`
+// may move with the mutex as long as `T: Send`.
+unsafe impl<T: Send> Send for Mutex<T> {}
 
 /// RAII guard returned by [`Mutex::lock`].
 #[must_use = "holding the guard keeps the mutex locked; dropping it unlocks"]
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
     _marker: PhantomData<&'a mut T>,
+    _not_send: PhantomData<*mut ()>,
 }
 
 impl<T> Mutex<T> {
     /// Create one unlocked mutex that protects `value`.
     pub const fn new(value: T) -> Self {
         Self {
-            state: KernelCell::new(MutexState {
-                locked: false,
-                owner_slot: None,
-            }),
+            lock: BusyLock::new(),
+            owner_slot: KernelCell::new(None),
             value: UnsafeCell::new(value),
-            wait_queue: WaitQueue::new(),
         }
     }
 
@@ -75,46 +68,23 @@ impl<T> Mutex<T> {
     /// Panics if called while already inside `KernelCell::exclusive`, because
     /// contended acquisition may sleep and reschedule.
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        assert!(
-            sync::current_irq_depth() == 0,
-            "Mutex::lock must not run inside KernelCell::exclusive"
-        );
+        sync::assert_can_schedule("Mutex::lock");
 
         let current_slot = task::current_slot();
-        let saved_if_enabled = (read_eflags_and_cli() & EFLAGS_IF) != 0;
-
-        // Keep interrupts masked across the check-sleep loop so unlock cannot
-        // race between "saw locked" and "queued ourselves to sleep".
-        loop {
-            let acquired = unsafe {
-                self.state.exclusive_unchecked(|state| {
-                    if state.owner_slot == Some(current_slot) {
-                        panic!("Mutex::lock recursive acquisition");
-                    }
-
-                    if state.locked {
-                        false
-                    } else {
-                        state.locked = true;
-                        state.owner_slot = Some(current_slot);
-                        true
-                    }
-                })
-            };
-
-            if acquired {
-                if saved_if_enabled {
-                    sync::sti();
-                } else {
-                    sync::cli();
-                }
-                return MutexGuard {
-                    mutex: self,
-                    _marker: PhantomData,
-                };
+        self.owner_slot.exclusive(|owner_slot| {
+            if *owner_slot == Some(current_slot) {
+                panic!("Mutex::lock recursive acquisition");
             }
-
-            WaitQueue::sleep_on(&self.wait_queue);
+        });
+        self.lock.acquire();
+        self.owner_slot.exclusive(|owner_slot| {
+            assert!(owner_slot.is_none(), "Mutex::lock owner slot already set");
+            *owner_slot = Some(current_slot);
+        });
+        MutexGuard {
+            mutex: self,
+            _marker: PhantomData,
+            _not_send: PhantomData,
         }
     }
 
@@ -127,41 +97,24 @@ impl<T> Mutex<T> {
     /// Panics on recursive acquisition by the same task.
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         let current_slot = task::current_slot();
-        let acquired = if sync::current_irq_depth() == 0 {
-            self.state.exclusive(|state| {
-                if state.owner_slot == Some(current_slot) {
-                    panic!("Mutex::try_lock recursive acquisition");
-                }
-
-                if state.locked {
-                    false
-                } else {
-                    state.locked = true;
-                    state.owner_slot = Some(current_slot);
-                    true
-                }
-            })
-        } else {
-            unsafe {
-                self.state.exclusive_unchecked(|state| {
-                    if state.owner_slot == Some(current_slot) {
-                        panic!("Mutex::try_lock recursive acquisition");
-                    }
-
-                    if state.locked {
-                        false
-                    } else {
-                        state.locked = true;
-                        state.owner_slot = Some(current_slot);
-                        true
-                    }
-                })
-            }
-        };
-
-        acquired.then_some(MutexGuard {
+        let owner_slot = self.owner_slot.exclusive(|owner_slot| *owner_slot);
+        if owner_slot == Some(current_slot) {
+            panic!("Mutex::try_lock recursive acquisition");
+        }
+        if !self.lock.try_acquire() {
+            return None;
+        }
+        self.owner_slot.exclusive(|owner_slot| {
+            assert!(
+                owner_slot.is_none(),
+                "Mutex::try_lock owner slot already set"
+            );
+            *owner_slot = Some(current_slot);
+        });
+        Some(MutexGuard {
             mutex: self,
             _marker: PhantomData,
+            _not_send: PhantomData,
         })
     }
 
@@ -179,27 +132,21 @@ impl<T> Mutex<T> {
 
     /// Return whether the mutex is currently held by any task.
     pub fn is_locked(&self) -> bool {
-        if sync::current_irq_depth() == 0 {
-            self.state.exclusive(|state| state.locked)
-        } else {
-            unsafe { self.state.exclusive_unchecked(|state| state.locked) }
-        }
+        self.lock.is_locked()
     }
 
     /// Release the mutex and wake one waiting task.
     fn unlock(&self) {
         let current_slot = task::current_slot();
-        self.state.exclusive(|state| {
-            assert!(state.locked, "Mutex::unlock unlocked mutex");
+        self.owner_slot.exclusive(|owner_slot| {
             assert_eq!(
-                state.owner_slot,
+                *owner_slot,
                 Some(current_slot),
                 "Mutex::unlock by non-owner"
             );
-            state.locked = false;
-            state.owner_slot = None;
+            *owner_slot = None;
         });
-        WaitQueue::wake_up(&self.wait_queue);
+        self.lock.release();
     }
 }
 

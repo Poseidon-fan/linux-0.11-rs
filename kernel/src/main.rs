@@ -58,7 +58,6 @@ pub extern "C" fn rust_main() -> ! {
     fs::buffer::init(buffer_memory_end);
     println!("init complete");
 
-    sync::sti();
     sync::move_to_user_mode();
     (user_lib::fork().unwrap() == 0).then(|| user_init());
 

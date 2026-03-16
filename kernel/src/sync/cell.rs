@@ -1,21 +1,60 @@
 //! Interior mutability wrapper for shared kernel state.
 
-use core::{
-    cell::RefCell,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::cell::RefCell;
+#[cfg(debug_assertions)]
+use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::sync::{EFLAGS_IF, read_eflags_and_cli};
+use super::TaskIrqGuard;
 
-use super::{cli, sti};
+#[cfg(debug_assertions)]
+static KERNEL_CELL_BORROW_DEPTH: AtomicU32 = AtomicU32::new(0);
 
-/// Low 31 bits store nested `exclusive` depth.
-const IRQ_DEPTH_MASK: u32 = 0x7fff_ffff;
-/// High bit stores IF value captured at outermost entry.
-const IRQ_SAVED_IF_BIT: u32 = 1 << 31;
+/// Debug-only tracker for active `KernelCell` borrows.
+///
+/// The borrow itself is scoped by `RefCell`, but this extra depth counter lets
+/// us assert that no task switch happens while any `KernelCell` closure is
+/// still running.
+struct KernelCellBorrowGuard;
 
-/// Packed IRQ nesting state for `KernelCell::exclusive`.
-static SYNC_IRQ_STATE: AtomicU32 = AtomicU32::new(0);
+impl KernelCellBorrowGuard {
+    #[inline]
+    fn enter() -> Self {
+        #[cfg(debug_assertions)]
+        {
+            KERNEL_CELL_BORROW_DEPTH.fetch_add(1, Ordering::Relaxed);
+        }
+        Self
+    }
+}
+
+impl Drop for KernelCellBorrowGuard {
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        {
+            let previous = KERNEL_CELL_BORROW_DEPTH.fetch_sub(1, Ordering::Relaxed);
+            assert!(previous > 0, "KernelCell borrow depth underflow");
+        }
+    }
+}
+
+/// Assert that the current code path may safely reschedule.
+///
+/// In debug builds this checks that no `KernelCell` borrow is currently active,
+/// which would otherwise cross a scheduling point. Release builds compile this
+/// check away.
+#[inline]
+pub(crate) fn assert_can_schedule(context: &str) {
+    #[cfg(debug_assertions)]
+    {
+        assert_eq!(
+            KERNEL_CELL_BORROW_DEPTH.load(Ordering::Relaxed),
+            0,
+            "{context} must not reschedule while holding a KernelCell borrow"
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = context;
+}
 
 /// Interior mutability wrapper for static variables in kernel context.
 ///
@@ -42,68 +81,6 @@ pub struct KernelCell<T> {
 // flow accesses the cell at a time. RefCell's runtime checks catch bugs.
 unsafe impl<T> Sync for KernelCell<T> {}
 
-/// Return the current nested IRQ-masking depth for `KernelCell::exclusive`.
-#[inline]
-pub fn current_irq_depth() -> u32 {
-    SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK
-}
-
-/// RAII guard for per-task IRQ nesting in `KernelCell::exclusive`.
-struct TaskIrqGuard;
-
-impl TaskIrqGuard {
-    #[inline]
-    pub fn enter() -> Self {
-        let outer_flags = (SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK == 0)
-            .then(read_eflags_and_cli);
-
-        let packed = SYNC_IRQ_STATE.load(Ordering::Relaxed);
-        let depth = packed & IRQ_DEPTH_MASK;
-        let next_depth = depth + 1;
-        let saved_if_bit = if depth == 0 {
-            let flags = outer_flags.expect("KernelCell::exclusive missing outer IRQ snapshot");
-            if (flags & EFLAGS_IF) != 0 {
-                IRQ_SAVED_IF_BIT
-            } else {
-                0
-            }
-        } else {
-            packed & IRQ_SAVED_IF_BIT
-        };
-
-        SYNC_IRQ_STATE.store(saved_if_bit | next_depth, Ordering::Relaxed);
-        Self
-    }
-}
-
-impl Drop for TaskIrqGuard {
-    fn drop(&mut self) {
-        let packed = SYNC_IRQ_STATE.load(Ordering::Relaxed);
-        let depth = packed & IRQ_DEPTH_MASK;
-        assert!(
-            depth > 0,
-            "KernelCell::exclusive depth underflow at guard drop"
-        );
-
-        let next_depth = depth - 1;
-        let saved_if_enabled = (packed & IRQ_SAVED_IF_BIT) != 0;
-        let next_packed = if next_depth == 0 {
-            0
-        } else {
-            (packed & IRQ_SAVED_IF_BIT) | next_depth
-        };
-        SYNC_IRQ_STATE.store(next_packed, Ordering::Relaxed);
-
-        if next_depth == 0 {
-            if saved_if_enabled {
-                sti();
-            } else {
-                cli();
-            }
-        }
-    }
-}
-
 impl<T> KernelCell<T> {
     /// Create a new kernel cell containing `value`.
     pub const fn new(value: T) -> Self {
@@ -114,29 +91,17 @@ impl<T> KernelCell<T> {
 
     /// Execute a closure with exclusive mutable access.
     ///
-    /// This API is the normal entry for kernel shared state:
-    /// - On first entry for the current task, it records IF and disables IRQs.
-    /// - Nested calls only increase per-task depth.
-    /// - On final exit, it restores IF state for this task.
-    ///
-    /// # Panics
-    ///
-    /// In debug builds, this panics if current-task tracking is not initialized.
-    /// Such early-boot paths should use [`exclusive_unchecked`](Self::exclusive_unchecked).
+    /// This is the normal entry for shared kernel state. It disables IRQs for
+    /// the duration of the closure and, in debug builds, tracks that a
+    /// `KernelCell` borrow is active so scheduling assertions can catch bugs.
     #[inline]
     pub fn exclusive<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {
-        #[cfg(debug_assertions)]
-        {
-            use crate::task;
-
-            let _ = task::current_task();
-        }
-        let _guard = TaskIrqGuard::enter();
-        // SAFETY: `exclusive` enforces the interrupt-side exclusion contract.
-        unsafe { self.exclusive_unchecked(f) }
+        let _irq_guard = TaskIrqGuard::enter();
+        let _borrow_guard = KernelCellBorrowGuard::enter();
+        self.with_borrow(f)
     }
 
     /// Execute a closure with exclusive mutable access without IRQ management.
@@ -145,10 +110,19 @@ impl<T> KernelCell<T> {
     ///
     /// The caller must guarantee that no re-entrant access can happen while
     /// this closure runs. Typical valid sites:
-    /// - Before `task::init()`, where current-task tracking is not initialized.
+    /// - Early boot code that already runs without IRQ-driven re-entry.
     /// - Interrupt-gate handlers where hardware has already masked IRQs.
     #[inline]
     pub unsafe fn exclusive_unchecked<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let _borrow_guard = KernelCellBorrowGuard::enter();
+        self.with_borrow(f)
+    }
+
+    #[inline]
+    fn with_borrow<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {
