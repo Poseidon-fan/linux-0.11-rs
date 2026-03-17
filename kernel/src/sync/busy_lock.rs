@@ -9,9 +9,10 @@
 //! Unlike [`super::Mutex`], a `BusyLock` does not track ownership and allows
 //! one context to acquire the lock while another context later releases it.
 
-use crate::task::wait_queue::WaitQueue;
-
-use super::{IrqSaveGuard, KernelCell, assert_can_schedule};
+use crate::{
+    sync::{KernelCell, cell::assert_can_schedule, irq::IrqSaveGuard},
+    task::wait_queue::WaitQueue,
+};
 
 /// Sleepable ownerless busy lock for single-core kernel code.
 pub struct BusyLock {

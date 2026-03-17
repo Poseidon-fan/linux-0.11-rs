@@ -1,4 +1,7 @@
-use core::ops::{Deref, DerefMut};
+use core::{
+    ops::{Deref, DerefMut},
+    sync::atomic::AtomicU8,
+};
 
 use crate::{
     mm::{
@@ -30,6 +33,12 @@ pub struct TaskControlBlock {
     /// Slot index in the global task table.
     pub slot: usize,
     pub pid: u32,
+    /// Packed per-task IRQ nesting state used by synchronization guards.
+    ///
+    /// Bit layout:
+    /// - bit 7: saved outer IF value
+    /// - bits 0..=6: nested IRQ-masked depth
+    pub irq_state: AtomicU8,
     pub inner: KernelCell<TaskControlBlockInner>,
 }
 
@@ -292,6 +301,7 @@ impl TaskControlBlock {
         Self {
             slot,
             pid,
+            irq_state: AtomicU8::new(0),
             inner: KernelCell::new(inner),
         }
     }

@@ -1,23 +1,15 @@
 //! IRQ state helpers shared by synchronization primitives.
 //!
 //! External kernel code should prefer [`IrqSaveGuard`] over issuing raw
-//! `cli`/`sti` instructions. The guard only tracks nested IRQ-masked regions
-//! and restores the original IF state on final drop.
+//! `cli`/`sti` instructions. The guard tracks nested IRQ-masked regions in
+//! the current task and restores the original IF state on final drop.
 
-use core::{
-    arch::asm,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::arch::asm;
+
+use crate::task::current::{cur_irq_state, set_cur_irq_state};
 
 /// EFLAGS bit for IF (Interrupt Flag).
 const EFLAGS_IF: u32 = 1 << 9;
-/// Low 31 bits store nested IRQ-masked depth.
-const IRQ_DEPTH_MASK: u32 = 0x7fff_ffff;
-/// High bit stores IF value captured at outermost entry.
-const IRQ_SAVED_IF_BIT: u32 = 1 << 31;
-
-/// Packed per-task IRQ nesting state shared by synchronization primitives.
-static SYNC_IRQ_STATE: AtomicU32 = AtomicU32::new(0);
 
 /// Save current IF and disable interrupts.
 #[inline]
@@ -46,39 +38,26 @@ impl IrqSaveGuard {
     /// Enter one IRQ-masked region, recording IF on outermost entry only.
     #[inline]
     pub fn enter() -> Self {
-        let outer_if_enabled = ((SYNC_IRQ_STATE.load(Ordering::Relaxed) & IRQ_DEPTH_MASK) == 0)
-            .then(irq_save_and_disable);
-
-        let packed = SYNC_IRQ_STATE.load(Ordering::Relaxed);
-        let depth = packed & IRQ_DEPTH_MASK;
+        let (_, depth) = cur_irq_state();
+        let outer_if_enabled = (depth == 0).then(irq_save_and_disable);
         let next_depth = depth + 1;
-        let saved_if_bit = if depth == 0 {
-            let if_enabled =
-                outer_if_enabled.expect("IrqSaveGuard::enter missing outer IRQ snapshot");
-            if if_enabled { IRQ_SAVED_IF_BIT } else { 0 }
-        } else {
-            packed & IRQ_SAVED_IF_BIT
-        };
 
-        SYNC_IRQ_STATE.store(saved_if_bit | next_depth, Ordering::Relaxed);
+        set_cur_irq_state(outer_if_enabled, Some(next_depth));
         Self
     }
 }
 
 impl Drop for IrqSaveGuard {
     fn drop(&mut self) {
-        let packed = SYNC_IRQ_STATE.load(Ordering::Relaxed);
-        let depth = packed & IRQ_DEPTH_MASK;
+        let (saved_if_enabled, depth) = cur_irq_state();
         assert!(depth > 0, "IrqSaveGuard depth underflow at guard drop");
 
         let next_depth = depth - 1;
-        let saved_if_enabled = (packed & IRQ_SAVED_IF_BIT) != 0;
-        let next_packed = if next_depth == 0 {
-            0
+        if next_depth == 0 {
+            set_cur_irq_state(Some(false), Some(0));
         } else {
-            (packed & IRQ_SAVED_IF_BIT) | next_depth
-        };
-        SYNC_IRQ_STATE.store(next_packed, Ordering::Relaxed);
+            set_cur_irq_state(None, Some(next_depth));
+        }
 
         if next_depth == 0 {
             irq_restore(saved_if_enabled);

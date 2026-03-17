@@ -28,8 +28,7 @@ mod mutex;
 
 pub use busy_lock::BusyLock;
 pub use cell::KernelCell;
-pub(crate) use cell::assert_can_schedule;
-pub(crate) use irq::IrqSaveGuard;
+pub use cell::assert_can_schedule;
 #[allow(unused_imports)]
 pub use mutex::{Mutex, MutexGuard};
 

@@ -10,7 +10,7 @@ use crate::{
     pmio::{inb_p, outb, outb_p},
     segment::{self, Descriptor, selectors},
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
-    sync,
+    sync::assert_can_schedule,
     task::task_struct::TaskState,
     trap::{set_intr_gate, set_system_gate},
 };
@@ -51,7 +51,7 @@ pub fn schedule() {
         offset: u32,
         selector: u16,
     }
-    sync::assert_can_schedule("schedule");
+    assert_can_schedule("schedule");
 
     let Some(next) = TASK_MANAGER.exclusive(|manager| {
         const BLOCKABLE: u32 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));

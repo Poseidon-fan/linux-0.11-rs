@@ -10,7 +10,10 @@
 
 use alloc::sync::{Arc, Weak};
 
-use crate::{sync::KernelCell, task};
+use crate::{
+    sync::{KernelCell, assert_can_schedule},
+    task,
+};
 
 use super::task_struct::{Task, TaskState, TaskState::Running};
 
@@ -29,6 +32,7 @@ impl WaitQueue {
 
     /// Put current task into uninterruptible sleep.
     pub fn sleep_on(wait_queue: &WaitQueue) {
+        assert_can_schedule("WaitQueue::sleep_on");
         let current = task::current_task();
         assert_ne!(current.pcb.slot, 0, "task[0] trying to sleep");
 
@@ -54,6 +58,7 @@ impl WaitQueue {
     /// If another task replaces this queue slot while we are sleeping,
     /// wake that task and retry until the slot settles.
     pub fn interruptible_sleep_on(wait_queue: &WaitQueue) {
+        assert_can_schedule("WaitQueue::interruptible_sleep_on");
         let current = task::current_task();
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] trying to sleep");

@@ -10,7 +10,7 @@ use core::{
 };
 
 use crate::{
-    sync::{self, BusyLock, KernelCell},
+    sync::{BusyLock, KernelCell, cell::assert_can_schedule},
     task,
 };
 
@@ -68,7 +68,7 @@ impl<T> Mutex<T> {
     /// Panics if called while already inside `KernelCell::exclusive`, because
     /// contended acquisition may sleep and reschedule.
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        sync::assert_can_schedule("Mutex::lock");
+        assert_can_schedule("Mutex::lock");
 
         let current_slot = task::current_slot();
         self.owner_slot.exclusive(|owner_slot| {

@@ -4,7 +4,7 @@ use core::cell::RefCell;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use super::IrqSaveGuard;
+use crate::sync::irq::IrqSaveGuard;
 
 #[cfg(debug_assertions)]
 static KERNEL_CELL_BORROW_DEPTH: AtomicU32 = AtomicU32::new(0);
@@ -43,7 +43,7 @@ impl Drop for KernelCellBorrowGuard {
 /// which would otherwise cross a scheduling point. Release builds compile this
 /// check away.
 #[inline]
-pub(crate) fn assert_can_schedule(context: &str) {
+pub fn assert_can_schedule(context: &str) {
     #[cfg(debug_assertions)]
     {
         assert_eq!(
@@ -72,7 +72,6 @@ pub(crate) fn assert_can_schedule(context: &str) {
 ///
 /// Panics if a borrow conflict occurs (e.g., nested mutable borrows).
 /// This indicates a bug in the kernel code.
-#[derive(Clone)]
 pub struct KernelCell<T> {
     inner: RefCell<T>,
 }
