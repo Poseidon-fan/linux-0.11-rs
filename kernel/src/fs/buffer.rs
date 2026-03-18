@@ -27,14 +27,14 @@ use crate::{
     driver::{DevNum, blk},
     fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
-    sync::{BusyLock, KernelCell},
+    sync::{BusyLock, KernelCell, Mutex},
     task::wait_queue::WaitQueue,
 };
 
 lazy_static! {
     /// Global singleton manager for the buffer-cache metadata graph.
-    pub static ref BUFFER_MANAGER: KernelCell<BufferManager> =
-        KernelCell::new(BufferManager::empty());
+    pub static ref BUFFER_MANAGER: Mutex<BufferManager> =
+        Mutex::new(BufferManager::empty());
 }
 
 /// Wait queue for tasks blocked in [`acquire_block`].
@@ -42,11 +42,7 @@ static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
 
 /// Initialize global buffer metadata by scanning `[LOW_MEM, buffer_memory_end)`.
 pub fn init(buffer_memory_end: u32) {
-    unsafe {
-        BUFFER_MANAGER.exclusive_unchecked(|manager| {
-            manager.init(buffer_memory_end);
-        });
-    }
+    BUFFER_MANAGER.lock().init(buffer_memory_end);
 }
 
 /// Acquire one cache entry for `key`, reusing an existing binding when present.
@@ -355,7 +351,7 @@ impl BufferManager {
 
     /// Pin an existing buffer and increment its logical reference count.
     fn pin_buffer(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
-        let handle = self.buffer_index.get(&key)?.clone();
+        let handle = Arc::clone(self.buffer_index.get(&key)?);
         handle.inc_ref();
         Some(handle)
     }
@@ -416,7 +412,7 @@ impl BufferManager {
 }
 
 fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
-    let handle = BUFFER_MANAGER.exclusive(|manager| manager.pin_buffer(key))?;
+    let handle = BUFFER_MANAGER.lock().pin_buffer(key)?;
     handle.io_lock.wait();
 
     if handle.key_matches(key) {
@@ -429,8 +425,7 @@ fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
 }
 
 fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
-    let Some(handle) = BUFFER_MANAGER.exclusive(|manager| manager.buffers.find_reclaim_candidate())
-    else {
+    let Some(handle) = BUFFER_MANAGER.lock().buffers.find_reclaim_candidate() else {
         WaitQueue::sleep_on(&BUFFER_WAIT_QUEUE);
         return None;
     };
@@ -445,7 +440,7 @@ fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
 
     flush_dirty_victim(&handle);
 
-    if BUFFER_MANAGER.exclusive(|manager| manager.try_rebind_buffer(key, handle.clone())) {
+    if BUFFER_MANAGER.lock().try_rebind_buffer(key, handle.clone()) {
         return Some(handle);
     }
 
