@@ -53,15 +53,15 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
     }
 
     // If the buffer is locked, we don't prefetch.
-    if prefetch && buffer_handle.is_locked() {
+    if prefetch && buffer_handle.io_lock.is_locked() {
         return;
     }
 
-    buffer_handle.lock();
+    buffer_handle.io_lock.acquire();
     if ty == BlockRequestType::Read && buffer_handle.is_uptodate()
         || ty == BlockRequestType::Write && !buffer_handle.is_dirty()
     {
-        buffer_handle.unlock();
+        buffer_handle.io_lock.release();
         return;
     }
 
@@ -70,7 +70,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
         match candidate {
             Some(slot) => break slot,
             None if prefetch => {
-                buffer_handle.unlock();
+                buffer_handle.io_lock.release();
                 return;
             }
             None => WaitQueue::sleep_on(&DEVICE_WAIT_QUEUE),
@@ -107,7 +107,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
     match payload {
         RequestPayload::BufferCache(buffer_handle) => {
             buffer_handle.set_uptodate(is_uptodate);
-            buffer_handle.unlock();
+            buffer_handle.io_lock.release();
         }
         RequestPayload::Paging(wait_queue) => WaitQueue::wake_up(&wait_queue),
     }

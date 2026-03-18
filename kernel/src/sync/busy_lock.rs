@@ -68,7 +68,10 @@ impl BusyLock {
 
     /// Release the busy bit and wake one waiter.
     pub fn release(&self) {
-        self.locked.exclusive(|locked| *locked = false);
+        self.locked.exclusive(|locked| {
+            assert!(*locked, "BusyLock::release released an unlocked lock");
+            *locked = false;
+        });
         WaitQueue::wake_up(&self.wait_queue);
     }
 

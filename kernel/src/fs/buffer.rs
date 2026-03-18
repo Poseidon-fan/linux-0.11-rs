@@ -64,7 +64,7 @@ pub fn acquire_block(key: BufferKey) -> Arc<BufferHandle> {
 
 /// Release one logical reference obtained from [`acquire_block`].
 pub fn release_block(handle: Arc<BufferHandle>) {
-    handle.wait();
+    handle.io_lock.wait();
     handle.dec_ref();
     WaitQueue::wake_up(&BUFFER_WAIT_QUEUE);
 }
@@ -76,7 +76,7 @@ pub fn read_block(key: BufferKey) -> Option<Arc<BufferHandle>> {
         return Some(handle);
     }
     blk::submit_request(blk::BlockRequestType::Read, false, Arc::clone(&handle));
-    handle.wait();
+    handle.io_lock.wait();
     if handle.is_uptodate() {
         return Some(handle);
     }
@@ -112,10 +112,10 @@ pub struct BufferHandle {
     pub buffers_link: LinkedListLink,
     /// Start address of one `BLOCK_SIZE` data block.
     pub data: NonNull<u8>,
+    /// Sleepable ownerless lock for in-flight buffer I/O.
+    pub io_lock: BusyLock,
     /// Mutable metadata for cache state and binding.
     meta: KernelCell<BufferMeta>,
-    /// Sleepable ownerless lock for in-flight buffer I/O.
-    io_lock: BusyLock,
 }
 
 intrusive_adapter!(
@@ -160,26 +160,6 @@ impl BufferHandle {
             meta: KernelCell::new(BufferMeta::empty()),
             io_lock: BusyLock::new(),
         }
-    }
-
-    /// Wait until this buffer is no longer under I/O lock.
-    pub fn wait(&self) {
-        self.io_lock.wait();
-    }
-
-    /// Acquire this buffer's I/O lock, sleeping if another task holds it.
-    pub fn lock(&self) {
-        self.io_lock.acquire();
-    }
-
-    /// Release this buffer's I/O lock and wake one waiter.
-    pub fn unlock(&self) {
-        self.io_lock.release();
-    }
-
-    /// Return whether this buffer is currently locked for block I/O.
-    pub fn is_locked(&self) -> bool {
-        self.io_lock.is_locked()
     }
 
     /// Return the current binding key, if any.
@@ -249,7 +229,7 @@ impl BufferHandle {
     /// Return the reclaim penalty used by victim selection.
     fn reclaim_penalty(&self) -> u8 {
         let dirty = self.meta.exclusive(|meta| meta.dirty);
-        ((dirty as u8) << 1) | self.is_locked() as u8
+        ((dirty as u8) << 1) | self.io_lock.is_locked() as u8
     }
 }
 
@@ -437,7 +417,7 @@ impl BufferManager {
 
 fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
     let handle = BUFFER_MANAGER.exclusive(|manager| manager.pin_buffer(key))?;
-    handle.wait();
+    handle.io_lock.wait();
 
     if handle.key_matches(key) {
         return Some(handle);
@@ -455,7 +435,7 @@ fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
         return None;
     };
 
-    handle.wait();
+    handle.io_lock.wait();
     if handle.ref_count() != 0 {
         // Another task claimed this victim while we were sleeping.
         // Restart from the outer acquire loop so a newly cached target
