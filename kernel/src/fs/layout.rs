@@ -2,6 +2,8 @@
 
 use core::mem::size_of;
 
+use crate::fs::BLOCK_SIZE;
+
 /// Maximum file name length stored in one Minix directory entry.
 pub const MINIX_NAME_LENGTH: usize = 14;
 
@@ -55,6 +57,8 @@ pub struct DiskDirectoryEntry {
     pub inode_number: u16,
     pub name: [u8; MINIX_NAME_LENGTH],
 }
+
+pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
 
 const _: () = assert!(size_of::<DiskSuperBlock>() == 20);
 const _: () = assert!(size_of::<DiskInode>() == 32);

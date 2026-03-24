@@ -17,7 +17,7 @@
 //! ```
 
 use alloc::sync::Arc;
-use core::ptr::NonNull;
+use core::{mem::size_of, ptr::NonNull};
 
 use hashbrown::HashMap;
 use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
@@ -211,6 +211,38 @@ impl BufferHandle {
     /// Return whether the buffer contents are valid.
     pub(crate) fn is_uptodate(&self) -> bool {
         self.meta.exclusive(|meta| meta.uptodate)
+    }
+
+    /// Interpret the block start as one `T` reference.
+    pub(crate) fn as_ref<T>(&self) -> &T {
+        assert!(
+            size_of::<T>() <= BLOCK_SIZE,
+            "typed buffer view must fit within one block"
+        );
+
+        unsafe { &*self.data.as_ptr().cast::<T>() }
+    }
+
+    /// Interpret the block start as one mutable `T` reference.
+    pub(crate) fn as_mut<T>(&mut self) -> &mut T {
+        assert!(
+            size_of::<T>() <= BLOCK_SIZE,
+            "typed buffer view must fit within one block"
+        );
+
+        unsafe { &mut *self.data.as_ptr().cast::<T>() }
+    }
+
+    /// Read one typed view from the start of this buffer block.
+    pub(crate) fn read<T, R>(&self, reader: impl FnOnce(&T) -> R) -> R {
+        reader(self.as_ref::<T>())
+    }
+
+    /// Mutate one typed view from the start of this buffer block and mark it dirty.
+    pub(crate) fn write<T, R>(&self, writer: impl FnOnce(&mut T) -> R) -> R {
+        let result = unsafe { writer(&mut *self.data.as_ptr().cast::<T>()) };
+        self.set_dirty(true);
+        result
     }
 
     /// Reset metadata for a newly rebound cache entry.
