@@ -12,7 +12,7 @@ use crate::{
         space::MemorySpace,
     },
     segment::Descriptor,
-    sync::{KernelCell, Mutex},
+    sync::KernelCell,
 };
 
 /// Number of physical pages reserved for each task's PCB + kernel stack block.
@@ -69,9 +69,9 @@ pub struct TaskControlBlockInner {
 #[derive(Clone)]
 pub struct TaskFileSystemContext {
     pub umask: u16,
-    pub root_directory: Option<Arc<Mutex<Inode>>>,
-    pub current_directory: Option<Arc<Mutex<Inode>>>,
-    pub executable_inode: Option<Arc<Mutex<Inode>>>,
+    pub root_directory: Option<Arc<Inode>>,
+    pub current_directory: Option<Arc<Inode>>,
+    pub executable_inode: Option<Arc<Inode>>,
     pub close_on_exec: u32,
     pub open_files: [Option<Arc<dyn File>>; TASK_OPEN_FILES_LIMIT],
 }

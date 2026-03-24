@@ -22,7 +22,7 @@ lazy_static! {
 /// One mounted filesystem entry stored in the global mount table.
 pub struct Mount {
     pub file_system: Arc<Mutex<MinixFileSystem>>,
-    pub root_inode: Arc<Mutex<Inode>>,
+    pub root_inode: Arc<Inode>,
     /// Inode covered by this mount entry. The root filesystem has no mount point.
-    pub mount_point_inode: Option<Arc<Mutex<Inode>>>,
+    pub mount_point_inode: Option<Arc<Inode>>,
 }

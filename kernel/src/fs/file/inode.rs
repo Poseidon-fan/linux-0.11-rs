@@ -9,14 +9,14 @@ use crate::{
 };
 
 pub struct InodeFile {
-    pub inode: Arc<Mutex<Inode>>,
+    pub inode: Arc<Inode>,
     pub offset: Mutex<u64>,
     pub options: OpenOptions,
 }
 
 impl InodeFile {
     /// Create one open file object that references `inode`.
-    pub fn new(inode: Arc<Mutex<Inode>>, options: OpenOptions) -> Self {
+    pub fn new(inode: Arc<Inode>, options: OpenOptions) -> Self {
         Self {
             inode,
             offset: Mutex::new(0),

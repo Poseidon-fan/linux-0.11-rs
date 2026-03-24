@@ -22,7 +22,7 @@ pub const INODE_TABLE_CAPACITY: usize = 32;
 
 lazy_static! {
     /// Global runtime inode table modeled after the fixed-size Linux 0.11 array.
-    pub static ref INODE_TABLE: Mutex<[Option<Arc<Mutex<Inode>>>; INODE_TABLE_CAPACITY]> =
+    pub static ref INODE_TABLE: Mutex<[Option<Arc<Inode>>; INODE_TABLE_CAPACITY]> =
         Mutex::new(array::from_fn(|_| None));
 }
 
@@ -41,12 +41,16 @@ pub struct MinixFileSystem {
     pub zone_bitmap: Bitmap<MINIX_BITMAP_BLOCK_SLOTS>,
 }
 
-/// Runtime inode object protected by an outer [`Mutex`].
+/// Runtime inode object.
 pub struct Inode {
     pub id: InodeId,
     pub file_system: Weak<Mutex<MinixFileSystem>>,
+    pub inner: Mutex<InodeInner>,
+}
+
+pub struct InodeInner {
     pub disk_inode: DiskInode,
+    pub is_dirty: bool,
     pub access_time: u32,
     pub change_time: u32,
-    pub is_dirty: bool,
 }
