@@ -1,7 +1,7 @@
 pub mod blk;
 
 /// Encoded kernel device number (`major:minor`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DevNum(pub u16);
 

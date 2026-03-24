@@ -87,7 +87,7 @@ pub struct PhysPageNum(pub u32);
 ///
 /// Similar to [`PhysPageNum`], but for linear address.
 #[repr(C)]
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct LinPageNum(pub u32);
 
 impl From<u32> for LinAddr {

@@ -54,6 +54,7 @@ impl TaskManager {
             parent_session,
             parent_identity,
             parent_tty,
+            parent_file_system,
             parent_ldt,
             parent_signal_info,
             child_memory_space,
@@ -84,6 +85,7 @@ impl TaskManager {
                 parent_inner.relation.session,
                 parent_inner.identity,
                 parent_inner.tty,
+                parent_inner.fs.clone(),
                 parent_inner.ldt.clone(),
                 parent_inner.signal_info.clone(),
                 child_memory_space,
@@ -113,6 +115,7 @@ impl TaskManager {
             memory_space: None, // empty, set below after LDT base is adjusted
             exit_code: 0,
             tty: parent_tty,
+            fs: parent_file_system,
             ldt: parent_ldt,
             tss: TaskStateSegment {
                 back_link: 0,
@@ -308,6 +311,14 @@ lazy_static! {
                 memory_space: Some(MemorySpace::new(0)), // task 0
                 exit_code: 0,
                 tty: -1,
+                fs: TaskFileSystemContext {
+                    umask: 0,
+                    root_directory: None,
+                    current_directory: None,
+                    executable_inode: None,
+                    close_on_exec: 0,
+                    open_files: array::from_fn(|_| None),
+                },
                 ldt: LocalDescriptorTable::new(0, 0x9f),
                 signal_info: TaskSignalInfo {
                     signal: 0,

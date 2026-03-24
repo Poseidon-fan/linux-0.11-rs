@@ -1,15 +1,18 @@
+use alloc::sync::Arc;
 use core::{
+    mem::size_of,
     ops::{Deref, DerefMut},
     sync::atomic::AtomicU8,
 };
 
 use crate::{
+    fs::{file::File, minix::Inode},
     mm::{
         frame::{self, PAGE_SIZE, PhysFrameRange},
         space::MemorySpace,
     },
     segment::Descriptor,
-    sync::KernelCell,
+    sync::{KernelCell, Mutex},
 };
 
 /// Number of physical pages reserved for each task's PCB + kernel stack block.
@@ -23,6 +26,8 @@ pub const TASK_PAGE_FRAMES: usize = 2;
 
 /// Total bytes reserved for one task's PCB + kernel stack block.
 pub const TASK_PAGE_SIZE: usize = PAGE_SIZE * TASK_PAGE_FRAMES;
+
+pub const TASK_OPEN_FILES_LIMIT: usize = 2;
 
 /// Process Control Block (PCB) for a task.
 ///
@@ -54,9 +59,21 @@ pub struct TaskControlBlockInner {
     pub memory_space: Option<MemorySpace>,
     pub exit_code: i32,
     pub tty: i32,
+    pub fs: TaskFileSystemContext,
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
     pub signal_info: TaskSignalInfo,
+}
+
+/// Per-task filesystem context shared by pathname lookup and file descriptors.
+#[derive(Clone)]
+pub struct TaskFileSystemContext {
+    pub umask: u16,
+    pub root_directory: Option<Arc<Mutex<Inode>>>,
+    pub current_directory: Option<Arc<Mutex<Inode>>>,
+    pub executable_inode: Option<Arc<Mutex<Inode>>>,
+    pub close_on_exec: u32,
+    pub open_files: [Option<Arc<dyn File>>; TASK_OPEN_FILES_LIMIT],
 }
 
 /// Memory layout of a task page block (4KB aligned).

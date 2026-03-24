@@ -8,8 +8,8 @@
 //! and data frames (decrementing reference counts), and clears the
 //! corresponding page directory entries in the shared page directory.
 
-use alloc::collections::btree_map::BTreeMap;
 use core::arch::asm;
+use hashbrown::HashMap;
 
 use crate::mm::{
     address::{LinPageNum, PhysAddr, PhysPageNum},
@@ -42,7 +42,7 @@ const TASK0_NR_PAGES: usize = 0xA0;
 ///   (`task_nr * 16`), used by `Drop` to clear the entries.
 pub struct MemorySpace {
     page_tables: [Option<PageTable>; PDES_PER_PROCESS],
-    data_frames: BTreeMap<LinPageNum, PhysFrame>,
+    data_frames: HashMap<LinPageNum, PhysFrame>,
     /// Starting index in the shared page directory for this process.
     /// For process n, this is `n * 16`.
     pde_base: usize,
@@ -56,7 +56,7 @@ impl MemorySpace {
     pub fn new(task_nr: usize) -> Self {
         Self {
             page_tables: [const { None }; PDES_PER_PROCESS],
-            data_frames: BTreeMap::new(),
+            data_frames: HashMap::new(),
             pde_base: task_nr * PDES_PER_PROCESS,
         }
     }
