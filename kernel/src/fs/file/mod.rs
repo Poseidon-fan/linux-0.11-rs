@@ -20,16 +20,32 @@ pub trait File: Send + Sync {
 }
 
 bitflags! {
-    /// Open flags stored in one open-file object.
+    /// Additional open flags stored in one open-file object.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct OpenFlags: u32 {
-        const READ_ONLY = 0;
-        const WRITE_ONLY = 1 << 0;
-        const READ_WRITE = 1 << 1;
         const CREATE = 1 << 6;
         const EXCLUSIVE = 1 << 7;
         const TRUNCATE = 1 << 9;
         const APPEND = 1 << 10;
     }
+}
+
+/// Access mode encoded by the low two bits of the open options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccessMode {
+    /// Open for read-only access.
+    ReadOnly,
+    /// Open for write-only access.
+    WriteOnly,
+    /// Open for both read and write access.
+    ReadWrite,
+}
+
+/// Full open options stored in one open-file object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenOptions {
+    pub access_mode: AccessMode,
+    pub flags: OpenFlags,
 }
 
 /// Seek origin and displacement for one file-position update.

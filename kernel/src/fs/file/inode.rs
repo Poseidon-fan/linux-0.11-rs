@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{
-        file::{File, FileStat, OpenFlags, SeekFrom},
+        file::{File, FileStat, OpenOptions, SeekFrom},
         minix::Inode,
     },
     sync::Mutex,
@@ -11,16 +11,16 @@ use crate::{
 pub struct InodeFile {
     pub inode: Arc<Mutex<Inode>>,
     pub offset: Mutex<u64>,
-    pub flags: OpenFlags,
+    pub options: OpenOptions,
 }
 
 impl InodeFile {
     /// Create one open file object that references `inode`.
-    pub fn new(inode: Arc<Mutex<Inode>>, flags: OpenFlags) -> Self {
+    pub fn new(inode: Arc<Mutex<Inode>>, options: OpenOptions) -> Self {
         Self {
             inode,
             offset: Mutex::new(0),
-            flags,
+            options,
         }
     }
 }
