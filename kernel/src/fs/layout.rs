@@ -7,6 +7,9 @@ use crate::fs::BLOCK_SIZE;
 /// Maximum file name length stored in one Minix directory entry.
 pub const MINIX_NAME_LENGTH: usize = 14;
 
+/// Magic number that identifies a valid Minix filesystem super block.
+pub const MINIX_SUPER_MAGIC: u16 = 0x137F;
+
 /// Root inode number in the filesystem image.
 pub const ROOT_INODE_NUMBER: InodeNumber = InodeNumber(1);
 
@@ -25,6 +28,7 @@ pub const DOUBLE_INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT + 1;
 pub struct InodeNumber(pub u32);
 
 /// Minix on-disk super block.
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct DiskSuperBlock {
     pub inode_count: u16,

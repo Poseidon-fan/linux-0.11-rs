@@ -6,6 +6,7 @@ use core::array;
 use lazy_static::lazy_static;
 
 use crate::{
+    driver::DevNum,
     fs::minix::{Inode, MinixFileSystem},
     sync::Mutex,
 };
@@ -14,15 +15,36 @@ use crate::{
 pub const MOUNT_TABLE_CAPACITY: usize = 8;
 
 lazy_static! {
-    /// Global mount table modeled after the fixed-size mount array.
-    pub static ref MOUNT_TABLE: Mutex<[Option<Arc<Mount>>; MOUNT_TABLE_CAPACITY]> =
-        Mutex::new(array::from_fn(|_| None));
+    /// Global mount table protected by a mutex; accessed through [`MountTable`] methods.
+    pub static ref MOUNT_TABLE: Mutex<MountTable> = Mutex::new(MountTable::new());
 }
 
 /// One mounted filesystem entry stored in the global mount table.
 pub struct Mount {
+    pub device: DevNum,
     pub file_system: Arc<Mutex<MinixFileSystem>>,
     pub root_inode: Arc<Inode>,
     /// Inode covered by this mount entry. The root filesystem has no mount point.
     pub mount_point_inode: Option<Arc<Inode>>,
+}
+
+/// Fixed-capacity table that tracks all currently mounted filesystems.
+pub struct MountTable {
+    slots: [Option<Arc<Mount>>; MOUNT_TABLE_CAPACITY],
+}
+
+impl MountTable {
+    fn new() -> Self {
+        Self {
+            slots: array::from_fn(|_| None),
+        }
+    }
+
+    /// Return the filesystem mounted on `dev`, or `None` if no such mount exists.
+    pub fn get_fs(&self, dev: DevNum) -> Option<Arc<Mutex<MinixFileSystem>>> {
+        self.slots.iter().find_map(|slot| {
+            let mount = slot.as_ref()?;
+            (mount.device == dev).then(|| Arc::clone(&mount.file_system))
+        })
+    }
 }

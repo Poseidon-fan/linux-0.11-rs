@@ -20,29 +20,33 @@ pub struct Bitmap<const N: usize> {
 }
 
 impl<const N: usize> Bitmap<N> {
-    /// Create an empty bitmap whose bit 0 maps to `bit0_id`.
-    pub fn new(bit0_id: u32) -> Self {
-        Self {
-            buffers: array::from_fn(|_| None),
-            bit0_id,
-            bit_count: 0,
-        }
-    }
-
-    /// Load bitmap buffers and set the active bit count in one step.
+    /// Build a bitmap from its backing blocks.
     ///
-    /// Supplying more buffers than `N` or a `bit_count` that exceeds the
-    /// total capacity of those buffers panics immediately, so the bitmap is
-    /// never left in a partially-initialised state.
-    pub fn load(&mut self, buffers: impl IntoIterator<Item = Arc<BufferHandle>>, bit_count: usize) {
-        assert!(
-            bit_count <= self.capacity(),
-            "bitmap bit count exceeds cached block capacity"
-        );
-        self.bit_count = bit_count;
+    /// `bit0_id` is the logical identifier that bit index 0 maps to.
+    /// `bit_count` must not exceed the total bit capacity of the supplied
+    /// buffers, and the number of buffers must not exceed `N`; both
+    /// conditions are checked eagerly so the bitmap is never partially
+    /// initialised.
+    pub fn new(
+        bit0_id: u32,
+        buffers: impl IntoIterator<Item = Arc<BufferHandle>>,
+        bit_count: usize,
+    ) -> Self {
+        let mut slots: [Option<Arc<BufferHandle>>; N] = array::from_fn(|_| None);
+        let mut loaded = 0usize;
         for (slot, buf) in buffers.into_iter().enumerate() {
             assert!(slot < N, "more buffers supplied than bitmap slot capacity");
-            self.buffers[slot] = Some(buf);
+            slots[slot] = Some(buf);
+            loaded = slot + 1;
+        }
+        assert!(
+            bit_count <= loaded * BLOCK_BITS,
+            "bitmap bit count exceeds capacity of supplied buffers"
+        );
+        Self {
+            buffers: slots,
+            bit0_id,
+            bit_count,
         }
     }
 
@@ -83,9 +87,5 @@ impl<const N: usize> Bitmap<N> {
             .as_ref()
             .expect("bitmap buffers must be loaded before free");
         buf.write(|bitmap: &mut BitmapBlock| bitmap[word_index] &= !mask);
-    }
-
-    const fn capacity(&self) -> usize {
-        N * BLOCK_BITS
     }
 }

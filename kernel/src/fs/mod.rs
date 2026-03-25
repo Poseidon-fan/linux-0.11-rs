@@ -9,3 +9,7 @@ pub mod mount;
 
 /// Filesystem logical block size in bytes.
 pub const BLOCK_SIZE: usize = 1024;
+
+pub fn mount_root() {
+    todo!()
+}
