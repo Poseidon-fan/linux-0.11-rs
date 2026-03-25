@@ -12,8 +12,8 @@ use crate::{
     driver::DevNum,
     fs::{
         bitmap::Bitmap,
-        buffer::{self, BufferHandle, BufferKey},
-        layout::{BitmapBlock, DiskInode, DiskSuperBlock, InodeNumber, MINIX_SUPER_MAGIC},
+        buffer::{self, BufferKey},
+        layout::{DiskInode, DiskSuperBlock, InodeNumber, MINIX_SUPER_MAGIC},
     },
     sync::Mutex,
 };
@@ -59,13 +59,6 @@ pub struct InodeInner {
     pub change_time: u32,
 }
 
-/// Release every buffer in the list via [`buffer::release_block`].
-fn release_buffers(bufs: Vec<Arc<BufferHandle>>) {
-    for buf in bufs {
-        buffer::release_block(buf);
-    }
-}
-
 impl MinixFileSystem {
     /// Read and validate the filesystem on `dev`, loading all bitmap blocks into
     /// memory. Returns `None` if the device is unreadable or carries no valid
@@ -89,7 +82,7 @@ impl MinixFileSystem {
                 dev,
                 block_nr: block,
             }) else {
-                release_buffers(inode_bitmap_bufs);
+                buffer::release_blocks(inode_bitmap_bufs);
                 return None;
             };
             block += 1;
@@ -102,31 +95,31 @@ impl MinixFileSystem {
                 dev,
                 block_nr: block,
             }) else {
-                release_buffers(inode_bitmap_bufs);
-                release_buffers(zone_bitmap_bufs);
+                buffer::release_blocks(inode_bitmap_bufs);
+                buffer::release_blocks(zone_bitmap_bufs);
                 return None;
             };
             block += 1;
             zone_bitmap_bufs.push(buf);
         }
 
-        // Bit 0 of each bitmap is permanently reserved. Marking it ensures
-        // inode 0 (invalid) and the last pre-data zone are never allocated.
-        // The write goes through Arc<BufferHandle>, so the underlying buffer
-        // data is shared — the reservation survives the Vec-to-Bitmap move
-        // below (only the Arc is moved, not the buffer contents).
-        inode_bitmap_bufs[0].write(|b: &mut BitmapBlock| b[0] |= 1);
-        zone_bitmap_bufs[0].write(|b: &mut BitmapBlock| b[0] |= 1);
-
         // Inode bitmap: bit j → inode j. Valid inodes are 1..inode_count, so
-        // bit_count covers bits 0..inode_count inclusive (inode_count + 1 bits).
-        let inode_bitmap = Bitmap::new(0, inode_bitmap_bufs, super_block.inode_count as usize + 1);
+        // bit_count covers bits 0..inode_count inclusive (inode_count + 1 bits),
+        // while bit 0 remains permanently reserved.
+        let inode_bitmap = Bitmap::new(
+            0,
+            1,
+            inode_bitmap_bufs,
+            super_block.inode_count as usize + 1,
+        );
 
         // Zone bitmap: bit j → zone (first_data_zone - 1 + j). The bitmap
         // covers zones [first_data_zone-1, zone_count-1], i.e.
-        // zone_count - first_data_zone + 1 bits total.
+        // zone_count - first_data_zone + 1 bits total, with bit 0 reserved
+        // for the last pre-data zone.
         let zone_bitmap = Bitmap::new(
             super_block.first_data_zone as u32 - 1,
+            1,
             zone_bitmap_bufs,
             super_block.zone_count as usize - super_block.first_data_zone as usize + 1,
         );

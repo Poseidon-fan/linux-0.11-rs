@@ -65,6 +65,13 @@ pub fn release_block(handle: Arc<BufferHandle>) {
     WaitQueue::wake_up(&BUFFER_WAIT_QUEUE);
 }
 
+/// Release multiple logical references obtained from [`acquire_block`].
+pub fn release_blocks(handles: impl IntoIterator<Item = Arc<BufferHandle>>) {
+    for handle in handles {
+        release_block(handle);
+    }
+}
+
 pub fn read_block(key: BufferKey) -> Option<Arc<BufferHandle>> {
     let handle = acquire_block(key);
 
