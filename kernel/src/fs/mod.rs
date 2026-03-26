@@ -55,7 +55,7 @@ pub fn mount_root() {
 
     let mount_entry = Arc::new(Mount {
         device: dev,
-        file_system: root_fs,
+        file_system: Arc::clone(&root_fs),
         root_inode: Arc::clone(&root_inode),
         mount_point_inode: None,
     });
@@ -69,4 +69,16 @@ pub fn mount_root() {
         inner.fs.root_directory = Some(Arc::clone(&root_inode));
         inner.fs.current_directory = Some(root_inode);
     });
+
+    let fs = root_fs.lock();
+    crate::println!(
+        "{}/{} free blocks",
+        fs.zone_bitmap.count_free(),
+        fs.super_block.zone_count
+    );
+    crate::println!(
+        "{}/{} free inodes",
+        fs.inode_bitmap.count_free(),
+        fs.super_block.inode_count
+    );
 }

@@ -110,22 +110,16 @@ impl MinixFileSystem {
         }
 
         // Inode bitmap: bit j → inode j. Valid inodes are 1..inode_count, so
-        // bit_count covers bits 0..inode_count inclusive (inode_count + 1 bits),
-        // while bit 0 remains permanently reserved.
-        let inode_bitmap = Bitmap::new(
-            0,
-            1,
-            inode_bitmap_bufs,
-            super_block.inode_count as usize + 1,
-        );
+        // bit_count covers bits 0..inode_count inclusive (inode_count + 1 bits).
+        // Bit 0 is marked occupied by `Bitmap::new`.
+        let inode_bitmap = Bitmap::new(0, inode_bitmap_bufs, super_block.inode_count as usize + 1);
 
         // Zone bitmap: bit j → zone (first_data_zone - 1 + j). The bitmap
         // covers zones [first_data_zone-1, zone_count-1], i.e.
-        // zone_count - first_data_zone + 1 bits total, with bit 0 reserved
-        // for the last pre-data zone.
+        // zone_count - first_data_zone + 1 bits total. Bit 0 is marked
+        // occupied by `Bitmap::new`.
         let zone_bitmap = Bitmap::new(
             super_block.first_data_zone as u32 - 1,
-            1,
             zone_bitmap_bufs,
             super_block.zone_count as usize - super_block.first_data_zone as usize + 1,
         );
