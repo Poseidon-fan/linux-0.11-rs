@@ -27,7 +27,7 @@ pub const TASK_PAGE_FRAMES: usize = 2;
 /// Total bytes reserved for one task's PCB + kernel stack block.
 pub const TASK_PAGE_SIZE: usize = PAGE_SIZE * TASK_PAGE_FRAMES;
 
-pub const TASK_OPEN_FILES_LIMIT: usize = 2;
+pub const TASK_OPEN_FILES_LIMIT: usize = 20;
 
 /// Process Control Block (PCB) for a task.
 ///
