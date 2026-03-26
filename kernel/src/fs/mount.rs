@@ -40,6 +40,15 @@ impl MountTable {
         }
     }
 
+    /// Insert a mount entry into the first free slot.
+    ///
+    /// Returns the slot index on success, or `None` if the table is full.
+    pub fn insert(&mut self, mount: Arc<Mount>) -> Option<usize> {
+        let slot = self.slots.iter().position(|s| s.is_none())?;
+        self.slots[slot] = Some(mount);
+        Some(slot)
+    }
+
     /// Return the filesystem mounted on `dev`, or `None` if no such mount exists.
     pub fn get_fs(&self, dev: DevNum) -> Option<Arc<Mutex<MinixFileSystem>>> {
         self.slots.iter().find_map(|slot| {

@@ -1,4 +1,18 @@
+use core::sync::atomic::{AtomicU16, Ordering};
+
 pub mod blk;
+
+static ROOT_DEV: AtomicU16 = AtomicU16::new(0);
+
+#[inline]
+pub fn set_root_dev(dev: DevNum) {
+    ROOT_DEV.store(dev.0, Ordering::Release);
+}
+
+#[inline]
+pub fn root_dev() -> DevNum {
+    DevNum(ROOT_DEV.load(Ordering::Acquire))
+}
 
 /// Encoded kernel device number (`major:minor`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

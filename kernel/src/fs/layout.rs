@@ -42,6 +42,7 @@ pub struct DiskSuperBlock {
 }
 
 /// Minix on-disk inode.
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct DiskInode {
     pub mode: u16,
@@ -62,7 +63,13 @@ pub struct DiskDirectoryEntry {
     pub name: [u8; MINIX_NAME_LENGTH],
 }
 
+/// Number of on-disk inodes that fit in one filesystem block.
+pub const INODES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskInode>();
+
 pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
+
+/// One full block of on-disk inodes, used when reading inode table blocks.
+pub type InodeBlock = [DiskInode; INODES_PER_BLOCK];
 
 const _: () = assert!(size_of::<DiskSuperBlock>() == 20);
 const _: () = assert!(size_of::<DiskInode>() == 32);

@@ -26,6 +26,8 @@ mod trap;
 
 use core::arch::global_asm;
 
+use crate::driver::DevNum;
+
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
 #[unsafe(no_mangle)]
@@ -35,6 +37,10 @@ pub extern "C" fn rust_main() -> ! {
         const EXT_MEM_K_ADDR: u32 = 0x90002;
         unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
     };
+    driver::set_root_dev({
+        const ROOT_DEV_ADDR: u32 = 0x901FC;
+        DevNum(unsafe { core::ptr::read_volatile(ROOT_DEV_ADDR as *const u16) })
+    });
     let memory_end = ((1 << 20) + ((ext_mem_k as u32) << 10)) & 0xfffff000;
     let memory_end = memory_end.min(16 * 1024 * 1024);
     let buffer_memory_end = match memory_end {
