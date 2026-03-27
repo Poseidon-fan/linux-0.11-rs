@@ -19,3 +19,6 @@ log = "0.4.29"
 [features]
 default = ["ramdisk"]
 ramdisk = []
+
+[profile.dev.package."*"]
+opt-level = "s"
