@@ -4,20 +4,25 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::array;
+use core::{array, mem::size_of};
+use log::error;
 
 use lazy_static::lazy_static;
 
 use crate::{
     driver::DevNum,
     fs::{
+        BLOCK_SIZE,
         bitmap::Bitmap,
         buffer::{self, BufferKey},
         layout::{
-            DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeNumber, MINIX_SUPER_MAGIC,
+            DataBlock, DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeNumber,
+            MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
+    syscall::{EFBIG, EIO},
+    time,
 };
 
 /// Maximum number of bitmap blocks cached from one Minix super block.
@@ -25,6 +30,16 @@ pub const MINIX_BITMAP_BLOCK_SLOTS: usize = 8;
 
 /// Number of runtime inode slots kept in the global inode table.
 pub const INODE_TABLE_CAPACITY: usize = 32;
+
+/// Number of 16-bit zone pointers stored in one indirect block.
+const INDIRECT_ENTRY_COUNT: usize = BLOCK_SIZE / size_of::<u16>();
+
+/// Maximum logical block count representable by direct and indirect pointers.
+const MAX_LOGICAL_BLOCKS: usize =
+    7 + INDIRECT_ENTRY_COUNT + INDIRECT_ENTRY_COUNT * INDIRECT_ENTRY_COUNT;
+
+/// One indirect block interpreted as 16-bit Minix zone identifiers.
+type IndirectBlock = [u16; INDIRECT_ENTRY_COUNT];
 
 lazy_static! {
     /// Global runtime inode table protected by a mutex.
@@ -89,6 +104,108 @@ impl Inode {
             inner.is_dirty = false;
         }
     }
+
+    /// Map one logical file block to its backing disk block.
+    ///
+    /// The result mirrors the original Minix `_bmap` contract:
+    /// `Ok(0)` means the logical block is currently unmapped or allocation
+    /// failed when `create` was requested.
+    pub fn map_block_id(&self, logic_id: usize, create: bool) -> Result<u32, u32> {
+        if logic_id >= MAX_LOGICAL_BLOCKS {
+            return Err(EFBIG);
+        }
+
+        let Some(fs) = self.file_system.upgrade() else {
+            return Err(EIO);
+        };
+
+        let mut inner = self.inner.lock();
+        let resolve_indirect_entry = |block_nr: u16, index: usize| -> Result<u16, u32> {
+            if block_nr == 0 {
+                return Ok(0);
+            }
+
+            let buf = buffer::read_block(BufferKey {
+                dev: self.id.device,
+                block_nr: u32::from(block_nr),
+            })
+            .ok_or(EIO)?;
+
+            let zone = match (buf.read(|table: &IndirectBlock| table[index]), create) {
+                (0, true) => fs
+                    .lock()
+                    .alloc_zone()
+                    .inspect(|&new_zone| {
+                        buf.write(|table: &mut IndirectBlock| table[index] = new_zone)
+                    })
+                    .unwrap_or(0),
+                (zone, _) => zone,
+            };
+            buffer::release_block(buf);
+            Ok(zone)
+        };
+
+        let block_id = match logic_id {
+            0..7 => match (inner.disk_inode.direct_zones[logic_id], create) {
+                (0, true) => match fs.lock().alloc_zone() {
+                    Some(new_zone) => {
+                        inner.disk_inode.direct_zones[logic_id] = new_zone;
+                        inner.is_dirty = true;
+                        inner.change_time = time::current_time();
+                        new_zone
+                    }
+                    None => 0,
+                },
+                (zone, _) => zone,
+            },
+            _ if logic_id < 7 + INDIRECT_ENTRY_COUNT => {
+                let root_zone = match (inner.disk_inode.single_indirect_zone, create) {
+                    (0, true) => match fs.lock().alloc_zone() {
+                        Some(new_zone) => {
+                            inner.disk_inode.single_indirect_zone = new_zone;
+                            inner.is_dirty = true;
+                            inner.change_time = time::current_time();
+                            new_zone
+                        }
+                        None => 0,
+                    },
+                    (zone, _) => zone,
+                };
+
+                resolve_indirect_entry(root_zone, logic_id - 7)?
+            }
+            _ => {
+                let root_zone = match (inner.disk_inode.double_indirect_zone, create) {
+                    (0, true) => match fs.lock().alloc_zone() {
+                        Some(new_zone) => {
+                            inner.disk_inode.double_indirect_zone = new_zone;
+                            inner.is_dirty = true;
+                            inner.change_time = time::current_time();
+                            new_zone
+                        }
+                        None => 0,
+                    },
+                    (zone, _) => zone,
+                };
+
+                let block = logic_id - 7 - INDIRECT_ENTRY_COUNT;
+                let outer_index = block / INDIRECT_ENTRY_COUNT;
+                let inner_index = block % INDIRECT_ENTRY_COUNT;
+                let second_level_zone = resolve_indirect_entry(root_zone, outer_index)?;
+                resolve_indirect_entry(second_level_zone, inner_index)?
+            }
+        };
+
+        Ok(u32::from(block_id))
+    }
+
+    // pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize, u32> {
+    //     todo!()
+    // }
+
+    // pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize, u32> {
+    //     todo!()
+    // }
 }
 
 impl MinixFileSystem {
@@ -102,6 +219,11 @@ impl MinixFileSystem {
         buffer::release_block(sb_buf);
 
         if super_block.magic != MINIX_SUPER_MAGIC {
+            error!("invalid super block magic number");
+            return None;
+        }
+        if super_block.log_zone_size != 0 {
+            error!("invalid log zone size");
             return None;
         }
 
@@ -202,6 +324,19 @@ impl MinixFileSystem {
             + (index / INODES_PER_BLOCK) as u32;
         let offset = index % INODES_PER_BLOCK;
         (block_nr, offset)
+    }
+
+    /// Allocate one fresh data zone and clear its backing cache block.
+    fn alloc_zone(&self) -> Option<u16> {
+        let zone = self.zone_bitmap.alloc()? as u16;
+        let buf = buffer::acquire_block(BufferKey {
+            dev: self.device,
+            block_nr: u32::from(zone),
+        });
+        buf.write(|block: &mut DataBlock| block.fill(0));
+        buf.set_uptodate(true);
+        buffer::release_block(buf);
+        Some(zone)
     }
 }
 
