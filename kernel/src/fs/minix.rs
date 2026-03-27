@@ -17,11 +17,11 @@ use crate::{
         buffer::{self, BufferKey},
         layout::{
             DataBlock, DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeNumber,
-            MINIX_SUPER_MAGIC,
+            InodeType, MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
-    syscall::{EFBIG, EIO},
+    syscall::{EFBIG, EINVAL, EIO, EISDIR, ERROR},
     time,
 };
 
@@ -199,13 +199,129 @@ impl Inode {
         Ok(u32::from(block_id))
     }
 
-    // pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize, u32> {
-    //     todo!()
-    // }
+    pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize, u32> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
-    // pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize, u32> {
-    //     todo!()
-    // }
+        let (file_type, size) = {
+            let inner = self.inner.lock();
+            (
+                inner.disk_inode.mode.file_type(),
+                inner.disk_inode.size as usize,
+            )
+        };
+
+        if !matches!(file_type, InodeType::Regular | InodeType::Directory) {
+            return Err(EINVAL);
+        }
+
+        if offset >= size {
+            return Ok(0);
+        }
+
+        let mut pos = offset;
+        let mut read = 0usize;
+        let mut left = buf.len().min(size - offset);
+
+        while left > 0 {
+            let logical_block = pos / BLOCK_SIZE;
+            let block_offset = pos % BLOCK_SIZE;
+            let chunk_len = left.min(BLOCK_SIZE - block_offset);
+            let target = &mut buf[read..read + chunk_len];
+            let block_id = self.map_block_id(logical_block, false)?;
+
+            if block_id == 0 {
+                target.fill(0);
+            } else {
+                let Some(block_buf) = buffer::read_block(BufferKey {
+                    dev: self.id.device,
+                    block_nr: block_id,
+                }) else {
+                    return if read > 0 { Ok(read) } else { Err(EIO) };
+                };
+                block_buf.read(|block: &DataBlock| {
+                    target.copy_from_slice(&block[block_offset..block_offset + chunk_len]);
+                });
+                buffer::release_block(block_buf);
+            }
+
+            pos += chunk_len;
+            read += chunk_len;
+            left -= chunk_len;
+        }
+
+        self.inner.lock().access_time = time::current_time();
+        Ok(read)
+    }
+
+    pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize, u32> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        match self.inner.lock().disk_inode.mode.file_type() {
+            InodeType::Regular => {}
+            InodeType::Directory => return Err(EISDIR),
+            _ => return Err(EINVAL),
+        }
+
+        let mut pos = offset;
+        let mut written = 0usize;
+        let mut failure = None;
+
+        while written < buf.len() {
+            let logical_block = pos / BLOCK_SIZE;
+            let block_offset = pos % BLOCK_SIZE;
+            let chunk_len = (buf.len() - written).min(BLOCK_SIZE - block_offset);
+            let block_id = match self.map_block_id(logical_block, true) {
+                Ok(0) => {
+                    failure = Some(ERROR);
+                    break;
+                }
+                Ok(block_id) => block_id,
+                Err(errno) => {
+                    failure = Some(errno);
+                    break;
+                }
+            };
+
+            let Some(block_buf) = buffer::read_block(BufferKey {
+                dev: self.id.device,
+                block_nr: block_id,
+            }) else {
+                failure = Some(ERROR);
+                break;
+            };
+
+            let source = &buf[written..written + chunk_len];
+            block_buf.write(|block: &mut DataBlock| {
+                block[block_offset..block_offset + chunk_len].copy_from_slice(source);
+            });
+            buffer::release_block(block_buf);
+
+            pos += chunk_len;
+            written += chunk_len;
+
+            let mut inner = self.inner.lock();
+            if pos > inner.disk_inode.size as usize {
+                inner.disk_inode.size = pos as u32;
+                inner.is_dirty = true;
+            }
+        }
+
+        let now = time::current_time();
+        let mut inner = self.inner.lock();
+        inner.disk_inode.modification_time = now;
+        inner.change_time = now;
+        inner.is_dirty = true;
+
+        if written > 0 {
+            Ok(written)
+        } else {
+            Err(failure.unwrap_or(ERROR))
+        }
+    }
 }
 
 impl MinixFileSystem {
