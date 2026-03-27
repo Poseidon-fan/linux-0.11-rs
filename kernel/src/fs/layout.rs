@@ -23,7 +23,7 @@ pub const INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT;
 pub const DOUBLE_INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT + 1;
 
 /// Logical inode number used by runtime metadata and lookup code.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct InodeNumber(pub u32);
 

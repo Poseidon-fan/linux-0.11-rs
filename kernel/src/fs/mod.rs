@@ -1,19 +1,19 @@
 //! Filesystem subsystem.
 
 use alloc::sync::Arc;
+use log::info;
 
 use crate::{
     driver,
     fs::{
         layout::ROOT_INODE_NUMBER,
-        minix::{INODE_TABLE, Inode, InodeId, InodeInner, MinixFileSystem},
+        minix::{INODE_TABLE, InodeId, MinixFileSystem},
         mount::{MOUNT_TABLE, Mount},
     },
-    sync::Mutex,
     task::current_task,
 };
 
-mod bitmap;
+pub mod bitmap;
 pub mod buffer;
 pub mod file;
 pub mod layout;
@@ -29,29 +29,16 @@ pub fn mount_root() {
     let dev = driver::root_dev();
     let root_fs = MinixFileSystem::open(dev).expect("Failed to open root filesystem");
 
-    let disk_inode = root_fs
+    let root_inode = INODE_TABLE
         .lock()
-        .read_inode(ROOT_INODE_NUMBER)
+        .get_inode(
+            InodeId {
+                device: dev,
+                inode_number: ROOT_INODE_NUMBER,
+            },
+            &root_fs,
+        )
         .expect("Failed to read root inode");
-
-    let root_inode = Arc::new(Inode {
-        id: InodeId {
-            device: dev,
-            inode_number: ROOT_INODE_NUMBER,
-        },
-        file_system: Arc::downgrade(&root_fs),
-        inner: Mutex::new(InodeInner {
-            disk_inode,
-            is_dirty: false,
-            access_time: 0,
-            change_time: 0,
-        }),
-    });
-
-    INODE_TABLE
-        .lock()
-        .insert(Arc::clone(&root_inode))
-        .expect("No free inode table slot");
 
     let mount_entry = Arc::new(Mount {
         device: dev,
@@ -71,12 +58,12 @@ pub fn mount_root() {
     });
 
     let fs = root_fs.lock();
-    crate::println!(
+    info!(
         "{}/{} free blocks",
         fs.zone_bitmap.count_free(),
         fs.super_block.zone_count
     );
-    crate::println!(
+    info!(
         "{}/{} free inodes",
         fs.inode_bitmap.count_free(),
         fs.super_block.inode_count

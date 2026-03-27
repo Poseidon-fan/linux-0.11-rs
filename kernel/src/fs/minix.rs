@@ -7,6 +7,7 @@ use alloc::{
 use core::array;
 
 use lazy_static::lazy_static;
+use log::warn;
 
 use crate::{
     driver::DevNum,
@@ -32,12 +33,19 @@ lazy_static! {
 }
 
 /// Fixed-capacity table that caches runtime inode objects.
+///
+/// Each slot holds one `Arc<Inode>`. A slot is considered *unused* when the
+/// table's `Arc` is the sole remaining strong reference
+/// (`Arc::strong_count == 1`); such slots may be evicted to make room for
+/// new inodes. A clock pointer provides round-robin fairness during
+/// eviction scans.
 pub struct InodeTable {
     slots: [Option<Arc<Inode>>; INODE_TABLE_CAPACITY],
+    clock: usize,
 }
 
 /// Runtime inode identifier used in the global inode table and mount lookups.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InodeId {
     pub device: DevNum,
     pub inode_number: InodeNumber,
@@ -137,13 +145,7 @@ impl MinixFileSystem {
     /// The caller must ensure `nr` is a valid, non-zero inode number within
     /// the filesystem's inode count.
     pub fn read_inode(&self, nr: InodeNumber) -> Option<DiskInode> {
-        let index = (nr.0 - 1) as usize;
-        let block_nr = 2
-            + self.super_block.inode_bitmap_block_count as u32
-            + self.super_block.zone_bitmap_block_count as u32
-            + (index / INODES_PER_BLOCK) as u32;
-        let offset = index % INODES_PER_BLOCK;
-
+        let (block_nr, offset) = self.inode_block_position(nr);
         let buf = buffer::read_block(BufferKey {
             dev: self.device,
             block_nr,
@@ -152,21 +154,158 @@ impl MinixFileSystem {
         buffer::release_block(buf);
         Some(disk_inode)
     }
+
+    /// Write one on-disk inode back to its block.
+    pub fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
+        let (block_nr, offset) = self.inode_block_position(nr);
+        let Some(buf) = buffer::read_block(BufferKey {
+            dev: self.device,
+            block_nr,
+        }) else {
+            warn!("write_inode: unable to read inode block for {:?}", nr.0);
+            return;
+        };
+        buf.write(|block: &mut InodeBlock| block[offset] = *inode);
+        buffer::release_block(buf);
+    }
+
+    fn inode_block_position(&self, nr: InodeNumber) -> (u32, usize) {
+        let index = (nr.0 - 1) as usize;
+        let block_nr = 2
+            + self.super_block.inode_bitmap_block_count as u32
+            + self.super_block.zone_bitmap_block_count as u32
+            + (index / INODES_PER_BLOCK) as u32;
+        let offset = index % INODES_PER_BLOCK;
+        (block_nr, offset)
+    }
 }
 
 impl InodeTable {
     fn new() -> Self {
         Self {
             slots: array::from_fn(|_| None),
+            clock: 0,
         }
     }
 
-    /// Insert an inode into the first free slot.
+    /// Look up or load an inode identified by `id`.
     ///
-    /// Returns the slot index on success, or `None` if the table is full.
-    pub fn insert(&mut self, inode: Arc<Inode>) -> Option<usize> {
-        let slot = self.slots.iter().position(|s| s.is_none())?;
-        self.slots[slot] = Some(inode);
-        Some(slot)
+    /// If a cached entry exists, returns a new `Arc` handle to it. Otherwise
+    /// reads the inode from disk via `fs`, places it in a free or evicted
+    /// slot, and returns the handle. Returns `None` when the disk read fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if every slot is actively referenced by external code and no
+    /// eviction candidate exists.
+    pub fn get_inode(
+        &mut self,
+        id: InodeId,
+        fs: &Arc<Mutex<MinixFileSystem>>,
+    ) -> Option<Arc<Inode>> {
+        if let Some(inode) = self.lookup(id) {
+            return Some(inode);
+        }
+
+        let disk_inode = fs.lock().read_inode(id.inode_number)?;
+        let inode = Arc::new(Inode {
+            id,
+            file_system: Arc::downgrade(fs),
+            inner: Mutex::new(InodeInner {
+                disk_inode,
+                is_dirty: false,
+                access_time: 0,
+                change_time: 0,
+            }),
+        });
+
+        self.install(Arc::clone(&inode));
+        Some(inode)
+    }
+
+    /// Iterate all cached inodes on `dev` and flush dirty ones to disk.
+    pub fn sync_inodes(&self) {
+        for slot in &self.slots {
+            let Some(arc) = slot else { continue };
+            let inner = arc.inner.lock();
+            if inner.is_dirty {
+                if let Some(fs) = arc.file_system.upgrade() {
+                    fs.lock()
+                        .write_inode(arc.id.inode_number, &inner.disk_inode);
+                }
+            }
+        }
+    }
+
+    /// Search cached slots for a matching inode and return a cloned handle.
+    fn lookup(&self, id: InodeId) -> Option<Arc<Inode>> {
+        self.slots.iter().find_map(|slot| {
+            let arc = slot.as_ref()?;
+            (arc.id == id).then(|| Arc::clone(arc))
+        })
+    }
+
+    /// Place `inode` into a free or evicted slot.
+    fn install(&mut self, inode: Arc<Inode>) {
+        if let Some(slot) = self.slots.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(inode);
+            return;
+        }
+
+        let idx = self
+            .find_victim()
+            .expect("inode table full: all slots actively referenced");
+
+        self.flush_slot(idx);
+        self.slots[idx] = Some(inode);
+        self.clock = (idx + 1) % INODE_TABLE_CAPACITY;
+    }
+
+    /// Clock-scan for an eviction candidate whose `strong_count` is 1
+    /// (only the table holds it). Prefers a clean slot to avoid synchronous
+    /// disk writes.
+    fn find_victim(&self) -> Option<usize> {
+        let mut dirty_fallback = None;
+
+        for i in 0..INODE_TABLE_CAPACITY {
+            let idx = (self.clock + i) % INODE_TABLE_CAPACITY;
+            let Some(arc) = &self.slots[idx] else {
+                continue;
+            };
+            if Arc::strong_count(arc) != 1 {
+                continue;
+            }
+            if !arc.inner.lock().is_dirty {
+                return Some(idx);
+            }
+            if dirty_fallback.is_none() {
+                dirty_fallback = Some(idx);
+            }
+        }
+
+        dirty_fallback
+    }
+
+    /// Write back and clean up the inode at `idx` before eviction.
+    ///
+    /// Handles two cases:
+    /// - **dirty**: writes the in-memory copy back to disk.
+    /// - **zero link count**: the file has been fully unlinked while cached;
+    ///   its data blocks and bitmap entry should be freed (TODO).
+    fn flush_slot(&mut self, idx: usize) {
+        let victim = self.slots[idx].take().unwrap();
+        let inner = victim.inner.lock();
+
+        if inner.disk_inode.link_count == 0 {
+            // TODO: truncate data blocks + free inode bitmap entry
+            return;
+        }
+
+        if inner.is_dirty {
+            if let Some(fs) = victim.file_system.upgrade() {
+                fs.lock()
+                    .write_inode(victim.id.inode_number, &inner.disk_inode);
+            }
+        }
     }
 }
