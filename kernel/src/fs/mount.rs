@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 
 use crate::{
     driver::DevNum,
-    fs::minix::{Inode, MinixFileSystem},
+    fs::minix::{Inode, InodeId, MinixFileSystem},
     sync::Mutex,
 };
 
@@ -54,6 +54,15 @@ impl MountTable {
         self.slots.iter().find_map(|slot| {
             let mount = slot.as_ref()?;
             (mount.device == dev).then(|| Arc::clone(&mount.file_system))
+        })
+    }
+
+    /// Return the root inode of the filesystem mounted on top of `id`.
+    pub fn get_mounted_root_by_mount_point(&self, id: InodeId) -> Option<Arc<Inode>> {
+        self.slots.iter().find_map(|slot| {
+            let mount = slot.as_ref()?;
+            (mount.mount_point_inode.as_ref().map(|inode| inode.id) == Some(id))
+                .then(|| Arc::clone(&mount.root_inode))
         })
     }
 }

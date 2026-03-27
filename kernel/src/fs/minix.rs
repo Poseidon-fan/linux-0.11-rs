@@ -7,7 +7,6 @@ use alloc::{
 use core::array;
 
 use lazy_static::lazy_static;
-use log::warn;
 
 use crate::{
     driver::DevNum,
@@ -71,6 +70,25 @@ pub struct InodeInner {
     pub is_dirty: bool,
     pub access_time: u32,
     pub change_time: u32,
+}
+
+impl Inode {
+    /// Write this inode back to its inode-table block and clear the dirty flag.
+    ///
+    /// If the inode is not dirty or its backing filesystem is no longer
+    /// available, this function returns without modifying on-disk state.
+    pub fn sync(&self) {
+        let mut inner = self.inner.lock();
+        if !inner.is_dirty {
+            return;
+        }
+
+        if let Some(fs) = self.file_system.upgrade() {
+            fs.lock()
+                .write_inode(self.id.inode_number, &inner.disk_inode);
+            inner.is_dirty = false;
+        }
+    }
 }
 
 impl MinixFileSystem {
@@ -144,27 +162,34 @@ impl MinixFileSystem {
     ///
     /// The caller must ensure `nr` is a valid, non-zero inode number within
     /// the filesystem's inode count.
-    pub fn read_inode(&self, nr: InodeNumber) -> Option<DiskInode> {
+    ///
+    /// # Panics
+    ///
+    /// Panics when the backing inode-table block cannot be read.
+    pub fn read_inode(&self, nr: InodeNumber) -> DiskInode {
         let (block_nr, offset) = self.inode_block_position(nr);
         let buf = buffer::read_block(BufferKey {
             dev: self.device,
             block_nr,
-        })?;
+        })
+        .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
         let disk_inode = buf.read(|block: &InodeBlock| block[offset]);
         buffer::release_block(buf);
-        Some(disk_inode)
+        disk_inode
     }
 
     /// Write one on-disk inode back to its block.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the backing inode-table block cannot be read.
     pub fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
         let (block_nr, offset) = self.inode_block_position(nr);
-        let Some(buf) = buffer::read_block(BufferKey {
+        let buf = buffer::read_block(BufferKey {
             dev: self.device,
             block_nr,
-        }) else {
-            warn!("write_inode: unable to read inode block for {:?}", nr.0);
-            return;
-        };
+        })
+        .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
         buf.write(|block: &mut InodeBlock| block[offset] = *inode);
         buffer::release_block(buf);
     }
@@ -192,22 +217,25 @@ impl InodeTable {
     ///
     /// If a cached entry exists, returns a new `Arc` handle to it. Otherwise
     /// reads the inode from disk via `fs`, places it in a free or evicted
-    /// slot, and returns the handle. Returns `None` when the disk read fails.
+    /// slot, and returns the handle.
     ///
     /// # Panics
     ///
+    /// Panics if `id.device` is zero.
     /// Panics if every slot is actively referenced by external code and no
     /// eviction candidate exists.
-    pub fn get_inode(
+    pub(crate) fn get_inode_raw(
         &mut self,
         id: InodeId,
         fs: &Arc<Mutex<MinixFileSystem>>,
-    ) -> Option<Arc<Inode>> {
+    ) -> Arc<Inode> {
+        assert_ne!(id.device.0, 0, "iget with dev==0");
+
         if let Some(inode) = self.lookup(id) {
-            return Some(inode);
+            return inode;
         }
 
-        let disk_inode = fs.lock().read_inode(id.inode_number)?;
+        let disk_inode = fs.lock().read_inode(id.inode_number);
         let inode = Arc::new(Inode {
             id,
             file_system: Arc::downgrade(fs),
@@ -220,20 +248,14 @@ impl InodeTable {
         });
 
         self.install(Arc::clone(&inode));
-        Some(inode)
+        inode
     }
 
     /// Iterate all cached inodes on `dev` and flush dirty ones to disk.
     pub fn sync_inodes(&self) {
         for slot in &self.slots {
             let Some(arc) = slot else { continue };
-            let inner = arc.inner.lock();
-            if inner.is_dirty {
-                if let Some(fs) = arc.file_system.upgrade() {
-                    fs.lock()
-                        .write_inode(arc.id.inode_number, &inner.disk_inode);
-                }
-            }
+            arc.sync();
         }
     }
 
@@ -302,10 +324,8 @@ impl InodeTable {
         }
 
         if inner.is_dirty {
-            if let Some(fs) = victim.file_system.upgrade() {
-                fs.lock()
-                    .write_inode(victim.id.inode_number, &inner.disk_inode);
-            }
+            drop(inner);
+            victim.sync();
         }
     }
 }
