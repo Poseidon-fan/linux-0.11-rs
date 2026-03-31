@@ -34,7 +34,41 @@
 //! A negative return value indicates an error; its absolute value is the
 //! `errno` code.
 
+pub mod fs;
+
 use core::arch::asm;
+
+/// Convert one typed syscall wrapper argument into the raw 32-bit ABI word.
+///
+/// This keeps the public wrapper signatures expressive while centralizing the
+/// ABI conversion rules required by `int $0x80`.
+pub trait SyscallArg {
+    fn into_syscall_arg(self) -> u32;
+}
+
+impl SyscallArg for u32 {
+    fn into_syscall_arg(self) -> u32 {
+        self
+    }
+}
+
+impl SyscallArg for i32 {
+    fn into_syscall_arg(self) -> u32 {
+        self as u32
+    }
+}
+
+impl<T> SyscallArg for *const T {
+    fn into_syscall_arg(self) -> u32 {
+        self as u32
+    }
+}
+
+impl<T> SyscallArg for *mut T {
+    fn into_syscall_arg(self) -> u32 {
+        self as u32
+    }
+}
 
 // System call numbers, ordered as in sys_call_table (index = syscall number).
 pub const NR_SETUP: u32 = 0;
@@ -121,7 +155,7 @@ pub const NR_TEST: u32 = 74;
 ///
 /// Returns `Ok(retval)` on success or `Err(errno)` on failure.
 #[inline(always)]
-fn raw_syscall0(nr: u32) -> Result<u32, u32> {
+pub(crate) fn raw_syscall0(nr: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -139,7 +173,7 @@ fn raw_syscall0(nr: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **one argument** (in `EBX`).
 #[inline(always)]
-fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
+pub(crate) fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -158,7 +192,7 @@ fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **two arguments** (in `EBX`, `ECX`).
 #[inline(always)]
-fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
+pub(crate) fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -178,7 +212,7 @@ fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **three arguments** (in `EBX`, `ECX`, `EDX`).
 #[inline(always)]
-fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
+pub(crate) fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -202,12 +236,13 @@ fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
 // A single macro with four match arms (0–3 arguments). Each arm generates
 // an `#[inline(always)] pub fn` that forwards to `raw_syscallN`, casting
 // every argument to `u32` and the success value to `RetType`.
+#[macro_export]
 macro_rules! use_syscall {
     // 0 arguments
     ($nr:expr => $name:ident() -> $ret:ty) => {
         #[inline(always)]
         pub fn $name() -> Result<$ret, u32> {
-            raw_syscall0($nr).map(|v| v as $ret)
+            $crate::raw_syscall0($nr).map(|v| v as $ret)
         }
     };
 
@@ -215,7 +250,8 @@ macro_rules! use_syscall {
     ($nr:expr => $name:ident($a:ident : $atype:ty) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype) -> Result<$ret, u32> {
-            raw_syscall1($nr, $a as u32).map(|v| v as $ret)
+            $crate::raw_syscall1($nr, $crate::syscall::SyscallArg::into_syscall_arg($a))
+                .map(|v| v as $ret)
         }
     };
 
@@ -226,7 +262,12 @@ macro_rules! use_syscall {
     ) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype, $b: $btype) -> Result<$ret, u32> {
-            raw_syscall2($nr, $a as u32, $b as u32).map(|v| v as $ret)
+            $crate::raw_syscall2(
+                $nr,
+                $crate::syscall::SyscallArg::into_syscall_arg($a),
+                $crate::syscall::SyscallArg::into_syscall_arg($b),
+            )
+            .map(|v| v as $ret)
         }
     };
 
@@ -238,7 +279,13 @@ macro_rules! use_syscall {
     ) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype, $b: $btype, $c: $ctype) -> Result<$ret, u32> {
-            raw_syscall3($nr, $a as u32, $b as u32, $c as u32).map(|v| v as $ret)
+            $crate::raw_syscall3(
+                $nr,
+                $crate::syscall::SyscallArg::into_syscall_arg($a),
+                $crate::syscall::SyscallArg::into_syscall_arg($b),
+                $crate::syscall::SyscallArg::into_syscall_arg($c),
+            )
+            .map(|v| v as $ret)
         }
     };
 }
@@ -246,28 +293,6 @@ macro_rules! use_syscall {
 use_syscall!(NR_SETUP => setup(drive_info_addr: *const u8) -> u32);
 use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
-use_syscall!(NR_WAITPID => waitpid(pid: i32, stat_addr: *mut u32, options: u32) -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
-use_syscall!(NR_ALARM => alarm(seconds: u32) -> u32);
-use_syscall!(NR_GETPID => getpid() -> u32);
-use_syscall!(NR_GETPPID => getppid() -> u32);
-use_syscall!(NR_GETPGRP => getpgrp() -> u32);
-use_syscall!(NR_GETUID => getuid() -> u32);
-use_syscall!(NR_GETEUID => geteuid() -> u32);
-use_syscall!(NR_GETGID => getgid() -> u32);
-use_syscall!(NR_GETEGID => getegid() -> u32);
-use_syscall!(NR_SETUID => setuid(uid: u32) -> u32);
-use_syscall!(NR_SETGID => setgid(gid: u32) -> u32);
-use_syscall!(NR_SETREUID => setreuid(ruid: u32, euid: u32) -> u32);
-use_syscall!(NR_SETREGID => setregid(rgid: u32, egid: u32) -> u32);
-use_syscall!(NR_SETPGID => setpgid(pid: i32, pgid: i32) -> u32);
-use_syscall!(NR_SETSID => setsid() -> u32);
-use_syscall!(NR_KILL => kill(pid: i32, sig: i32) -> u32);
-use_syscall!(NR_SIGNAL => signal(signum: i32, handler: u32, restorer: u32) -> u32);
-use_syscall!(NR_SIGACTION => sigaction(signum: i32, act: u32, oldact: u32) -> u32);
-use_syscall!(NR_SGETMASK => sgetmask() -> u32);
-use_syscall!(NR_SSETMASK => ssetmask(newmask: u32) -> u32);
-use_syscall!(NR_TIME => time(tloc: *mut u32) -> u32);
-use_syscall!(NR_TIMES => times(tbuf: *mut u8) -> u32);
-use_syscall!(NR_UNAME => uname(name: *mut u8) -> u32);
+
 use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
