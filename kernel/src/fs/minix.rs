@@ -16,8 +16,8 @@ use crate::{
         bitmap::Bitmap,
         buffer::{self, BufferKey},
         layout::{
-            DataBlock, DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeNumber,
-            InodeType, MINIX_SUPER_MAGIC,
+            DataBlock, DiskDirectoryEntry, DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock,
+            InodeNumber, InodeType, MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
@@ -325,9 +325,23 @@ impl Inode {
 }
 
 // Directory operations
-impl InodeInner {
-    pub fn lookup(&self, _name: &str) -> Result<Option<Arc<Inode>>, u32> {
-        todo!()
+impl Inode {
+    pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>, u32> {
+        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        let file_count =
+            self.inner.lock().disk_inode.size as usize / size_of::<DiskDirectoryEntry>();
+        let mut dirent = DiskDirectoryEntry::empty();
+        for i in 0..file_count {
+            let len = self.read_at(size_of::<DiskDirectoryEntry>() * i, dirent.as_bytes_mut())?;
+            assert_eq!(len, size_of::<DiskDirectoryEntry>());
+            if dirent.inode_number.0 == 0 {
+                continue;
+            }
+            if dirent.name() == name {
+                return Ok(Some(dirent.inode_number));
+            }
+        }
+        Ok(None)
     }
 }
 

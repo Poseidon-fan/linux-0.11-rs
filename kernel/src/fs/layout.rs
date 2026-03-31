@@ -181,6 +181,15 @@ impl DiskDirectoryEntry {
         }
     }
 
+    pub fn name(&self) -> &str {
+        let len = self
+            .name
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(MINIX_NAME_LENGTH);
+        core::str::from_utf8(&self.name[..len]).unwrap()
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, size_of::<Self>()) }
     }
