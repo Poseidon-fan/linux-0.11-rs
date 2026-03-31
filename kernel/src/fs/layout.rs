@@ -24,10 +24,16 @@ pub const INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT;
 /// Index of the double-indirect zone pointer inside the zone pointer array.
 pub const DOUBLE_INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT + 1;
 
+/// Number of on-disk inodes that fit in one filesystem block.
+pub const INODES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskInode>();
+
+/// Number of on-disk directory entries that fit in one filesystem block.
+pub const DIRECTORY_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskDirectoryEntry>();
+
 /// Logical inode number used by runtime metadata and lookup code.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct InodeNumber(pub u32);
+pub struct InodeNumber(pub u16);
 
 /// Classified inode type stored in the high bits of one mode word.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,15 +129,9 @@ pub struct DiskInode {
 /// Minix on-disk directory entry.
 #[repr(C)]
 pub struct DiskDirectoryEntry {
-    pub inode_number: u16,
+    pub inode_number: InodeNumber,
     pub name: [u8; MINIX_NAME_LENGTH],
 }
-
-/// Number of on-disk inodes that fit in one filesystem block.
-pub const INODES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskInode>();
-
-/// Number of on-disk directory entries that fit in one filesystem block.
-pub const DIRECTORY_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskDirectoryEntry>();
 
 pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
 /// One full block of on-disk inodes, used when reading inode table blocks.
@@ -161,6 +161,32 @@ impl InodeMode {
     /// Return the special and permission flags stored below the type field.
     pub fn flags(self) -> InodeModeFlags {
         InodeModeFlags::from_bits_retain(self.0 & Self::FLAGS_MASK)
+    }
+}
+
+impl DiskDirectoryEntry {
+    pub const fn empty() -> Self {
+        Self {
+            inode_number: InodeNumber(0),
+            name: [0; MINIX_NAME_LENGTH],
+        }
+    }
+
+    pub fn new(name: &str, inode_number: InodeNumber) -> Self {
+        let mut bytes = [0; MINIX_NAME_LENGTH];
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+        Self {
+            inode_number,
+            name: bytes,
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, size_of::<Self>()) }
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self as *mut _ as *mut u8, size_of::<Self>()) }
     }
 }
 

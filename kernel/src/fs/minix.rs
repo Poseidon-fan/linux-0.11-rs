@@ -324,6 +324,13 @@ impl Inode {
     }
 }
 
+// Directory operations
+impl InodeInner {
+    pub fn lookup(&self, _name: &str) -> Result<Option<Arc<Inode>>, u32> {
+        todo!()
+    }
+}
+
 impl MinixFileSystem {
     /// Read and validate the filesystem on `dev`, loading all bitmap blocks into
     /// memory. Returns `None` if the device is unreadable or carries no valid
