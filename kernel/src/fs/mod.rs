@@ -19,6 +19,7 @@ pub mod file;
 pub mod layout;
 pub mod minix;
 pub mod mount;
+pub mod path;
 
 /// Filesystem logical block size in bytes.
 pub const BLOCK_SIZE: usize = 1024;

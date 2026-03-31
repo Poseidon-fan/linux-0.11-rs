@@ -65,4 +65,14 @@ impl MountTable {
                 .then(|| Arc::clone(&mount.root_inode))
         })
     }
+
+    /// Return the mount-point inode hidden beneath the mounted root `id`.
+    pub fn get_mount_point_by_root(&self, id: InodeId) -> Option<Arc<Inode>> {
+        self.slots.iter().find_map(|slot| {
+            let mount = slot.as_ref()?;
+            (mount.root_inode.id == id)
+                .then(|| mount.mount_point_inode.as_ref().map(Arc::clone))
+                .flatten()
+        })
+    }
 }

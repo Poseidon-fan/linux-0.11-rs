@@ -93,7 +93,7 @@ bitflags! {
 }
 
 /// Semantically typed inode mode wrapper that preserves the on-disk `u16` layout.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct InodeMode(pub u16);
 
@@ -112,7 +112,7 @@ pub struct DiskSuperBlock {
 }
 
 /// Minix on-disk inode.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct DiskInode {
     pub mode: InodeMode,

@@ -1,0 +1,197 @@
+//! Path parsing and pathname-resolution helpers.
+//!
+//! This module keeps pathname parsing separate from inode traversal so later
+//! resolution code can reuse one structured view of the input path.
+
+use alloc::sync::Arc;
+
+use crate::{
+    fs::{
+        get_inode,
+        layout::InodeType,
+        minix::{Inode, InodeId},
+        mount::MOUNT_TABLE,
+    },
+    task,
+};
+
+/// Resolve one pathname to its final inode.
+pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
+    let parsed_path = ParsedPath::parse(path)?;
+    let current_task_fs_context = task::current_task()
+        .pcb
+        .inner
+        .exclusive(|inner| inner.fs.clone());
+
+    let root_inode = current_task_fs_context.root_directory.clone()?;
+    if parsed_path.is_root() {
+        return Some(root_inode);
+    }
+
+    let mut current_inode = if parsed_path.is_absolute() {
+        Arc::clone(&root_inode)
+    } else {
+        current_task_fs_context.current_directory.clone()?
+    };
+
+    for component in parsed_path.components() {
+        // Every traversed pathname component must start from a directory inode.
+        if current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+            return None;
+        }
+
+        match component {
+            PathComponent::CurrentDirectory => {}
+            PathComponent::ParentDirectory => {
+                current_inode = resolve_parent_directory(&current_inode, &root_inode)?;
+            }
+            PathComponent::Name(name) => {
+                let child_inode_number = current_inode.lookup(name).ok()??;
+                current_inode = get_inode(InodeId {
+                    device: current_inode.id.device,
+                    inode_number: child_inode_number,
+                });
+            }
+        }
+    }
+
+    if parsed_path.has_trailing_slash()
+        && current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+    {
+        return None;
+    }
+
+    Some(current_inode)
+}
+
+/// Resolve one `..` step from `current_inode`.
+///
+/// This follows the Linux 0.11 pathname rule: task root acts as a pseudo-root,
+/// and traversing `..` from a mounted filesystem root first moves back to the
+/// covered mount-point inode before reading that directory's `..` entry.
+fn resolve_parent_directory(
+    current_inode: &Arc<Inode>,
+    root_inode: &Arc<Inode>,
+) -> Option<Arc<Inode>> {
+    if current_inode.id == root_inode.id {
+        return Some(Arc::clone(root_inode));
+    }
+
+    let parent_lookup_base = MOUNT_TABLE
+        .lock()
+        .get_mount_point_by_root(current_inode.id)
+        .unwrap_or_else(|| Arc::clone(current_inode));
+
+    let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
+    Some(get_inode(InodeId {
+        device: parent_lookup_base.id.device,
+        inode_number: parent_inode_number,
+    }))
+}
+
+/// One parsed pathname that preserves high-level path semantics.
+///
+/// The parser keeps the original borrowed string and exposes structural
+/// information through accessors and an iterator over path components.
+struct ParsedPath<'a> {
+    raw: &'a str,
+    is_absolute: bool,
+    has_trailing_slash: bool,
+}
+
+/// One logical pathname component yielded during parsing.
+enum PathComponent<'a> {
+    /// One ordinary non-special directory entry name.
+    Name(&'a str),
+    /// The current-directory marker `.`.
+    CurrentDirectory,
+    /// The parent-directory marker `..`.
+    ParentDirectory,
+}
+
+/// Iterator over logical pathname components.
+///
+/// Empty components caused by repeated `/` are skipped so callers see the same
+/// hierarchy the filesystem traversal logic should observe.
+struct PathComponents<'a> {
+    remaining: &'a str,
+}
+
+impl<'a> ParsedPath<'a> {
+    /// Parse one pathname string into a reusable structured form.
+    ///
+    /// Returns `None` when `path` is empty, matching the original kernel's
+    /// treatment of an empty pathname as invalid input.
+    fn parse(path: &'a str) -> Option<Self> {
+        if path.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            raw: path,
+            is_absolute: path.starts_with('/'),
+            has_trailing_slash: path.len() > 1 && path.ends_with('/'),
+        })
+    }
+
+    /// Return whether the pathname designates the root path with no components.
+    fn is_root(&self) -> bool {
+        self.is_absolute && self.components().next().is_none()
+    }
+
+    /// Return whether the pathname starts from the task root directory.
+    fn is_absolute(&self) -> bool {
+        self.is_absolute
+    }
+
+    /// Return whether the pathname ends with a slash beyond the `/` root case.
+    fn has_trailing_slash(&self) -> bool {
+        self.has_trailing_slash
+    }
+
+    /// Iterate over logical pathname components.
+    fn components(&self) -> PathComponents<'a> {
+        PathComponents {
+            remaining: self.raw,
+        }
+    }
+}
+
+impl<'a> PathComponents<'a> {
+    /// Extract the next non-empty raw component and advance the iterator.
+    fn next_raw_component(&mut self) -> Option<&'a str> {
+        while let Some(stripped) = self.remaining.strip_prefix('/') {
+            self.remaining = stripped;
+        }
+
+        if self.remaining.is_empty() {
+            return None;
+        }
+
+        match self.remaining.find('/') {
+            Some(index) => {
+                let component = &self.remaining[..index];
+                self.remaining = &self.remaining[index + 1..];
+                Some(component)
+            }
+            None => {
+                let component = self.remaining;
+                self.remaining = "";
+                Some(component)
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for PathComponents<'a> {
+    type Item = PathComponent<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let component = self.next_raw_component()?;
+        Some(match component {
+            "." => PathComponent::CurrentDirectory,
+            ".." => PathComponent::ParentDirectory,
+            name => PathComponent::Name(name),
+        })
+    }
+}

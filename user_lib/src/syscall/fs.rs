@@ -10,6 +10,18 @@ pub enum AccessMode {
     ReadWrite = 2,
 }
 
+impl AccessMode {
+    #[inline(always)]
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::ReadOnly),
+            1 => Some(Self::WriteOnly),
+            2 => Some(Self::ReadWrite),
+            _ => None,
+        }
+    }
+}
+
 bitflags! {
     pub struct OpenOptions: u32 {
         const CREATE = 0o0100;
@@ -27,8 +39,21 @@ bitflags! {
 pub struct OpenFlags(u32);
 
 impl OpenFlags {
-    pub fn new(access_mode: AccessMode, options: OpenOptions) -> Self {
+    #[inline(always)]
+    pub const fn new(access_mode: AccessMode, options: OpenOptions) -> Self {
         Self(access_mode as u32 | options.bits())
+    }
+
+    #[inline(always)]
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline(always)]
+    pub fn into_parts(self) -> Option<(AccessMode, OpenOptions)> {
+        let access_mode = AccessMode::from_raw(self.0 & 0b11)?;
+        let options = OpenOptions::from_bits_retain(self.0 & !0b11);
+        Some((access_mode, options))
     }
 }
 
