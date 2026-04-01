@@ -112,6 +112,16 @@ define_syscall_handler!(
     }
 );
 
+define_syscall_handler!(
+    user_lib::NR_UNLINK = 10,
+    fn sys_unlink(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, _, _) = ctx.args();
+        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        path::unlink_path(&pathname)?;
+        Ok(0)
+    }
+);
+
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
 fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()

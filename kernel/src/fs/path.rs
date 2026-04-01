@@ -71,6 +71,36 @@ pub fn open_path(path: &str, flags: OpenFlags, mode: u16) -> Result<Arc<Inode>, 
     }
 }
 
+/// Remove a directory entry by pathname, decrementing the target's link count.
+pub fn unlink_path(path: &str) -> Result<(), u32> {
+    let (dir, basename) = resolve_parent(path).ok_or(ENOENT)?;
+    if basename.is_empty() {
+        return Err(ENOENT);
+    }
+    if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        return Err(EACCES);
+    }
+
+    let inum = dir.lookup(basename)?.ok_or(ENOENT)?;
+    let inode = get_inode(InodeId {
+        device: dir.id.device,
+        inode_number: inum,
+    });
+
+    if inode.inner.lock().disk_inode.mode.file_type() == InodeType::Directory {
+        return Err(EISDIR);
+    }
+
+    dir.remove_entry(basename)?;
+
+    let mut inner = inode.inner.lock();
+    inner.disk_inode.link_count -= 1;
+    inner.change_time = time::current_time();
+    inner.is_dirty = true;
+
+    Ok(())
+}
+
 /// Create a new regular file inside `dir` with the given `basename` and `mode`.
 fn create_file(dir: &Arc<Inode>, basename: &str, mode: u16) -> Result<Arc<Inode>, u32> {
     if !check_permission(dir, AccessMask::MAY_WRITE) {

@@ -94,3 +94,4 @@ use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) 
 use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);
 use_syscall!(crate::syscall::NR_CLOSE => close(fd: u32) -> u32);
 use_syscall!(crate::syscall::NR_LSEEK => lseek(fd: u32, offset: i32, whence: Whence) -> u32);
+use_syscall!(crate::syscall::NR_UNLINK => unlink(path: *const u8) -> u32);

@@ -21,7 +21,7 @@ use crate::{
         },
     },
     sync::Mutex,
-    syscall::{EFBIG, EIO, ERROR},
+    syscall::{EFBIG, EIO, ENOENT, ERROR},
     time,
 };
 
@@ -412,6 +412,23 @@ impl Inode {
         assert_eq!(written, DIRECTORY_ENTRY_SIZE);
 
         Ok(())
+    }
+
+    /// Remove the directory entry matching `name` and return its inode number.
+    pub fn remove_entry(&self, name: &str) -> Result<InodeNumber, u32> {
+        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
+        let mut dirent = DiskDirectoryEntry::empty();
+        for i in 0..entry_count {
+            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
+            if dirent.inode_number.0 != 0 && dirent.name() == name {
+                let inum = dirent.inode_number;
+                let empty = DiskDirectoryEntry::empty();
+                self.write_at(DIRECTORY_ENTRY_SIZE * i, empty.as_bytes())?;
+                return Ok(inum);
+            }
+        }
+        Err(ENOENT)
     }
 }
 

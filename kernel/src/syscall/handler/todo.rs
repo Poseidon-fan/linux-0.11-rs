@@ -21,12 +21,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_UNLINK = 10,
-    fn sys_unlink(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_EXECVE = 11,
     fn sys_execve(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
