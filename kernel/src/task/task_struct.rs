@@ -338,6 +338,16 @@ impl TaskPage {
     }
 }
 
+impl TaskFileSystemContext {
+    /// Allocate the lowest available file descriptor, install `file` into it,
+    /// and return the descriptor number.
+    pub fn add_file(&mut self, file: Arc<dyn File>) -> Option<usize> {
+        let fd = self.open_files.iter().position(|slot| slot.is_none())?;
+        self.open_files[fd] = Some(file);
+        Some(fd)
+    }
+}
+
 impl Task {
     /// Create a Task from a statically allocated TaskPage address.
     ///

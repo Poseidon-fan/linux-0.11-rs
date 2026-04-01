@@ -5,6 +5,8 @@
 
 use core::arch::asm;
 
+use alloc::string::String;
+
 /// Segment Selector - 16-bit value for selecting a segment descriptor.
 ///
 /// In x86 protected mode, segment selectors are used to index into the
@@ -282,6 +284,36 @@ pub fn put_fs_long(val: u32, addr: *mut u32) {
             in(reg) addr as u32,
             options(nomem, nostack, att_syntax)
         );
+    }
+}
+
+/// Read a NUL-terminated C string from the user-space FS segment into a
+/// kernel `String`.
+///
+/// Stops at the first zero byte or after `max_len` bytes, whichever comes first.
+pub fn get_fs_string(addr: *const u8, max_len: usize) -> String {
+    let mut s = String::new();
+    for i in 0..max_len {
+        let b = get_fs_byte(unsafe { addr.add(i) });
+        if b == 0 {
+            break;
+        }
+        s.push(b as char);
+    }
+    s
+}
+
+/// Copy `buf.len()` bytes from the user-space FS segment at `addr` into `buf`.
+pub fn get_fs_bytes(addr: *const u8, buf: &mut [u8]) {
+    for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = get_fs_byte(unsafe { addr.add(i) });
+    }
+}
+
+/// Copy `buf.len()` bytes from `buf` to the user-space FS segment at `addr`.
+pub fn put_fs_bytes(buf: &[u8], addr: *mut u8) {
+    for (i, &byte) in buf.iter().enumerate() {
+        put_fs_byte(byte, unsafe { addr.add(i) });
     }
 }
 

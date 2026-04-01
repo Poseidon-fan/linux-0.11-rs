@@ -27,8 +27,11 @@ pub const DOUBLE_INDIRECT_ZONE_INDEX: usize = DIRECT_ZONE_COUNT + 1;
 /// Number of on-disk inodes that fit in one filesystem block.
 pub const INODES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskInode>();
 
+/// Size of one on-disk directory entry in bytes.
+pub const DIRECTORY_ENTRY_SIZE: usize = size_of::<DiskDirectoryEntry>();
+
 /// Number of on-disk directory entries that fit in one filesystem block.
-pub const DIRECTORY_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<DiskDirectoryEntry>();
+pub const DIRECTORY_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / DIRECTORY_ENTRY_SIZE;
 
 /// Logical inode number used by runtime metadata and lookup code.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

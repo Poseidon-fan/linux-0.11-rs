@@ -76,6 +76,9 @@ fn user_init() -> ! {
     /// Boot-time location of the BIOS drive table.
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
     user_lib::setup(DRIVE_INFO_ADDR).unwrap();
+
+    user_lib::test(c"/usr/root/hello.c".as_ptr() as *const u8).unwrap();
+
     user_lib::exit().unwrap();
 
     #[allow(clippy::empty_loop)]

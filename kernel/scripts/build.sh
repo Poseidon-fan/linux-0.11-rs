@@ -39,3 +39,7 @@ dd if=$system seek=5 bs=512 count=$((2888-1-4)) of=$IMAGE 2>&1 >/dev/null
 
 # Set "device" for the root image file
 echo -ne "\x$DEFAULT_MINOR_ROOT\x$DEFAULT_MAJOR_ROOT" | dd ibs=1 obs=1 count=2 seek=508 of=$IMAGE conv=notrunc  2>&1 >/dev/null
+
+# Pad image to a standard 1.44 MB floppy (2880 sectors × 512 bytes) so that
+# QEMU can correctly detect the floppy geometry (80 cyl, 2 heads, 18 spt).
+truncate -s 1474560 $IMAGE

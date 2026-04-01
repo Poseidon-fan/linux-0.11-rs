@@ -64,3 +64,5 @@ impl SyscallArg for OpenFlags {
 }
 
 use_syscall!(crate::syscall::NR_OPEN => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
+use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) -> u32);
+use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);

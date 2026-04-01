@@ -5,20 +5,20 @@
 
 use alloc::sync::Arc;
 use bitflags::bitflags;
+use user_lib::fs::{AccessMode, OpenFlags, OpenOptions};
 
 use crate::{
     fs::{
         get_inode,
-        layout::InodeType,
-        minix::{Inode, InodeId},
+        layout::{InodeMode, InodeNumber, InodeType},
+        minix::{INODE_TABLE, Inode, InodeId},
         mount::MOUNT_TABLE,
     },
+    syscall::{EACCES, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, EPERM},
     task, time,
 };
 
 /// Resolve one pathname to its final inode.
-///
-/// Equivalent to the original Linux 0.11 `namei()`.
 pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
     let (dir, basename) = resolve_parent(path)?;
 
@@ -41,6 +41,125 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
     }
 
     Some(inode)
+}
+
+/// Open or create a file by pathname.
+///
+/// Resolves the path, checks permissions, and optionally creates a new regular
+/// file (`O_CREAT`) or truncates an existing one (`O_TRUNC`).  Returns the
+/// target inode on success.
+pub fn open_path(path: &str, flags: OpenFlags, mode: u16) -> Result<Arc<Inode>, u32> {
+    let (access_mode, options) = flags.into_parts().ok_or(EINVAL)?;
+
+    let (dir, basename) = resolve_parent(path).ok_or(ENOENT)?;
+
+    // Path ending with `/` (e.g. "/usr/") — basename is empty.
+    if basename.is_empty() {
+        return if access_mode == AccessMode::ReadOnly
+            && !options.intersects(OpenOptions::CREATE | OpenOptions::TRUNCATE)
+        {
+            Ok(dir)
+        } else {
+            Err(EISDIR)
+        };
+    }
+
+    match dir.lookup(basename)? {
+        None if options.contains(OpenOptions::CREATE) => create_file(&dir, basename, mode),
+        None => Err(ENOENT),
+        Some(inum) => open_existing(&dir, inum, access_mode, options),
+    }
+}
+
+/// Create a new regular file inside `dir` with the given `basename` and `mode`.
+fn create_file(dir: &Arc<Inode>, basename: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+    if !check_permission(dir, AccessMask::MAY_WRITE) {
+        return Err(EACCES);
+    }
+
+    let fs = dir.file_system.upgrade().ok_or(EIO)?;
+    let inode_number = fs.lock().alloc_inode().ok_or(ENOSPC)?;
+
+    // Build the runtime inode via the inode table so it is cached from the start.
+    let inode = INODE_TABLE.lock().get_inode_raw(
+        InodeId {
+            device: dir.id.device,
+            inode_number,
+        },
+        &fs,
+    );
+
+    // Initialise the new inode's on-disk fields.
+    let (euid, egid, umask) = task::current_task()
+        .pcb
+        .inner
+        .exclusive(|inner| (inner.identity.euid, inner.identity.egid, inner.fs.umask));
+
+    let now = time::current_time();
+    {
+        let mut inner = inode.inner.lock();
+        inner.disk_inode.mode = InodeMode(0o100000 | (mode & 0o777 & !umask));
+        inner.disk_inode.user_id = euid;
+        inner.disk_inode.group_id = egid as u8;
+        inner.disk_inode.link_count = 1;
+        inner.disk_inode.modification_time = now;
+        inner.access_time = now;
+        inner.change_time = now;
+        inner.is_dirty = true;
+    }
+
+    // Link the new inode into the parent directory.
+    if let Err(e) = dir.add_entry(basename, inode_number) {
+        // Roll back: mark link_count = 0 so the inode will be freed on eviction.
+        let mut inner = inode.inner.lock();
+        inner.disk_inode.link_count = 0;
+        inner.is_dirty = true;
+        return Err(e);
+    }
+
+    Ok(inode)
+}
+
+/// Open an existing inode, checking flags and permissions.
+fn open_existing(
+    dir: &Arc<Inode>,
+    inode_number: InodeNumber,
+    access_mode: AccessMode,
+    options: OpenOptions,
+) -> Result<Arc<Inode>, u32> {
+    if options.contains(OpenOptions::EXCLUSIVE) {
+        return Err(EEXIST);
+    }
+
+    let inode = get_inode(InodeId {
+        device: dir.id.device,
+        inode_number,
+    });
+
+    let file_type = inode.inner.lock().disk_inode.mode.file_type();
+
+    // Directories cannot be opened for writing.
+    if file_type == InodeType::Directory && access_mode != AccessMode::ReadOnly {
+        return Err(EPERM);
+    }
+
+    // Check the file's permission bits against the requested access mode.
+    let required = match access_mode {
+        AccessMode::ReadOnly => AccessMask::MAY_READ,
+        AccessMode::WriteOnly => AccessMask::MAY_WRITE,
+        AccessMode::ReadWrite => AccessMask::MAY_READ | AccessMask::MAY_WRITE,
+    };
+    if !check_permission(&inode, required) {
+        return Err(EPERM);
+    }
+
+    inode.inner.lock().access_time = time::current_time();
+
+    if options.contains(OpenOptions::TRUNCATE) {
+        // TODO: truncate inode data blocks
+    }
+
+    Ok(inode)
 }
 
 /// Resolve a pathname to its parent directory inode and the final component name.

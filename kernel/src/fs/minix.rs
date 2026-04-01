@@ -16,12 +16,12 @@ use crate::{
         bitmap::Bitmap,
         buffer::{self, BufferKey},
         layout::{
-            DataBlock, DiskDirectoryEntry, DiskInode, DiskSuperBlock, INODES_PER_BLOCK, InodeBlock,
-            InodeNumber, InodeType, MINIX_SUPER_MAGIC,
+            DIRECTORY_ENTRY_SIZE, DataBlock, DiskDirectoryEntry, DiskInode, DiskSuperBlock,
+            INODES_PER_BLOCK, InodeBlock, InodeNumber, InodeType, MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
-    syscall::{EFBIG, EINVAL, EIO, EISDIR, ERROR},
+    syscall::{EFBIG, EIO, ERROR},
     time,
 };
 
@@ -204,17 +204,7 @@ impl Inode {
             return Ok(0);
         }
 
-        let (file_type, size) = {
-            let inner = self.inner.lock();
-            (
-                inner.disk_inode.mode.file_type(),
-                inner.disk_inode.size as usize,
-            )
-        };
-
-        if !matches!(file_type, InodeType::Regular | InodeType::Directory) {
-            return Err(EINVAL);
-        }
+        let size = self.inner.lock().disk_inode.size as usize;
 
         if offset >= size {
             return Ok(0);
@@ -258,12 +248,6 @@ impl Inode {
     pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize, u32> {
         if buf.is_empty() {
             return Ok(0);
-        }
-
-        match self.inner.lock().disk_inode.mode.file_type() {
-            InodeType::Regular => {}
-            InodeType::Directory => return Err(EISDIR),
-            _ => return Err(EINVAL),
         }
 
         let mut pos = offset;
@@ -328,12 +312,11 @@ impl Inode {
 impl Inode {
     pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>, u32> {
         assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
-        let file_count =
-            self.inner.lock().disk_inode.size as usize / size_of::<DiskDirectoryEntry>();
+        let file_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
         for i in 0..file_count {
-            let len = self.read_at(size_of::<DiskDirectoryEntry>() * i, dirent.as_bytes_mut())?;
-            assert_eq!(len, size_of::<DiskDirectoryEntry>());
+            let len = self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
+            assert_eq!(len, DIRECTORY_ENTRY_SIZE);
             if dirent.inode_number.0 == 0 {
                 continue;
             }
@@ -342,6 +325,35 @@ impl Inode {
             }
         }
         Ok(None)
+    }
+
+    /// Add a new directory entry mapping `name` to `inode_number`.
+    ///
+    /// Reuses the first empty slot (inode_number == 0) if one exists; otherwise
+    /// appends at the end, allocating a new data block when needed.
+    pub fn add_entry(&self, name: &str, inode_number: InodeNumber) -> Result<(), u32> {
+        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+
+        let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
+
+        // Scan for an empty slot.
+        let mut slot = entry_count;
+        let mut dirent = DiskDirectoryEntry::empty();
+        for i in 0..entry_count {
+            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
+            if dirent.inode_number.0 == 0 {
+                slot = i;
+                break;
+            }
+        }
+
+        // Write the new entry at the chosen slot.
+        let new_entry = DiskDirectoryEntry::new(name, inode_number);
+        let offset = slot * DIRECTORY_ENTRY_SIZE;
+        let written = self.write_at(offset, new_entry.as_bytes())?;
+        assert_eq!(written, DIRECTORY_ENTRY_SIZE);
+
+        Ok(())
     }
 }
 

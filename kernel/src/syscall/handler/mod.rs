@@ -29,8 +29,20 @@ macro_rules! define_syscall_handler {
 define_syscall_handler!(
     user_lib::NR_TEST = 74,
     fn sys_test(ctx: &SyscallContext) -> Result<u32, u32> {
-        let (value, _, _) = ctx.args();
-        crate::println!("test value: {}", value);
-        Ok(0)
+        let (path_ptr, _, _) = ctx.args();
+        let pathname = crate::segment::get_fs_string(path_ptr as *const u8, 256);
+
+        let flags = user_lib::fs::OpenFlags::new(
+            user_lib::fs::AccessMode::ReadOnly,
+            user_lib::fs::OpenOptions::empty(),
+        );
+        let inode = crate::fs::path::open_path(&pathname, flags, 0)?;
+
+        let mut buf = [0u8; 4096];
+        let n = inode.read_at(0, &mut buf)?;
+        let content = core::str::from_utf8(&buf[..n]).unwrap_or("<invalid utf8>");
+        crate::println!("{}", content);
+
+        Ok(n as u32)
     }
 );

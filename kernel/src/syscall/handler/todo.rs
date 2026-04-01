@@ -9,24 +9,6 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_READ = 3,
-    fn sys_read(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_WRITE = 4,
-    fn sys_write(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_OPEN = 5,
-    fn sys_open(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_CLOSE = 6,
     fn sys_close(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()

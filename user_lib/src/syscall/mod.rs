@@ -145,6 +145,7 @@ pub const NR_SETREUID: u32 = 70;
 pub const NR_SETREGID: u32 = 71;
 pub const NR_IAM: u32 = 72;
 pub const NR_WHOAMI: u32 = 73;
+
 pub const NR_TEST: u32 = 74;
 
 // ===========================================================================
@@ -295,4 +296,4 @@ use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
 
-use_syscall!(crate::syscall::NR_TEST => test(value: i32) -> u32);
+use_syscall!(crate::syscall::NR_TEST => test(path: *const u8) -> u32);
