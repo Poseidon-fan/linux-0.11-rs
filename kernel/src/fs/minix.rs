@@ -105,6 +105,64 @@ impl Inode {
         }
     }
 
+    /// Release all data blocks and set size to 0.
+    pub fn truncate(&self) {
+        let Some(fs) = self.file_system.upgrade() else {
+            return;
+        };
+        let fs = fs.lock();
+        let dev = self.id.device;
+        let mut inner = self.inner.lock();
+        let disk = &mut inner.disk_inode;
+
+        let free = |zone: &mut u16| {
+            if *zone == 0 {
+                return;
+            }
+            // Read the indirect block and free every zone it references.
+            if let Some(buf) = buffer::read_block(BufferKey {
+                dev,
+                block_nr: u32::from(*zone),
+            }) {
+                buf.read(|table: &IndirectBlock| {
+                    for &e in table {
+                        fs.free_zone(e);
+                    }
+                });
+                buffer::release_block(buf);
+            }
+            fs.free_zone(*zone);
+            *zone = 0;
+        };
+
+        for z in &mut disk.direct_zones {
+            fs.free_zone(*z);
+            *z = 0;
+        }
+        free(&mut disk.single_indirect_zone);
+
+        if disk.double_indirect_zone != 0 {
+            if let Some(buf) = buffer::read_block(BufferKey {
+                dev,
+                block_nr: u32::from(disk.double_indirect_zone),
+            }) {
+                let entries = buf.read(|table: &IndirectBlock| *table);
+                buffer::release_block(buf);
+                for mut e in entries {
+                    free(&mut e);
+                }
+            }
+            fs.free_zone(disk.double_indirect_zone);
+            disk.double_indirect_zone = 0;
+        }
+
+        disk.size = 0;
+        let now = time::current_time();
+        disk.modification_time = now;
+        inner.change_time = now;
+        inner.is_dirty = true;
+    }
+
     /// Map one logical file block to its backing disk block.
     ///
     /// The result mirrors the original Minix `_bmap` contract:
@@ -497,6 +555,20 @@ impl MinixFileSystem {
         buffer::release_block(buf);
         Some(zone)
     }
+
+    /// Release a data zone back to the zone bitmap.
+    fn free_zone(&self, zone: u16) {
+        if zone != 0 {
+            self.zone_bitmap.dealloc(u32::from(zone));
+        }
+    }
+
+    /// Release an inode number back to the inode bitmap and zero the on-disk
+    /// inode table entry.
+    pub fn free_inode(&self, inode_number: InodeNumber) {
+        self.write_inode(inode_number, &DiskInode::zeroed());
+        self.inode_bitmap.dealloc(u32::from(inode_number.0));
+    }
 }
 
 impl InodeTable {
@@ -607,13 +679,17 @@ impl InodeTable {
     /// Handles two cases:
     /// - **dirty**: writes the in-memory copy back to disk.
     /// - **zero link count**: the file has been fully unlinked while cached;
-    ///   its data blocks and bitmap entry should be freed (TODO).
+    ///   its data blocks and bitmap entry are freed.
     fn flush_slot(&mut self, idx: usize) {
         let victim = self.slots[idx].take().unwrap();
         let inner = victim.inner.lock();
 
         if inner.disk_inode.link_count == 0 {
-            // TODO: truncate data blocks + free inode bitmap entry
+            drop(inner);
+            victim.truncate();
+            if let Some(fs) = victim.file_system.upgrade() {
+                fs.lock().free_inode(victim.id.inode_number);
+            }
             return;
         }
 

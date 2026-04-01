@@ -156,7 +156,7 @@ fn open_existing(
     inode.inner.lock().access_time = time::current_time();
 
     if options.contains(OpenOptions::TRUNCATE) {
-        // TODO: truncate inode data blocks
+        inode.truncate();
     }
 
     Ok(inode)
