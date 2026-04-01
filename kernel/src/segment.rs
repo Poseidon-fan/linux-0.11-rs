@@ -506,6 +506,20 @@ impl Descriptor {
         Self(cleared | (base_low << 16) | (base_mid << 32) | (base_high << 56))
     }
 
+    /// Return a new descriptor with the 20-bit limit changed.
+    ///
+    /// All other fields (base, access, flags) are preserved.
+    pub const fn with_limit(self, limit: u32) -> Self {
+        let limit_low = (limit & 0xFFFF) as u64;
+        let limit_high = ((limit >> 16) & 0xF) as u64;
+
+        let cleared = self.0
+            & !(0xFFFF_u64)          // clear limit[15:0]  in byte[0..1]
+            & !(0xF_u64 << 48); // clear limit[19:16] in byte[6] low nibble
+
+        Self(cleared | limit_low | (limit_high << 48))
+    }
+
     /// Get the raw 64-bit value.
     pub const fn as_u64(self) -> u64 {
         self.0

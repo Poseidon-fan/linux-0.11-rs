@@ -1,28 +1,71 @@
-//! Page-fault handlers for demand paging and COW paths.
+//! Page-fault handlers for demand paging, page sharing, and COW paths.
 //!
 //! These handlers are called from the trap layer with the minimal fault
 //! context needed by memory management logic.
+//!
+//! The not-present handler (`handle_no_page`) implements three resolution
+//! paths in priority order:
+//!
+//! 1. **Page sharing** — if another process runs the same executable,
+//!    share its already-loaded page (write-protected for COW).
+//! 2. **Demand loading** — read the page from the executable file on disk.
+//! 3. **Anonymous zero page** — allocate a fresh zeroed page (stack, heap,
+//!    pure BSS regions, or processes with no executable).
+
+use alloc::sync::Arc;
 
 use crate::{
+    fs::minix::Inode,
     mm::address::{LinAddr, LinPageNum},
     signal::SIGSEGV,
-    task,
+    task::{self, TASK_MANAGER},
 };
 
 /// Handle a not-present page fault (`P=0` in the CPU error code).
-///
-/// # Arguments
-/// - `error_code`: Raw i386 page-fault error code.
-/// - `address`: Faulting linear address from CR2.
 pub fn handle_no_page(_error_code: u32, address: u32) {
     let fault_addr = LinAddr::from(address).align_down();
     let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
+
+    let (exe_inode, addr_offset, end_data, current_pde_base) =
+        task::current_task().pcb.inner.exclusive(|inner| {
+            let base = inner.ldt.data_segment().base();
+            let pde_base = inner
+                .memory_space
+                .as_ref()
+                .map(|ms| ms.pde_base())
+                .unwrap_or(0);
+            (
+                inner.fs.executable_inode.clone(),
+                address.wrapping_sub(base),
+                inner.mem_layout.end_data,
+                pde_base,
+            )
+        });
+
+    if let Some(ref inode) = exe_inode {
+        if addr_offset < end_data {
+            if try_share_page(fault_page, inode, current_pde_base) {
+                return;
+            }
+
+            let loaded = task::current_task().pcb.inner.exclusive(|inner| {
+                inner
+                    .memory_space
+                    .as_mut()
+                    .map(|ms| ms.map_demand_page(fault_page, inode, addr_offset, end_data))
+                    .unwrap_or(false)
+            });
+            if loaded {
+                return;
+            }
+        }
+    }
 
     let mapped = task::current_task().pcb.inner.exclusive(|inner| {
         inner
             .memory_space
             .as_mut()
-            .and_then(|memory_space| memory_space.map_zero_page(fault_page).ok())
+            .and_then(|ms| ms.map_zero_page(fault_page).ok())
             .is_some()
     });
 
@@ -34,18 +77,69 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
         panic!("handle_no_page(task0): map failed address={:#x}", address);
     }
 
-    // Keep the same high-level behavior as Linux 0.11's `oom()` path:
-    // allocation/map failure terminates the current task with SIGSEGV.
     task::do_exit((1u32 << (SIGSEGV - 1)) as i32);
 }
 
+/// Scan the task table for a process that runs the same executable and
+/// has the target page already loaded, then try to share that page.
+fn try_share_page(fault_page: LinPageNum, exe_inode: &Arc<Inode>, current_pde_base: usize) -> bool {
+    let current_slot = task::current_slot();
+    let pte_index = fault_page.pte_index();
+    let local_pde_index = fault_page.pde_index() - current_pde_base;
+
+    TASK_MANAGER.exclusive(|tm| {
+        for (slot, task) in tm.tasks.iter().enumerate() {
+            let Some(task) = task else { continue };
+            if slot == current_slot {
+                continue;
+            }
+
+            // Single lock acquisition per candidate: check executable match
+            // and extract pde_base together.
+            let candidate = task.pcb.inner.exclusive(|inner| {
+                let same_exe = inner
+                    .fs
+                    .executable_inode
+                    .as_ref()
+                    .map(|exe| Arc::ptr_eq(exe, exe_inode))
+                    .unwrap_or(false);
+                if !same_exe {
+                    return None;
+                }
+                inner.memory_space.as_ref().map(|ms| ms.pde_base())
+            });
+
+            let Some(source_pde_base) = candidate else {
+                continue;
+            };
+
+            let source_page =
+                LinPageNum::from_indices(source_pde_base + local_pde_index, pte_index);
+
+            let shared = task.pcb.inner.exclusive(|source_inner| {
+                task::current_task().pcb.inner.exclusive(|current_inner| {
+                    let source_ms = match source_inner.memory_space.as_mut() {
+                        Some(ms) => ms,
+                        None => return false,
+                    };
+                    let target_ms = match current_inner.memory_space.as_mut() {
+                        Some(ms) => ms,
+                        None => return false,
+                    };
+                    target_ms.try_share_from(source_ms, source_page, fault_page)
+                })
+            });
+
+            if shared {
+                return true;
+            }
+        }
+        false
+    })
+}
+
 /// Handle a write-protect page fault on a present page (`P=1, W=1`).
-///
-/// # Arguments
-/// - `address`: Faulting linear address from CR2.
 pub fn handle_wp_page(address: u32) {
-    // Convert raw CR2 value to typed linear address, then derive
-    // the target page through typed paging-index helpers.
     let fault_addr = LinAddr::from(address);
     let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
     task::current_task().pcb.inner.exclusive(|inner| {

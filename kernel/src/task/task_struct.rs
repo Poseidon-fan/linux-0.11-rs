@@ -57,12 +57,31 @@ pub struct TaskControlBlockInner {
     pub identity: TaskIdentityInfo,
     pub acct: TaskAcctInfo,
     pub memory_space: Option<MemorySpace>,
+    pub mem_layout: TaskMemoryLayout,
     pub exit_code: i32,
     pub tty: i32,
     pub fs: TaskFileSystemContext,
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
     pub signal_info: TaskSignalInfo,
+}
+
+/// Process memory layout boundaries set during exec.
+///
+/// These fields define the logical boundaries of the user-space address
+/// layout: where code ends, where initialized data ends, where the
+/// heap break currently sits, and where the stack begins.  They are
+/// expressed as byte offsets from the segment base.
+#[derive(Clone, Copy, Default)]
+pub struct TaskMemoryLayout {
+    /// Byte offset past the last code byte.
+    pub end_code: u32,
+    /// Byte offset past the last initialized data byte.
+    pub end_data: u32,
+    /// Current program break (end of heap, grows upward).
+    pub brk: u32,
+    /// Page-aligned bottom of the user stack.
+    pub start_stack: u32,
 }
 
 /// Per-task filesystem context shared by pathname lookup and file descriptors.
@@ -422,6 +441,16 @@ impl LocalDescriptorTable {
     pub fn set_base(&mut self, base: u32) {
         self.entries[1] = self.entries[1].with_base(base);
         self.entries[2] = self.entries[2].with_base(base);
+    }
+
+    /// Set the 20-bit limit of the user code segment (LDT[1]).
+    pub fn set_code_limit(&mut self, limit: u32) {
+        self.entries[1] = self.entries[1].with_limit(limit);
+    }
+
+    /// Set the 20-bit limit of the user data segment (LDT[2]).
+    pub fn set_data_limit(&mut self, limit: u32) {
+        self.entries[2] = self.entries[2].with_limit(limit);
     }
 
     /// Get the address of the LDT for use in GDT LDT descriptor.

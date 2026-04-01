@@ -9,14 +9,22 @@
 //! corresponding page directory entries in the shared page directory.
 
 use core::arch::asm;
+use core::ptr;
 use hashbrown::HashMap;
 
-use crate::mm::{
-    address::{LinPageNum, PhysAddr, PhysPageNum},
-    frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
-    page::{
-        self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable,
-        PageTableEntry,
+use crate::{
+    fs::{
+        BLOCK_SIZE,
+        buffer::{self, BufferKey},
+        minix::Inode,
+    },
+    mm::{
+        address::{LinPageNum, PhysAddr, PhysPageNum},
+        frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
+        page::{
+            self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable,
+            PageTableEntry,
+        },
     },
 };
 
@@ -96,17 +104,7 @@ impl MemorySpace {
     /// - Allocate a zeroed data frame.
     /// - Install a user/writable/present PTE.
     pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), ()> {
-        let pde_index = fault_page.pde_index();
-        let local_pde_index = self.local_pde_index(pde_index).ok_or(())?;
-
-        if !page::read_pde(pde_index).is_present() {
-            let page_table = PageTable::new().ok_or(())?;
-            page::write_pde(
-                pde_index,
-                PageDirectoryEntry::user_page_table(page_table.phys_addr()),
-            );
-            self.page_tables[local_pde_index] = Some(page_table);
-        }
+        self.ensure_page_table(fault_page.pde_index())?;
 
         let pte = self.find_pte(fault_page).ok_or(())?;
         if pte.is_present() {
@@ -153,6 +151,21 @@ impl MemorySpace {
             .then_some(pde_index - self.pde_base)
     }
 
+    /// Allocate a page table for `pde_index` if one does not already exist.
+    fn ensure_page_table(&mut self, pde_index: usize) -> Result<(), ()> {
+        if page::read_pde(pde_index).is_present() {
+            return Ok(());
+        }
+        let local = self.local_pde_index(pde_index).ok_or(())?;
+        let page_table = PageTable::new().ok_or(())?;
+        page::write_pde(
+            pde_index,
+            PageDirectoryEntry::user_page_table(page_table.phys_addr()),
+        );
+        self.page_tables[local] = Some(page_table);
+        Ok(())
+    }
+
     /// Copy one 4KB page from `src_page` to `dst_page`.
     fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
         let src_phys: PhysAddr = src_page.into();
@@ -178,6 +191,150 @@ impl MemorySpace {
                 options(att_syntax, nostack),
             );
         }
+    }
+
+    /// Starting PDE index for this process in the shared page directory.
+    pub fn pde_base(&self) -> usize {
+        self.pde_base
+    }
+
+    /// Load a page from an executable file and map it at `fault_page`.
+    ///
+    /// Reads up to 4 consecutive filesystem blocks (one page worth of data)
+    /// from `inode`, zeros any portion that falls beyond `end_data` (the BSS
+    /// region), and installs a user/writable/present PTE.
+    ///
+    /// Returns `true` on success (including the case where the PTE was
+    /// already present), `false` on allocation or I/O failure.
+    pub fn map_demand_page(
+        &mut self,
+        fault_page: LinPageNum,
+        inode: &Inode,
+        address_offset: u32,
+        end_data: u32,
+    ) -> bool {
+        if self.ensure_page_table(fault_page.pde_index()).is_err() {
+            return false;
+        }
+
+        // If another path already mapped this page, nothing to do.
+        if let Some(pte) = self.find_pte(fault_page) {
+            if pte.is_present() {
+                return true;
+            }
+        }
+
+        let frame = match frame::alloc() {
+            Some(f) => f,
+            None => return false,
+        };
+
+        // Read up to 4 blocks (PAGE_SIZE / BLOCK_SIZE) from the executable.
+        // Block 0 is the a.out header, so data starts at block 1.
+        let blocks_per_page = PAGE_SIZE / BLOCK_SIZE;
+        let first_block = 1 + (address_offset as usize / BLOCK_SIZE);
+        let page_phys: PhysAddr = frame.ppn.into();
+
+        for i in 0..blocks_per_page {
+            let block_id = inode.map_block_id(first_block + i, false).unwrap_or(0);
+
+            let dst = (page_phys.as_u32() + (i * BLOCK_SIZE) as u32) as *mut u8;
+
+            if block_id != 0 {
+                let key = BufferKey {
+                    dev: inode.id.device,
+                    block_nr: block_id,
+                };
+                if let Some(bh) = buffer::read_block(key) {
+                    unsafe {
+                        ptr::copy_nonoverlapping(bh.data.as_ptr(), dst, BLOCK_SIZE);
+                    }
+                    buffer::release_block(bh);
+                } else {
+                    unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
+                }
+            } else {
+                unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
+            }
+        }
+
+        // Zero the BSS portion: bytes beyond end_data within this page.
+        let page_end = address_offset + PAGE_SIZE as u32;
+        if page_end > end_data && address_offset < end_data {
+            let bss_start = (end_data - address_offset) as usize;
+            let bss_len = PAGE_SIZE - bss_start;
+            let dst = (page_phys.as_u32() + bss_start as u32) as *mut u8;
+            unsafe { ptr::write_bytes(dst, 0, bss_len) };
+        }
+
+        let ppn = frame.ppn;
+        let pte = self
+            .find_pte(fault_page)
+            .expect("PTE lookup after table creation");
+        *pte = PageTableEntry::new(
+            ppn,
+            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
+        );
+        self.data_frames.insert(fault_page, frame);
+        page::invalidate_tlb();
+        true
+    }
+
+    /// Try to share a page from `source_space` at `source_page`.
+    ///
+    /// Succeeds only when the source page is present and clean (not dirty).
+    /// On success, both PTEs are write-protected and the physical frame's
+    /// reference count is incremented.
+    pub fn try_share_from(
+        &mut self,
+        source_space: &mut MemorySpace,
+        source_page: LinPageNum,
+        target_page: LinPageNum,
+    ) -> bool {
+        let source_pte = match source_space.find_pte(source_page) {
+            Some(pte) => pte,
+            None => return false,
+        };
+
+        if !source_pte.is_present() {
+            return false;
+        }
+
+        // Only share clean (non-dirty) pages.
+        if source_pte.flags().contains(PageFlags::DIRTY) {
+            return false;
+        }
+
+        let phys_addr = source_pte.phys_addr();
+        if phys_addr.as_u32() < LOW_MEM {
+            return false;
+        }
+
+        if self.ensure_page_table(target_page.pde_index()).is_err() {
+            return false;
+        }
+
+        let target_pte = match self.find_pte(target_page) {
+            Some(pte) => pte,
+            None => return false,
+        };
+
+        if target_pte.is_present() {
+            return false;
+        }
+
+        // Write-protect the source page for COW semantics.
+        let cow_pte = source_pte.without_writable();
+        *source_pte = cow_pte;
+
+        // Map the same physical page into the target, also write-protected.
+        *target_pte = cow_pte;
+
+        let shared_frame = frame::share(phys_addr.into());
+        self.data_frames.insert(target_page, shared_frame);
+
+        page::invalidate_tlb();
+        true
     }
 
     /// Create a COW (Copy-on-Write) copy of this memory space for fork.

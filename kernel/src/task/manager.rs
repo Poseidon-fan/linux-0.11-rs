@@ -57,6 +57,7 @@ impl TaskManager {
             parent_file_system,
             parent_ldt,
             parent_signal_info,
+            parent_mem_layout,
             child_memory_space,
         ) = parent.pcb.inner.exclusive(|parent_inner| {
             let old_base = parent_inner.ldt.data_segment().base();
@@ -88,6 +89,7 @@ impl TaskManager {
                 parent_inner.fs.clone(),
                 parent_inner.ldt.clone(),
                 parent_inner.signal_info.clone(),
+                parent_inner.mem_layout,
                 child_memory_space,
             ))
         })?;
@@ -113,6 +115,7 @@ impl TaskManager {
                 cstime: 0,
             },
             memory_space: None, // empty, set below after LDT base is adjusted
+            mem_layout: parent_mem_layout,
             exit_code: 0,
             tty: parent_tty,
             fs: parent_file_system,
@@ -309,6 +312,7 @@ lazy_static! {
                     cstime: 0,
                 },
                 memory_space: Some(MemorySpace::new(0)), // task 0
+                mem_layout: TaskMemoryLayout::default(),
                 exit_code: 0,
                 tty: -1,
                 fs: TaskFileSystemContext {
