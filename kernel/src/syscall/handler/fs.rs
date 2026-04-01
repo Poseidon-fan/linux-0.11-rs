@@ -4,6 +4,8 @@ use user_lib::fs::OpenFlags;
 
 use alloc::vec;
 
+use user_lib::fs::Whence;
+
 use crate::{
     define_syscall_handler,
     driver::blk::hd,
@@ -14,7 +16,7 @@ use crate::{
         path,
     },
     segment,
-    syscall::{EBADF, EMFILE, EPERM, SYSCALL_TABLE, context::SyscallContext},
+    syscall::{EBADF, EINVAL, EMFILE, EPERM, SYSCALL_TABLE, context::SyscallContext},
     task,
 };
 
@@ -82,6 +84,31 @@ define_syscall_handler!(
         let bytes_written = file.write(&kernel_buf)?;
 
         Ok(bytes_written as u32)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_CLOSE = 6,
+    fn sys_close(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (fd, _, _) = ctx.args();
+        task::current_task().pcb.inner.exclusive(|inner| {
+            let slot = inner.fs.open_files.get_mut(fd as usize).ok_or(EBADF)?;
+            if slot.is_none() {
+                return Err(EBADF);
+            }
+            *slot = None;
+            Ok(0)
+        })
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_LSEEK = 19,
+    fn sys_lseek(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (fd, offset, whence) = ctx.args();
+        let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
+        let file = get_file(fd)?;
+        file.seek(offset as i32, whence).map(|pos| pos as u32)
     }
 );
 

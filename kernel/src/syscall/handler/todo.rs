@@ -9,12 +9,6 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_CLOSE = 6,
-    fn sys_close(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_CREAT = 8,
     fn sys_creat(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -71,12 +65,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_STAT = 18,
     fn sys_stat(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_LSEEK = 19,
-    fn sys_lseek(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

@@ -63,6 +63,34 @@ impl SyscallArg for OpenFlags {
     }
 }
 
+/// File seek origin, matching POSIX `SEEK_SET` / `SEEK_CUR` / `SEEK_END`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Whence {
+    Set = 0,
+    Current = 1,
+    End = 2,
+}
+
+impl Whence {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Set),
+            1 => Some(Self::Current),
+            2 => Some(Self::End),
+            _ => None,
+        }
+    }
+}
+
+impl SyscallArg for Whence {
+    fn into_syscall_arg(self) -> u32 {
+        self as u32
+    }
+}
+
 use_syscall!(crate::syscall::NR_OPEN => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
 use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) -> u32);
 use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);
+use_syscall!(crate::syscall::NR_CLOSE => close(fd: u32) -> u32);
+use_syscall!(crate::syscall::NR_LSEEK => lseek(fd: u32, offset: i32, whence: Whence) -> u32);

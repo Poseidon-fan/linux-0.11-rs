@@ -1,9 +1,12 @@
 use alloc::sync::Arc;
 use user_lib::fs::{AccessMode, OpenOptions};
 
+use user_lib::fs::Whence;
+
 use crate::{
     fs::{file::File, minix::Inode},
     sync::Mutex,
+    syscall::EINVAL,
 };
 
 /// Open file object backed by one inode data area.
@@ -61,5 +64,19 @@ impl File for InodeFile {
         let bytes_written = inner.inode.write_at(offset, buffer)?;
         inner.offset = offset + bytes_written;
         Ok(bytes_written)
+    }
+
+    fn seek(&self, offset: i32, whence: Whence) -> Result<usize, u32> {
+        let mut inner = self.inner.lock();
+        let new_offset = match whence {
+            Whence::Set => offset as isize,
+            Whence::Current => inner.offset as isize + offset as isize,
+            Whence::End => inner.inode.inner.lock().disk_inode.size as isize + offset as isize,
+        };
+        if new_offset < 0 {
+            return Err(EINVAL);
+        }
+        inner.offset = new_offset as usize;
+        Ok(inner.offset)
     }
 }
