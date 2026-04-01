@@ -123,18 +123,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_MKDIR = 39,
-    fn sys_mkdir(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_RMDIR = 40,
-    fn sys_rmdir(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_PIPE = 42,
     fn sys_pipe(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()

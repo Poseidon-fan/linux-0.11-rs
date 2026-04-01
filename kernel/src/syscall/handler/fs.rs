@@ -17,8 +17,8 @@ use crate::{
     },
     segment,
     syscall::{
-        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, EPERM, SYSCALL_TABLE,
-        context::SyscallContext,
+        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, ENOTEMPTY, EPERM,
+        SYSCALL_TABLE, context::SyscallContext,
     },
     task, time,
 };
@@ -202,6 +202,74 @@ define_syscall_handler!(
             .pcb
             .inner
             .exclusive(|inner| inner.fs.current_directory = Some(inode));
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_MKDIR = 39,
+    fn sys_mkdir(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, mode, _) = ctx.args();
+        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        if basename.is_empty() {
+            return Err(ENOENT);
+        }
+        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+            return Err(EACCES);
+        }
+        if dir.lookup(basename)?.is_some() {
+            return Err(EEXIST);
+        }
+
+        dir.create_directory(basename, mode as u16)?;
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_RMDIR = 40,
+    fn sys_rmdir(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, _, _) = ctx.args();
+        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        if basename.is_empty() {
+            return Err(ENOENT);
+        }
+        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+            return Err(EACCES);
+        }
+
+        let inum = dir.lookup(basename)?.ok_or(ENOENT)?;
+        let inode = get_inode(InodeId {
+            device: dir.id.device,
+            inode_number: inum,
+        });
+        if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+            return Err(ENOTDIR);
+        }
+        if !inode.is_empty_directory()? {
+            return Err(ENOTEMPTY);
+        }
+
+        dir.remove_entry(basename)?;
+
+        let now = time::current_time();
+        {
+            let mut inner = inode.inner.lock();
+            inner.disk_inode.link_count = 0;
+            inner.change_time = now;
+            inner.is_dirty = true;
+        }
+        {
+            let mut inner = dir.inner.lock();
+            inner.disk_inode.link_count -= 1;
+            inner.change_time = now;
+            inner.is_dirty = true;
+        }
+
         Ok(0)
     }
 );

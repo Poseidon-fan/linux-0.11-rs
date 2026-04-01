@@ -435,11 +435,37 @@ impl Inode {
         Ok(())
     }
 
-    /// Create a new regular file inside this directory with the given name and mode.
-    ///
-    /// Allocates an inode, initialises its fields, and links it into the
-    /// directory. The caller is responsible for permission checks.
+    /// Create a new regular file inside this directory.
+    /// The caller is responsible for permission checks.
     pub fn create_file(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+        self.alloc_and_link(name, 0o100000, mode, 1)
+    }
+
+    /// Create a new directory inside this directory.
+    /// The caller is responsible for permission checks.
+    pub fn create_directory(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+        let inode = self.alloc_and_link(name, 0o040000, mode, 2)?;
+
+        let inode_number = inode.id.inode_number;
+        inode.add_entry(".", inode_number)?;
+        inode.add_entry("..", self.id.inode_number)?;
+
+        let mut parent_inner = self.inner.lock();
+        parent_inner.disk_inode.link_count += 1;
+        parent_inner.change_time = time::current_time();
+        parent_inner.is_dirty = true;
+
+        Ok(inode)
+    }
+
+    /// Allocate an inode, initialise its metadata, and link it into this directory.
+    fn alloc_and_link(
+        self: &Arc<Self>,
+        name: &str,
+        type_bits: u16,
+        mode: u16,
+        link_count: u8,
+    ) -> Result<Arc<Inode>, u32> {
         let fs = self.file_system.upgrade().ok_or(EIO)?;
         let inode_number = fs.lock().alloc_inode().ok_or(ENOSPC)?;
 
@@ -459,10 +485,10 @@ impl Inode {
         let now = time::current_time();
         {
             let mut inner = inode.inner.lock();
-            inner.disk_inode.mode = InodeMode(0o100000 | (mode & 0o777 & !umask));
+            inner.disk_inode.mode = InodeMode(type_bits | (mode & 0o777 & !umask));
             inner.disk_inode.user_id = euid;
             inner.disk_inode.group_id = egid as u8;
-            inner.disk_inode.link_count = 1;
+            inner.disk_inode.link_count = link_count;
             inner.disk_inode.modification_time = now;
             inner.access_time = now;
             inner.change_time = now;
@@ -477,6 +503,24 @@ impl Inode {
         }
 
         Ok(inode)
+    }
+
+    /// Check whether this directory contains only `.` and `..` entries.
+    pub fn is_empty_directory(&self) -> Result<bool, u32> {
+        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
+        let mut dirent = DiskDirectoryEntry::empty();
+        for i in 0..entry_count {
+            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
+            if dirent.inode_number.0 == 0 {
+                continue;
+            }
+            let name = dirent.name();
+            if name != "." && name != ".." {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Remove the directory entry matching `name` and return its inode number.
