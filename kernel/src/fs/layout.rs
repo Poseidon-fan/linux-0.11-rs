@@ -139,6 +139,23 @@ pub type InodeBlock = [DiskInode; INODES_PER_BLOCK];
 pub type DataBlock = [u8; BLOCK_SIZE];
 pub type DirectoryBlock = [DiskDirectoryEntry; DIRECTORY_ENTRIES_PER_BLOCK];
 
+impl DiskInode {
+    /// Return an all-zero inode suitable for a freshly allocated inode slot.
+    pub const fn zeroed() -> Self {
+        Self {
+            mode: InodeMode(0),
+            user_id: 0,
+            size: 0,
+            modification_time: 0,
+            group_id: 0,
+            link_count: 0,
+            direct_zones: [0; DIRECT_ZONE_COUNT],
+            single_indirect_zone: 0,
+            double_indirect_zone: 0,
+        }
+    }
+}
+
 impl InodeMode {
     /// Mask that selects the inode type field.
     pub const TYPE_MASK: u16 = 0o170000;

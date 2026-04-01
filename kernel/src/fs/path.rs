@@ -17,27 +17,67 @@ use crate::{
 };
 
 /// Resolve one pathname to its final inode.
+///
+/// Equivalent to the original Linux 0.11 `namei()`.
 pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
+    let (dir, basename) = resolve_parent(path)?;
+
+    let inode = if basename.is_empty() {
+        // Path ended with `/` (e.g. "/usr/") — the directory itself is the target.
+        dir
+    } else {
+        let inum = dir.lookup(basename).ok()??;
+        get_inode(InodeId {
+            device: dir.id.device,
+            inode_number: inum,
+        })
+    };
+
+    // Update access time on the final inode, matching original namei() behaviour.
+    {
+        let mut inner = inode.inner.lock();
+        inner.access_time = time::current_time();
+        inner.is_dirty = true;
+    }
+
+    Some(inode)
+}
+
+/// Resolve a pathname to its parent directory inode and the final component name.
+///
+/// Returns `(parent_directory_inode, basename)` where `basename` is the last
+/// path component as a raw string.  When the path ends with `/`, `basename` is
+/// empty — the caller decides how to handle that case.
+///
+/// The returned parent directory is guaranteed to be a directory inode with
+/// search (execute) permission for the current task.
+fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
     let parsed_path = ParsedPath::parse(path)?;
-    let current_task_fs_context = task::current_task()
+    let fs_ctx = task::current_task()
         .pcb
         .inner
         .exclusive(|inner| inner.fs.clone());
 
-    let root_inode = current_task_fs_context.root_directory.clone()?;
-    if parsed_path.is_root() {
-        return Some(root_inode);
-    }
+    let root_inode = fs_ctx.root_directory.clone()?;
 
     let mut current_inode = if parsed_path.is_absolute() {
         Arc::clone(&root_inode)
     } else {
-        current_task_fs_context.current_directory.clone()?
+        fs_ctx.current_directory.clone()?
     };
 
-    for component in parsed_path.components() {
-        // Every traversed pathname component must start from a directory inode
-        // that the current task has search (execute) permission on.
+    let basename = match path.rfind('/') {
+        Some(i) => &path[i + 1..],
+        None => path,
+    };
+
+    let mut components = parsed_path.components().peekable();
+    while let Some(component) = components.next() {
+        // The last component is the basename — don't traverse it.
+        if !basename.is_empty() && components.peek().is_none() {
+            break;
+        }
+
         if current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
             || !check_permission(&current_inode, AccessMask::MAY_EXEC)
         {
@@ -47,32 +87,27 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
         match component {
             PathComponent::CurrentDirectory => {}
             PathComponent::ParentDirectory => {
-                current_inode = resolve_parent_directory(&current_inode, &root_inode)?;
+                current_inode = resolve_dotdot(&current_inode, &root_inode)?;
             }
             PathComponent::Name(name) => {
-                let child_inode_number = current_inode.lookup(name).ok()??;
+                let child_inum = current_inode.lookup(name).ok()??;
                 current_inode = get_inode(InodeId {
                     device: current_inode.id.device,
-                    inode_number: child_inode_number,
+                    inode_number: child_inum,
                 });
             }
         }
     }
 
-    if parsed_path.has_trailing_slash()
-        && current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+    // Verify the parent is a searchable directory before returning it.
+    if !basename.is_empty()
+        && (current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+            || !check_permission(&current_inode, AccessMask::MAY_EXEC))
     {
         return None;
     }
 
-    // Update access time on the final inode, matching original namei() behaviour.
-    {
-        let mut inner = current_inode.inner.lock();
-        inner.access_time = time::current_time();
-        inner.is_dirty = true;
-    }
-
-    Some(current_inode)
+    Some((current_inode, basename))
 }
 
 /// Resolve one `..` step from `current_inode`.
@@ -80,10 +115,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
 /// This follows the Linux 0.11 pathname rule: task root acts as a pseudo-root,
 /// and traversing `..` from a mounted filesystem root first moves back to the
 /// covered mount-point inode before reading that directory's `..` entry.
-fn resolve_parent_directory(
-    current_inode: &Arc<Inode>,
-    root_inode: &Arc<Inode>,
-) -> Option<Arc<Inode>> {
+fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
     if current_inode.id == root_inode.id {
         return Some(Arc::clone(root_inode));
     }

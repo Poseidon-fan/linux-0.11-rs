@@ -463,6 +463,16 @@ impl MinixFileSystem {
         (block_nr, offset)
     }
 
+    /// Allocate a fresh inode number from the inode bitmap and write a zeroed
+    /// on-disk inode to the inode table block.
+    ///
+    /// Returns `None` when the bitmap is full.
+    pub fn alloc_inode(&self) -> Option<InodeNumber> {
+        let nr = InodeNumber(self.inode_bitmap.alloc()? as u16);
+        self.write_inode(nr, &DiskInode::zeroed());
+        Some(nr)
+    }
+
     /// Allocate one fresh data zone and clear its backing cache block.
     fn alloc_zone(&self) -> Option<u16> {
         let zone = self.zone_bitmap.alloc()? as u16;
