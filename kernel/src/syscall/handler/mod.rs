@@ -32,11 +32,7 @@ define_syscall_handler!(
         let (path_ptr, _, _) = ctx.args();
         let pathname = crate::segment::get_fs_string(path_ptr as *const u8, 256);
 
-        let flags = user_lib::fs::OpenFlags::new(
-            user_lib::fs::AccessMode::ReadOnly,
-            user_lib::fs::OpenOptions::empty(),
-        );
-        let inode = crate::fs::path::open_path(&pathname, flags, 0)?;
+        let inode = crate::fs::path::resolve_path(&pathname).ok_or(crate::syscall::ENOENT)?;
 
         let mut buf = [0u8; 4096];
         let n = inode.read_at(0, &mut buf)?;

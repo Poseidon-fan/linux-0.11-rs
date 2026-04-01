@@ -27,12 +27,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_CHDIR = 12,
-    fn sys_chdir(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_MKNOD = 14,
     fn sys_mknod(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()

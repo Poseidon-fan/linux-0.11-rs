@@ -17,12 +17,12 @@ use crate::{
         buffer::{self, BufferKey},
         layout::{
             DIRECTORY_ENTRY_SIZE, DataBlock, DiskDirectoryEntry, DiskInode, DiskSuperBlock,
-            INODES_PER_BLOCK, InodeBlock, InodeNumber, InodeType, MINIX_SUPER_MAGIC,
+            INODES_PER_BLOCK, InodeBlock, InodeMode, InodeNumber, InodeType, MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
-    syscall::{EFBIG, EIO, ENOENT, ERROR},
-    time,
+    syscall::{EFBIG, EIO, ENOENT, ENOSPC, ERROR},
+    task, time,
 };
 
 /// Maximum number of bitmap blocks cached from one Minix super block.
@@ -412,6 +412,50 @@ impl Inode {
         assert_eq!(written, DIRECTORY_ENTRY_SIZE);
 
         Ok(())
+    }
+
+    /// Create a new regular file inside this directory with the given name and mode.
+    ///
+    /// Allocates an inode, initialises its fields, and links it into the
+    /// directory. The caller is responsible for permission checks.
+    pub fn create_file(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+        let fs = self.file_system.upgrade().ok_or(EIO)?;
+        let inode_number = fs.lock().alloc_inode().ok_or(ENOSPC)?;
+
+        let inode = INODE_TABLE.lock().get_inode_raw(
+            InodeId {
+                device: self.id.device,
+                inode_number,
+            },
+            &fs,
+        );
+
+        let (euid, egid, umask) = task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| (inner.identity.euid, inner.identity.egid, inner.fs.umask));
+
+        let now = time::current_time();
+        {
+            let mut inner = inode.inner.lock();
+            inner.disk_inode.mode = InodeMode(0o100000 | (mode & 0o777 & !umask));
+            inner.disk_inode.user_id = euid;
+            inner.disk_inode.group_id = egid as u8;
+            inner.disk_inode.link_count = 1;
+            inner.disk_inode.modification_time = now;
+            inner.access_time = now;
+            inner.change_time = now;
+            inner.is_dirty = true;
+        }
+
+        if let Err(e) = self.add_entry(name, inode_number) {
+            let mut inner = inode.inner.lock();
+            inner.disk_inode.link_count = 0;
+            inner.is_dirty = true;
+            return Err(e);
+        }
+
+        Ok(inode)
     }
 
     /// Remove the directory entry matching `name` and return its inode number.
