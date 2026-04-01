@@ -4,6 +4,7 @@
 //! resolution code can reuse one structured view of the input path.
 
 use alloc::sync::Arc;
+use bitflags::bitflags;
 
 use crate::{
     fs::{
@@ -12,7 +13,7 @@ use crate::{
         minix::{Inode, InodeId},
         mount::MOUNT_TABLE,
     },
-    task,
+    task, time,
 };
 
 /// Resolve one pathname to its final inode.
@@ -35,8 +36,11 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
     };
 
     for component in parsed_path.components() {
-        // Every traversed pathname component must start from a directory inode.
-        if current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+        // Every traversed pathname component must start from a directory inode
+        // that the current task has search (execute) permission on.
+        if current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+            || !check_permission(&current_inode, AccessMask::MAY_EXEC)
+        {
             return None;
         }
 
@@ -59,6 +63,13 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
         && current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
     {
         return None;
+    }
+
+    // Update access time on the final inode, matching original namei() behaviour.
+    {
+        let mut inner = current_inode.inner.lock();
+        inner.access_time = time::current_time();
+        inner.is_dirty = true;
     }
 
     Some(current_inode)
@@ -87,6 +98,46 @@ fn resolve_parent_directory(
         device: parent_lookup_base.id.device,
         inode_number: parent_inode_number,
     }))
+}
+
+bitflags! {
+    /// Permission mask bits matching the original kernel's `MAY_*` constants.
+    struct AccessMask: u16 {
+        const MAY_EXEC  = 1;
+        const MAY_WRITE = 2;
+        const MAY_READ  = 4;
+    }
+}
+
+/// Check whether the current task has `mask` access to `inode`.
+///
+/// Returns `true` when the access is allowed.  The check considers the
+/// effective uid/gid of the running process and falls back to superuser
+/// override (euid == 0).
+///
+/// A deleted file (link_count == 0) is inaccessible to everyone, including
+/// the superuser, matching the original kernel behaviour.
+fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
+    let inner = inode.inner.lock();
+    let disk = &inner.disk_inode;
+
+    if disk.link_count == 0 {
+        return false;
+    }
+
+    let (euid, egid) = task::current_task()
+        .pcb
+        .inner
+        .exclusive(|inner| (inner.identity.euid, inner.identity.egid));
+
+    let mut mode = disk.mode.0;
+    if euid == disk.user_id {
+        mode >>= 6;
+    } else if egid == disk.group_id as u16 {
+        mode >>= 3;
+    }
+
+    (mode & mask.bits() & 0o7) == mask.bits() || euid == 0
 }
 
 /// One parsed pathname that preserves high-level path semantics.
