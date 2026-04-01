@@ -2,6 +2,12 @@
 
 use core::arch::asm;
 
+// Standard CMOS address/data ports used by the RTC and other legacy firmware
+// configuration registers.
+const CMOS_ADDRESS_PORT: u16 = 0x70;
+const CMOS_DATA_PORT: u16 = 0x71;
+const CMOS_NMI_DISABLE_FLAG: u8 = 0x80;
+
 /// Write a byte to the specified I/O port.
 #[inline]
 pub fn outb(value: u8, port: u16) {
@@ -62,6 +68,16 @@ pub fn inb_p(port: u16) -> u8 {
         );
     }
     value
+}
+
+/// Read a byte from the specified CMOS register.
+///
+/// The register index is written with the NMI-disable bit set, matching the
+/// early-kernel access pattern used while probing legacy firmware state.
+#[inline]
+pub fn read_cmos(register: u8) -> u8 {
+    outb_p(CMOS_NMI_DISABLE_FLAG | register, CMOS_ADDRESS_PORT);
+    inb_p(CMOS_DATA_PORT)
 }
 
 /// Read one PIO word stream from the specified I/O port.

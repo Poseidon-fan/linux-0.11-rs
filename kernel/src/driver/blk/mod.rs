@@ -1,6 +1,4 @@
 pub mod hd;
-#[cfg(feature = "ramdisk")]
-pub mod ramdisk;
 
 use core::ptr::NonNull;
 

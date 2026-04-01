@@ -33,14 +33,16 @@ global_asm!(include_str!("boot/head.s"), options(att_syntax));
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main() -> ! {
     let ext_mem_k = {
-        /// BIOS extended memory info address (set up by setup.s).
+        // BIOS extended memory info address (set up by setup.s).
         const EXT_MEM_K_ADDR: u32 = 0x90002;
         unsafe { core::ptr::read_volatile(EXT_MEM_K_ADDR as *const u16) }
     };
     driver::set_root_dev({
+        // BIOS root device address (set up by setup.s).
         const ROOT_DEV_ADDR: u32 = 0x901FC;
         DevNum(unsafe { core::ptr::read_volatile(ROOT_DEV_ADDR as *const u16) })
     });
+
     let memory_end = ((1 << 20) + ((ext_mem_k as u32) << 10)) & 0xfffff000;
     let memory_end = memory_end.min(16 * 1024 * 1024);
     let buffer_memory_end = match memory_end {
@@ -48,10 +50,7 @@ pub extern "C" fn rust_main() -> ! {
         m if m > 6 * 1024 * 1024 => 3 * 1024 * 1024,
         _ => panic!("memory must be > 6MB"),
     };
-    let mut main_memory_start = buffer_memory_end;
-
-    #[cfg(feature = "ramdisk")]
-    main_memory_start += driver::blk::ramdisk::init(main_memory_start) as u32;
+    let main_memory_start = buffer_memory_end;
 
     logging::init();
     println!("logging initialized");
@@ -73,7 +72,7 @@ pub extern "C" fn rust_main() -> ! {
 }
 
 fn user_init() -> ! {
-    /// Boot-time location of the BIOS drive table.
+    // Boot-time location of the BIOS drive table (set up by setup.s).
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
     user_lib::setup(DRIVE_INFO_ADDR).unwrap();
 

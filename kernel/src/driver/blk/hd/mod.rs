@@ -6,7 +6,7 @@ use log::info;
 use crate::{
     driver::blk::hd::controller::{AtaTaskFile, ControllerCommand, StatusFlags},
     fs::buffer::{self, BufferKey},
-    pmio::{inb_p, outb, outb_p, port_write_words},
+    pmio::{self, inb_p, outb, outb_p, port_write_words},
     println,
     segment::{get_fs_byte, get_fs_word},
     sync::KernelCell,
@@ -207,10 +207,7 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
         unsafe { DriveGeometry::from_bios_entry(addr) }.map(DriveDescriptor::from_geometry)
     });
 
-    let cmos_disks = {
-        outb_p(0x80 | CMOS_DISK_TYPE_REGISTER, 0x70);
-        inb_p(0x71)
-    };
+    let cmos_disks = pmio::read_cmos(CMOS_DISK_TYPE_REGISTER);
     let drive_count = match (cmos_disks & 0xF0 != 0, cmos_disks & 0x0F != 0) {
         (false, _) => 0,
         (true, false) => 1,
