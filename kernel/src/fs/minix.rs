@@ -9,6 +9,8 @@ use log::error;
 
 use lazy_static::lazy_static;
 
+use user_lib::fs::Stat;
+
 use crate::{
     driver::DevNum,
     fs::{
@@ -102,6 +104,25 @@ impl Inode {
             fs.lock()
                 .write_inode(self.id.inode_number, &inner.disk_inode);
             inner.is_dirty = false;
+        }
+    }
+
+    /// Build a `Stat` structure from this inode's metadata.
+    pub fn stat(&self) -> Stat {
+        let inner = self.inner.lock();
+        let disk = &inner.disk_inode;
+        Stat {
+            st_dev: self.id.device.0,
+            st_ino: self.id.inode_number.0,
+            st_mode: disk.mode.0,
+            st_nlink: disk.link_count,
+            st_uid: disk.user_id,
+            st_gid: disk.group_id,
+            st_rdev: 0,
+            st_size: disk.size,
+            st_atime: inner.access_time,
+            st_mtime: disk.modification_time,
+            st_ctime: inner.change_time,
         }
     }
 

@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 use user_lib::fs::{AccessMode, OpenOptions};
 
-use user_lib::fs::Whence;
+use user_lib::fs::{Stat, Whence};
 
 use crate::{
     fs::{file::File, minix::Inode},
@@ -49,6 +49,10 @@ impl File for InodeFile {
         let bytes_read = inner.inode.read_at(inner.offset, buffer)?;
         inner.offset += bytes_read;
         Ok(bytes_read)
+    }
+
+    fn stat(&self) -> Result<Stat, u32> {
+        Ok(self.inner.lock().inode.stat())
     }
 
     fn write(&self, buffer: &[u8]) -> Result<usize, u32> {

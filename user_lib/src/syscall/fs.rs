@@ -89,9 +89,28 @@ impl SyscallArg for Whence {
     }
 }
 
+/// File metadata structure matching the Linux 0.11 `struct stat` ABI.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Stat {
+    pub st_dev: u16,
+    pub st_ino: u16,
+    pub st_mode: u16,
+    pub st_nlink: u8,
+    pub st_uid: u16,
+    pub st_gid: u8,
+    pub st_rdev: u16,
+    pub st_size: u32,
+    pub st_atime: u32,
+    pub st_mtime: u32,
+    pub st_ctime: u32,
+}
+
 use_syscall!(crate::syscall::NR_OPEN => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
 use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) -> u32);
 use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);
 use_syscall!(crate::syscall::NR_CLOSE => close(fd: u32) -> u32);
 use_syscall!(crate::syscall::NR_LSEEK => lseek(fd: u32, offset: i32, whence: Whence) -> u32);
 use_syscall!(crate::syscall::NR_UNLINK => unlink(path: *const u8) -> u32);
+use_syscall!(crate::syscall::NR_STAT => stat(path: *const u8, buf: *mut Stat) -> u32);
+use_syscall!(crate::syscall::NR_FSTAT => fstat(fd: u32, buf: *mut Stat) -> u32);

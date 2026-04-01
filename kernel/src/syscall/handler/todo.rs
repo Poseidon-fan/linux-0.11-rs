@@ -51,12 +51,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_STAT = 18,
-    fn sys_stat(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_MOUNT = 21,
     fn sys_mount(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -77,12 +71,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_PTRACE = 26,
     fn sys_ptrace(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_FSTAT = 28,
-    fn sys_fstat(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

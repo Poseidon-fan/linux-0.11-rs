@@ -1,7 +1,8 @@
 use alloc::sync::Arc;
 use alloc::vec;
+use core::mem;
 use linkme::distributed_slice;
-use user_lib::fs::{AccessMode, OpenFlags, OpenOptions, Whence};
+use user_lib::fs::{AccessMode, OpenFlags, OpenOptions, Stat, Whence};
 
 use crate::{
     define_syscall_handler,
@@ -201,6 +202,35 @@ define_syscall_handler!(
             .pcb
             .inner
             .exclusive(|inner| inner.fs.current_directory = Some(inode));
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_STAT = 18,
+    fn sys_stat(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, buf_ptr, _) = ctx.args();
+        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let stat = inode.stat();
+        let bytes = unsafe {
+            core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
+        };
+        segment::put_fs_bytes(bytes, buf_ptr as *mut u8);
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_FSTAT = 28,
+    fn sys_fstat(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (fd, buf_ptr, _) = ctx.args();
+        let file = get_file(fd)?;
+        let stat = file.stat()?;
+        let bytes = unsafe {
+            core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
+        };
+        segment::put_fs_bytes(bytes, buf_ptr as *mut u8);
         Ok(0)
     }
 );

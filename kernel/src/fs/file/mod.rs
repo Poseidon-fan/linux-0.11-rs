@@ -2,12 +2,13 @@ pub mod inode;
 #[allow(unused_imports)]
 pub use inode::InodeFile;
 
-use user_lib::fs::Whence;
+use user_lib::fs::{Stat, Whence};
 
 /// Generic opened file object in kernel.
 pub trait File: Send + Sync {
     fn read(&self, buffer: &mut [u8]) -> Result<usize, u32>;
     fn write(&self, buffer: &[u8]) -> Result<usize, u32>;
+    fn stat(&self) -> Result<Stat, u32>;
 
     /// Reposition the file offset. Returns the new absolute offset on success.
     ///
