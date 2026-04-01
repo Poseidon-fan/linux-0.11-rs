@@ -114,3 +114,5 @@ use_syscall!(crate::syscall::NR_LSEEK => lseek(fd: u32, offset: i32, whence: Whe
 use_syscall!(crate::syscall::NR_UNLINK => unlink(path: *const u8) -> u32);
 use_syscall!(crate::syscall::NR_STAT => stat(path: *const u8, buf: *mut Stat) -> u32);
 use_syscall!(crate::syscall::NR_FSTAT => fstat(fd: u32, buf: *mut Stat) -> u32);
+use_syscall!(crate::syscall::NR_DUP => dup(fd: u32) -> u32);
+use_syscall!(crate::syscall::NR_DUP2 => dup2(oldfd: u32, newfd: u32) -> u32);

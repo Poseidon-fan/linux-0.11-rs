@@ -245,6 +245,38 @@ define_syscall_handler!(
     }
 );
 
+define_syscall_handler!(
+    user_lib::NR_DUP = 41,
+    fn sys_dup(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (fd, _, _) = ctx.args();
+        let file = get_file(fd)?;
+        let new_fd = task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| inner.fs.add_file(file))
+            .ok_or(EMFILE)?;
+        Ok(new_fd as u32)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_DUP2 = 63,
+    fn sys_dup2(ctx: &SyscallContext) -> Result<u32, u32> {
+        let (oldfd, newfd, _) = ctx.args();
+        if oldfd == newfd {
+            // Verify oldfd is valid, then return it unchanged.
+            get_file(oldfd)?;
+            return Ok(newfd);
+        }
+        let file = get_file(oldfd)?;
+        task::current_task().pcb.inner.exclusive(|inner| {
+            let slot = inner.fs.open_files.get_mut(newfd as usize).ok_or(EBADF)?;
+            *slot = Some(file);
+            Ok(newfd)
+        })
+    }
+);
+
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
 fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()

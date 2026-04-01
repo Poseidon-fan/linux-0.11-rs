@@ -135,12 +135,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_DUP = 41,
-    fn sys_dup(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_PIPE = 42,
     fn sys_pipe(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -215,12 +209,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_USTAT = 62,
     fn sys_ustat(_ctx: &SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_DUP2 = 63,
-    fn sys_dup2(_ctx: &SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
