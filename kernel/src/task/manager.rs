@@ -7,11 +7,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use lazy_static::lazy_static;
 
 use crate::{
-    mm::space::{MemorySpace, TASK_LINEAR_SIZE},
+    mm::space::MemorySpace,
     segment::{KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
-    syscall::SyscallContext,
-    task::{self, task_struct::*},
+    task::task_struct::*,
 };
 
 pub const TASK_NUM: usize = 64;
@@ -32,157 +31,13 @@ pub struct TaskManager {
 }
 
 impl TaskManager {
-    pub fn fork(&mut self, ctx: &SyscallContext) -> Result<u32, ()> {
-        // 1. Find a free slot in task array.
-        let (slot, pid) = self.find_empty_process().ok_or(())?;
-
-        // 2. Allocate a new task page.
-        let mut new_task = Task::new().ok_or(())?;
-
-        // 3. Snapshot parent state and create child memory space by COW.
-        let parent_slot = task::current_slot();
-        let parent = self.tasks[parent_slot]
-            .as_ref()
-            .expect("fork: current task missing");
-        let parent_pid = parent.pcb.pid;
-        let (
-            parent_priority,
-            parent_pgrp,
-            parent_session,
-            parent_identity,
-            parent_tty,
-            parent_file_system,
-            parent_ldt,
-            parent_signal_info,
-            parent_mem_layout,
-            child_memory_space,
-        ) = parent.pcb.inner.exclusive(|parent_inner| {
-            let old_base = parent_inner.ldt.data_segment().base();
-            let code_base = parent_inner.ldt.code_segment().base();
-            assert_eq!(old_base, code_base, "separate I&D not supported");
-
-            let code_limit = parent_inner.ldt.code_segment().byte_limit();
-            let data_limit = parent_inner.ldt.data_segment().byte_limit();
-            assert!(
-                data_limit >= code_limit,
-                "bad data_limit: data < code (0x{:x} < 0x{:x})",
-                data_limit,
-                code_limit
-            );
-
-            let child_memory_space = parent_inner
-                .memory_space
-                .as_ref()
-                .expect("parent memory space is none, unexpected error")
-                .cow_copy(slot, data_limit)
-                .map_err(|_| ())?;
-
-            Ok::<_, ()>((
-                parent_inner.sched.priority,
-                parent_inner.relation.pgrp,
-                parent_inner.relation.session,
-                parent_inner.identity,
-                parent_inner.tty,
-                parent_inner.fs.clone(),
-                parent_inner.ldt.clone(),
-                parent_inner.signal_info.clone(),
-                parent_inner.mem_layout,
-                child_memory_space,
-            ))
-        })?;
-
-        // 4. Initialize PCB fields.
-        new_task.pcb = TaskControlBlock::new(slot, pid, TaskControlBlockInner {
-            sched: TaskSchedInfo {
-                state: TaskState::Uninterruptible,
-                counter: parent_priority,
-                priority: parent_priority,
-            },
-            relation: TaskRelationInfo {
-                father: parent_pid,
-                pgrp: parent_pgrp,
-                session: parent_session,
-                leader: 0,
-            },
-            identity: parent_identity,
-            acct: TaskAcctInfo {
-                utime: 0,
-                stime: 0,
-                cutime: 0,
-                cstime: 0,
-            },
-            memory_space: None, // empty, set below after LDT base is adjusted
-            mem_layout: parent_mem_layout,
-            exit_code: 0,
-            tty: parent_tty,
-            fs: parent_file_system,
-            ldt: parent_ldt,
-            tss: TaskStateSegment {
-                back_link: 0,
-                esp0: new_task.stack_top(),
-                ss0: KERNEL_DS.as_u32(),
-                esp1: 0,
-                ss1: 0,
-                esp2: 0,
-                ss2: 0,
-                cr3: unsafe { &pg_dir as *const u8 as u32 },
-                eip: ctx.eip,
-                eflags: ctx.eflags,
-                eax: 0, // child returns 0 from fork
-                ecx: ctx.ecx,
-                edx: ctx.edx,
-                ebx: ctx.ebx,
-                esp: ctx.user_esp,
-                ebp: ctx.ebp,
-                esi: ctx.esi,
-                edi: ctx.edi,
-                es: ctx.es & 0xffff,
-                cs: ctx.cs & 0xffff,
-                ss: ctx.user_ss & 0xffff,
-                ds: ctx.ds & 0xffff,
-                fs: ctx.fs & 0xffff,
-                gs: ctx.gs & 0xffff,
-                ldt: crate::segment::ldt_selector(slot as u16).as_u32(),
-                trace_bitmap: 0x8000_0000,
-                i387: I387Struct::empty(),
-            },
-            signal_info: TaskSignalInfo {
-                signal: 0,
-                blocked: parent_signal_info.blocked,
-                sigaction: parent_signal_info.sigaction.clone(),
-                alarm: 0,
-            },
-        });
-
-        // 5. Set child LDT base, install COW memory, and prepare descriptor addresses.
-        let new_base = slot as u32 * TASK_LINEAR_SIZE;
-        let (tss_addr, ldt_addr) = new_task.pcb.inner.exclusive(|child_inner| {
-            child_inner.ldt.set_base(new_base);
-            child_inner.memory_space = Some(child_memory_space);
-            child_inner.sched.state = TaskState::Running;
-            (
-                &child_inner.tss as *const TaskStateSegment as u32,
-                child_inner.ldt.as_ptr(),
-            )
-        });
-
-        // 6. Install TSS and LDT descriptors in GDT for the new task.
-        super::gdt::set_tss_desc(slot as u16, tss_addr);
-        super::gdt::set_ldt_desc(slot as u16, ldt_addr);
-
-        // 7. Insert into task table as runnable.
-        self.tasks[slot] = Some(Arc::new(new_task));
-
-        Ok(pid)
-    }
-
     /// Select the best runnable task.
     ///
     /// Returns:
     /// - `Some(next)` if caller should perform a hardware switch.
     /// - `None` if current task remains unchanged.
     pub(super) fn select_next_task(&self) -> Option<Arc<Task>> {
-        let current_slot = task::current_slot();
+        let current_slot = super::current_slot();
         loop {
             // Pick a runnable non-idle task with the largest counter.
             // For equal counters, prefer the higher slot index.
@@ -242,7 +97,7 @@ impl TaskManager {
     ///
     /// Returns `(slot, pid)` on success.
     /// Returns `None` if no empty slot is available.
-    fn find_empty_process(&self) -> Option<(usize, u32)> {
+    pub(crate) fn find_empty_process(&self) -> Option<(usize, u32)> {
         // Step 1: find a unique PID not used by any existing task.
         let pid = 'retry: loop {
             let previous = self

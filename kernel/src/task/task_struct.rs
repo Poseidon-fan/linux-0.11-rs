@@ -274,6 +274,7 @@ pub struct TaskIdentityInfo {
 }
 
 /// CPU accounting fields.
+#[derive(Default)]
 pub struct TaskAcctInfo {
     /// User-mode CPU time in timer ticks.
     pub utime: u32,

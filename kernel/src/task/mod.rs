@@ -36,7 +36,7 @@ unsafe extern "C" {
     fn system_call();
 }
 
-pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY};
+pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 
 pub const HZ: u32 = 100;
 const LATCH: u16 = (1193180 / HZ) as u16;
