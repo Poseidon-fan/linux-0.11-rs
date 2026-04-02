@@ -345,6 +345,20 @@ define_syscall_handler!(
     }
 );
 
+define_syscall_handler!(
+    user_lib::NR_CREAT = 8,
+    fn sys_creat(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        // creat(path, mode) == open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)
+        // path_ptr is already in ctx.ebx, just rewrite flags and mode args.
+        let (_, mode, _) = ctx.args();
+        ctx.ecx = user_lib::fs::AccessMode::WriteOnly as u32
+            | user_lib::fs::OpenOptions::CREATE.bits()
+            | user_lib::fs::OpenOptions::TRUNCATE.bits();
+        ctx.edx = mode;
+        SYSCALL_TABLE[user_lib::NR_OPEN as usize](ctx)
+    }
+);
+
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
 fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()

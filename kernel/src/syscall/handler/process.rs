@@ -323,6 +323,45 @@ define_syscall_handler!(
     }
 );
 
+define_syscall_handler!(
+    user_lib::NR_NICE = 34,
+    fn sys_nice(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (increment, _, _) = ctx.args();
+        task::current_task().pcb.inner.exclusive(|inner| {
+            if inner.sched.priority > increment {
+                inner.sched.priority -= increment;
+            }
+        });
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_BRK = 45,
+    fn sys_brk(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (end_data_seg, _, _) = ctx.args();
+        Ok(task::current_task().pcb.inner.exclusive(|inner| {
+            let layout = &mut inner.mem_layout;
+            if end_data_seg >= layout.end_code && end_data_seg < layout.start_stack - 16384 {
+                layout.brk = end_data_seg;
+            }
+            layout.brk
+        }))
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_UMASK = 60,
+    fn sys_umask(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (mask, _, _) = ctx.args();
+        Ok(task::current_task().pcb.inner.exclusive(|inner| {
+            let old = inner.fs.umask as u32;
+            inner.fs.umask = (mask & 0o777) as u16;
+            old
+        }))
+    }
+);
+
 // ---------------------------------------------------------------------------
 // Signal syscalls
 // ---------------------------------------------------------------------------

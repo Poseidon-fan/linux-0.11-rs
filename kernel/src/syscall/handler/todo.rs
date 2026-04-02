@@ -9,12 +9,6 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_CREAT = 8,
-    fn sys_creat(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_LINK = 9,
     fn sys_link(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -93,12 +87,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_NICE = 34,
-    fn sys_nice(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_FTIME = 35,
     fn sys_ftime(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -125,12 +113,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_PROF = 44,
     fn sys_prof(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_BRK = 45,
-    fn sys_brk(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
@@ -173,12 +155,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_ULIMIT = 58,
     fn sys_ulimit(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_UMASK = 60,
-    fn sys_umask(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );
