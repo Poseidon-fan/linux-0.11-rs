@@ -6,11 +6,11 @@ use crate::syscall::SYSCALL_TABLE;
 use crate::{
     define_syscall_handler, mm,
     segment::uaccess,
-    signal::{SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
+    signal::{NSIG, SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
     syscall::{EAGAIN, ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
     task::{
         self, HZ, TASK_MANAGER, is_super,
-        task_struct::{NSIG, SigAction, Task, TaskState},
+        task_struct::{SigAction, Task, TaskState},
     },
     time,
 };

@@ -12,6 +12,7 @@ use crate::{
         space::MemorySpace,
     },
     segment::Descriptor,
+    signal::NSIG,
     sync::KernelCell,
 };
 
@@ -283,9 +284,6 @@ pub struct TaskAcctInfo {
     /// Aggregated waited child kernel-mode CPU ticks.
     pub cstime: u32,
 }
-
-/// Number of signals supported.
-pub const NSIG: usize = 32;
 
 /// Per-signal handler configuration (16 bytes).
 ///

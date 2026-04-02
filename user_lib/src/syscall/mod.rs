@@ -35,6 +35,7 @@
 //! `errno` code.
 
 pub mod fs;
+pub mod process;
 
 use core::arch::asm;
 
