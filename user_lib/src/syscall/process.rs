@@ -1,3 +1,11 @@
+use crate::use_syscall;
+
+use_syscall!(crate::syscall::NR_EXECVE => execve(
+    filename: *const u8,
+    argv: *const *const u8,
+    envp: *const *const u8
+) -> u32);
+
 /// Number of signals supported (signals 1–32).
 pub const NSIG: usize = 32;
 

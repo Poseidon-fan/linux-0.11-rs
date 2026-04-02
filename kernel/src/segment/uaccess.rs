@@ -37,6 +37,21 @@ pub fn read_u16(addr: *const u16) -> u16 {
     v
 }
 
+/// Reads a `u32` from `addr` through the FS segment.
+#[inline]
+pub fn read_u32(addr: *const u32) -> u32 {
+    let v: u32;
+    unsafe {
+        asm!(
+            "movl %fs:({}), {}",
+            in(reg) addr as u32,
+            out(reg) v,
+            options(nomem, nostack, att_syntax)
+        );
+    }
+    v
+}
+
 /// Writes a `u8` to `addr` through the FS segment.
 #[inline]
 pub fn write_u8(val: u8, addr: *mut u8) {

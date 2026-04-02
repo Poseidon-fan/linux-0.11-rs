@@ -1,7 +1,7 @@
 pub mod address;
 pub mod frame;
 mod heap;
-mod page;
+pub(crate) mod page;
 pub(crate) mod page_fault;
 pub mod space;
 

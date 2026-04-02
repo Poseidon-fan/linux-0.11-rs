@@ -76,7 +76,10 @@ fn user_init() -> ! {
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
     user_lib::setup(DRIVE_INFO_ADDR).unwrap();
 
-    user_lib::test(c"/usr/root/hello.c".as_ptr() as *const u8).unwrap();
+    let argv: [*const u8; 2] = [c"update".as_ptr().cast(), core::ptr::null()];
+    let envp: [*const u8; 1] = [core::ptr::null()];
+    user_lib::process::execve(c"/bin/update".as_ptr().cast(), argv.as_ptr(), envp.as_ptr())
+        .unwrap();
 
     user_lib::exit().unwrap();
 

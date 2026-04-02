@@ -25,7 +25,7 @@ use crate::{
 
 define_syscall_handler!(
     user_lib::NR_SETUP = 0,
-    fn sys_setup(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_setup(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (drive_info_addr, _, _) = ctx.args();
         hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| EPERM)?;
         fs::mount_root();
@@ -35,7 +35,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_OPEN = 5,
-    fn sys_open(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_open(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
         let flags = OpenFlags::from_raw(raw_flags);
@@ -109,7 +109,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_READ = 3,
-    fn sys_read(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_read(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
 
@@ -123,7 +123,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_WRITE = 4,
-    fn sys_write(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_write(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
 
@@ -137,7 +137,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_CLOSE = 6,
-    fn sys_close(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_close(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
         task::current_task().pcb.inner.exclusive(|inner| {
             let slot = inner.fs.open_files.get_mut(fd as usize).ok_or(EBADF)?;
@@ -152,7 +152,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_UNLINK = 10,
-    fn sys_unlink(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_unlink(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
@@ -186,7 +186,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_CHDIR = 12,
-    fn sys_chdir(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_chdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
@@ -208,7 +208,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_MKDIR = 39,
-    fn sys_mkdir(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_mkdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
@@ -230,7 +230,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_RMDIR = 40,
-    fn sys_rmdir(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_rmdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
@@ -276,7 +276,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_STAT = 18,
-    fn sys_stat(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_stat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
         let pathname = uaccess::read_string(path_ptr as *const u8, 256);
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
@@ -291,7 +291,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_FSTAT = 28,
-    fn sys_fstat(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, _) = ctx.args();
         let file = get_file(fd)?;
         let stat = file.stat()?;
@@ -305,7 +305,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_LSEEK = 19,
-    fn sys_lseek(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, offset, whence) = ctx.args();
         let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
         let file = get_file(fd)?;
@@ -315,7 +315,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_DUP = 41,
-    fn sys_dup(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_dup(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
         let new_fd = task::current_task()
@@ -329,7 +329,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::NR_DUP2 = 63,
-    fn sys_dup2(ctx: &SyscallContext) -> Result<u32, u32> {
+    fn sys_dup2(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (oldfd, newfd, _) = ctx.args();
         if oldfd == newfd {
             // Verify oldfd is valid, then return it unchanged.

@@ -122,6 +122,28 @@ impl MemorySpace {
         Ok(())
     }
 
+    /// Map a pre-allocated physical frame at the given linear page address.
+    ///
+    /// Ownership of `frame` is transferred into this memory space. If the
+    /// target PDE slot is outside this space's range or a page table cannot
+    /// be allocated, the frame is returned to the caller via `Err`.
+    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), PhysFrame> {
+        if self.ensure_page_table(lin_page.pde_index()).is_err() {
+            return Err(frame);
+        }
+        let pte = match self.find_pte(lin_page) {
+            Some(pte) => pte,
+            None => return Err(frame),
+        };
+        let ppn = frame.ppn;
+        *pte = PageTableEntry::new(
+            ppn,
+            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
+        );
+        self.data_frames.insert(lin_page, frame);
+        Ok(())
+    }
+
     /// Find the mutable PTE for a linear page.
     ///
     /// Returns `None` when the page is outside this memory space range or

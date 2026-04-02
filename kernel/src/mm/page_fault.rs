@@ -48,13 +48,20 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
                 return;
             }
 
-            let loaded = task::current_task().pcb.inner.exclusive(|inner| {
-                inner
-                    .memory_space
-                    .as_mut()
-                    .map(|ms| ms.map_demand_page(fault_page, inode, addr_offset, end_data))
-                    .unwrap_or(false)
-            });
+            // Take the MemorySpace out so the borrow is released before
+            // `map_demand_page` does disk I/O (which may sleep/schedule).
+            let mut space = task::current_task()
+                .pcb
+                .inner
+                .exclusive(|inner| inner.memory_space.take());
+            let loaded = space
+                .as_mut()
+                .map(|ms| ms.map_demand_page(fault_page, inode, addr_offset, end_data))
+                .unwrap_or(false);
+            task::current_task()
+                .pcb
+                .inner
+                .exclusive(|inner| inner.memory_space = space);
             if loaded {
                 return;
             }
