@@ -22,6 +22,13 @@ pub fn startup_time() -> u32 {
     STARTUP_TIMESTAMP.load(Ordering::Relaxed)
 }
 
+/// Updates the boot timestamp so that [`current_time`] returns the caller's
+/// intended wall-clock value.
+#[inline]
+pub fn set_startup_time(value: u32) {
+    STARTUP_TIMESTAMP.store(value, Ordering::Relaxed);
+}
+
 /// Returns the current Unix timestamp based on the boot timestamp and timer ticks.
 #[inline]
 pub fn current_time() -> u32 {

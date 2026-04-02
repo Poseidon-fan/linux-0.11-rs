@@ -106,6 +106,14 @@ pub struct Stat {
     pub st_ctime: u32,
 }
 
+/// Time values for [`utime`], matching the POSIX `struct utimbuf` ABI.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TimeUpdate {
+    pub access_time: u32,
+    pub modification_time: u32,
+}
+
 use_syscall!(crate::syscall::NR_OPEN => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
 use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) -> u32);
 use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);

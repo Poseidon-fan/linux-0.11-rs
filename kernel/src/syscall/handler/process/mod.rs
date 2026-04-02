@@ -577,6 +577,19 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
+    user_lib::NR_STIME = 25,
+    fn sys_stime(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        if !is_super() {
+            return Err(EPERM);
+        }
+        let (tptr, _, _) = ctx.args();
+        let new_time = uaccess::read_u32(tptr as *const u32);
+        time::set_startup_time(new_time - task::jiffies() / HZ);
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
     user_lib::NR_TIMES = 43,
     fn sys_times(ctx: &mut SyscallContext) -> Result<u32, u32> {
         // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)

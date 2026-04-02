@@ -422,6 +422,32 @@ define_syscall_handler!(
     }
 );
 
+define_syscall_handler!(
+    user_lib::NR_UTIME = 30,
+    fn sys_utime(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, times_ptr, _) = ctx.args();
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+
+        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+
+        let (actime, modtime) = if times_ptr != 0 {
+            let base = times_ptr as *const u32;
+            let actime = uaccess::read_u32(base);
+            let modtime = uaccess::read_u32(unsafe { base.add(1) });
+            (actime, modtime)
+        } else {
+            let now = time::current_time();
+            (now, now)
+        };
+
+        let mut inner = inode.inner.lock();
+        inner.access_time = actime;
+        inner.disk_inode.modification_time = modtime;
+        inner.is_dirty = true;
+        Ok(0)
+    }
+);
+
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
 fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()

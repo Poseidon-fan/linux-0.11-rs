@@ -30,18 +30,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_STIME = 25,
-    fn sys_stime(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_UTIME = 30,
-    fn sys_utime(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_ACCESS = 33,
     fn sys_access(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
