@@ -13,7 +13,7 @@ use crate::{
         get_inode,
         layout::{InodeMode, InodeType},
         minix::InodeId,
-        path::{self, AccessMask, check_permission},
+        path::{self, AccessMask, check_permission, check_permission_as},
     },
     segment::uaccess,
     syscall::{
@@ -419,6 +419,28 @@ define_syscall_handler!(
         inner.disk_inode.group_id = gid as u8;
         inner.is_dirty = true;
         Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_ACCESS = 33,
+    fn sys_access(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, mode, _) = ctx.args();
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+
+        let inode = path::resolve_path(&pathname).ok_or(EACCES)?;
+        let mask = AccessMask::from_bits_truncate(mode as u16 & 0o7);
+
+        let (uid, gid) = task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| (inner.identity.uid, inner.identity.gid));
+
+        if check_permission_as(&inode, mask, uid, gid) {
+            Ok(0)
+        } else {
+            Err(EACCES)
+        }
     }
 );
 

@@ -146,6 +146,18 @@ bitflags! {
 /// A deleted file (link_count == 0) is inaccessible to everyone, including
 /// the superuser, matching the original kernel behaviour.
 pub(crate) fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
+    let (euid, egid) = task::current_task()
+        .pcb
+        .inner
+        .exclusive(|inner| (inner.identity.euid, inner.identity.egid));
+    check_permission_as(inode, mask, euid, egid)
+}
+
+/// Same as [`check_permission`] but with explicitly supplied uid/gid.
+///
+/// Used by `sys_access` which checks against the real uid/gid rather than
+/// the effective ones.
+pub(crate) fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) -> bool {
     let inner = inode.inner.lock();
     let disk = &inner.disk_inode;
 
@@ -153,19 +165,14 @@ pub(crate) fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
         return false;
     }
 
-    let (euid, egid) = task::current_task()
-        .pcb
-        .inner
-        .exclusive(|inner| (inner.identity.euid, inner.identity.egid));
-
     let mut mode = disk.mode.0;
-    if euid == disk.user_id {
+    if uid == disk.user_id {
         mode >>= 6;
-    } else if egid == disk.group_id as u16 {
+    } else if gid == disk.group_id as u16 {
         mode >>= 3;
     }
 
-    (mode & mask.bits() & 0o7) == mask.bits() || euid == 0
+    (mode & mask.bits() & 0o7) == mask.bits() || uid == 0
 }
 
 /// One parsed pathname that preserves high-level path semantics.
