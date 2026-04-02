@@ -8,11 +8,11 @@ use crate::{
     define_syscall_handler,
     driver::blk::hd,
     fs::{
-        self,
+        self, buffer,
         file::{File, InodeFile},
         get_inode,
         layout::{InodeMode, InodeType},
-        minix::InodeId,
+        minix::{INODE_TABLE, InodeId},
         path::{self, AccessMask, check_permission, check_permission_as},
     },
     segment::uaccess,
@@ -418,6 +418,15 @@ define_syscall_handler!(
         inner.disk_inode.user_id = uid as u16;
         inner.disk_inode.group_id = gid as u8;
         inner.is_dirty = true;
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_SYNC = 36,
+    fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32, u32> {
+        INODE_TABLE.lock().sync_inodes();
+        buffer::sync_buffers();
         Ok(0)
     }
 );

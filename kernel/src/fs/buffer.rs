@@ -487,10 +487,25 @@ fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
 }
 
 fn flush_dirty_victim(handle: &Arc<BufferHandle>) {
-    while handle.is_dirty() {
-        let _dev = handle.key().map(|buffer_key| buffer_key.dev);
+    if !handle.is_dirty() {
+        return;
+    }
+    blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(handle));
+    handle.io_lock.wait();
+}
 
-        // Dirty victims must be written back before they can be rebound.
-        todo!("buffer writeback not implemented");
+/// Write all dirty buffers back to disk.
+pub fn sync_buffers() {
+    let handles: alloc::vec::Vec<Arc<BufferHandle>> = BUFFER_MANAGER
+        .lock()
+        .buffer_index
+        .values()
+        .filter(|h| h.is_dirty())
+        .map(Arc::clone)
+        .collect();
+
+    for handle in handles {
+        blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(&handle));
+        handle.io_lock.wait();
     }
 }
