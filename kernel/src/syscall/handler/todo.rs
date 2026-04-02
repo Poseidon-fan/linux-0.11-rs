@@ -18,18 +18,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_CHMOD = 15,
-    fn sys_chmod(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_CHOWN = 16,
-    fn sys_chown(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_MOUNT = 21,
     fn sys_mount(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
@@ -80,12 +68,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_FCNTL = 55,
     fn sys_fcntl(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_CHROOT = 61,
-    fn sys_chroot(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
     }
 );

@@ -11,7 +11,7 @@ use crate::{
         self,
         file::{File, InodeFile},
         get_inode,
-        layout::InodeType,
+        layout::{InodeMode, InodeType},
         minix::InodeId,
         path::{self, AccessMask, check_permission},
     },
@@ -356,6 +356,69 @@ define_syscall_handler!(
             | user_lib::fs::OpenOptions::TRUNCATE.bits();
         ctx.edx = mode;
         SYSCALL_TABLE[user_lib::NR_OPEN as usize](ctx)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_CHROOT = 61,
+    fn sys_chroot(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, _, _) = ctx.args();
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+
+        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+            return Err(ENOTDIR);
+        }
+
+        task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| inner.fs.root_directory = Some(inode));
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_CHMOD = 15,
+    fn sys_chmod(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, mode, _) = ctx.args();
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+
+        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let euid = task::current_task()
+            .pcb
+            .inner
+            .exclusive(|inner| inner.identity.euid);
+        if euid != inode.inner.lock().disk_inode.user_id && !task::is_super() {
+            return Err(EACCES);
+        }
+
+        let mut inner = inode.inner.lock();
+        inner.disk_inode.mode = InodeMode(
+            (mode as u16 & InodeMode::FLAGS_MASK)
+                | (inner.disk_inode.mode.0 & !InodeMode::FLAGS_MASK),
+        );
+        inner.is_dirty = true;
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_CHOWN = 16,
+    fn sys_chown(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, uid, gid) = ctx.args();
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+
+        if !task::is_super() {
+            return Err(EACCES);
+        }
+
+        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let mut inner = inode.inner.lock();
+        inner.disk_inode.user_id = uid as u16;
+        inner.disk_inode.group_id = gid as u8;
+        inner.is_dirty = true;
+        Ok(0)
     }
 );
 
