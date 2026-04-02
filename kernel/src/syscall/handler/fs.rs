@@ -17,7 +17,7 @@ use crate::{
     },
     segment::uaccess,
     syscall::{
-        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, ENOTEMPTY, EPERM,
+        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, ENOTEMPTY, EPERM, EXDEV,
         SYSCALL_TABLE, context::SyscallContext,
     },
     task, time,
@@ -147,6 +147,53 @@ define_syscall_handler!(
             *slot = None;
             Ok(0)
         })
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_LINK = 9,
+    fn sys_link(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (oldname_ptr, newname_ptr, _) = ctx.args();
+        let oldname = uaccess::read_string(oldname_ptr as *const u8, 256);
+        let newname = uaccess::read_string(newname_ptr as *const u8, 256);
+
+        // Resolve old file
+        let old_inode = path::resolve_path(&oldname).ok_or(ENOENT)?;
+        if old_inode.inner.lock().disk_inode.mode.file_type() == InodeType::Directory {
+            return Err(EPERM);
+        }
+
+        // Resolve parent directory of new path
+        let (dir, basename) = path::resolve_parent(&newname).ok_or(EACCES)?;
+        if basename.is_empty() {
+            return Err(EACCES);
+        }
+
+        // Must be same device
+        if dir.id.device != old_inode.id.device {
+            return Err(EXDEV);
+        }
+
+        // Check write permission on parent directory
+        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+            return Err(EACCES);
+        }
+
+        // New name must not already exist
+        if dir.lookup(basename)?.is_some() {
+            return Err(EEXIST);
+        }
+
+        // Add directory entry pointing to old inode
+        dir.add_entry(basename, old_inode.id.inode_number)?;
+
+        // Increment link count
+        let mut inner = old_inode.inner.lock();
+        inner.disk_inode.link_count += 1;
+        inner.change_time = time::current_time();
+        inner.is_dirty = true;
+
+        Ok(0)
     }
 );
 

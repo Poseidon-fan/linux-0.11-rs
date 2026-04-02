@@ -6,12 +6,6 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_LINK = 9,
-    fn sys_link(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_MKNOD = 14,
     fn sys_mknod(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
