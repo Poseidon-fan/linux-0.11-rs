@@ -1,8 +1,3 @@
-//! Blocking mutex built on top of [`BusyLock`] and [`KernelCell`].
-//!
-//! The underlying sleep/wakeup mechanics live in [`BusyLock`], while this
-//! layer adds owner tracking and RAII access to a protected value.
-
 use core::{
     cell::UnsafeCell,
     marker::PhantomData,
@@ -14,45 +9,31 @@ use crate::{
     task,
 };
 
-/// A task-blocking mutex for single-core kernel code.
+/// Owner-tracked sleeping mutex.
 ///
-/// # Design
+/// Built on [`BusyLock`] for sleeping and [`KernelCell`] for owner tracking.
+/// Detects recursive locking and unlock-by-non-owner.
 ///
-/// - The sleepable lock state lives in [`BusyLock`].
-/// - Owner tracking is serialized by [`KernelCell`].
-/// - The protected value itself lives in [`UnsafeCell`] and is only accessed
-///   while the mutex is held.
-///
-/// # Constraints
-///
-/// - This mutex is intended for task context after `task::init()`.
-/// - Acquisition may sleep, so callers must not hold a `KernelCell::exclusive`
-///   critical section when calling [`lock`](Self::lock).
-/// - Interrupt handlers must not acquire this mutex.
+/// [`lock`](Self::lock) may sleep, so it must not be called while holding
+/// a [`KernelCell`] borrow.
 pub struct Mutex<T> {
     lock: BusyLock,
     owner_slot: KernelCell<Option<usize>>,
     value: UnsafeCell<T>,
 }
 
-// SAFETY: `Mutex` serializes mutable access to `value`. Sharing the
-// mutex between tasks is sound when `T` can be transferred across task
-// boundaries.
-unsafe impl<T: Send> Sync for Mutex<T> {}
-// SAFETY: The mutex contains no task-local resources; ownership of `T`
-// may move with the mutex as long as `T: Send`.
-unsafe impl<T: Send> Send for Mutex<T> {}
-
-/// RAII guard returned by [`Mutex::lock`].
-#[must_use = "holding the guard keeps the mutex locked; dropping it unlocks"]
+#[must_use = "dropping the guard unlocks the mutex"]
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
     _marker: PhantomData<&'a mut T>,
     _not_send: PhantomData<*mut ()>,
 }
 
+// SAFETY: All access to `value` is serialized by the lock.
+unsafe impl<T: Send> Sync for Mutex<T> {}
+unsafe impl<T: Send> Send for Mutex<T> {}
+
 impl<T> Mutex<T> {
-    /// Create one unlocked mutex that protects `value`.
     pub const fn new(value: T) -> Self {
         Self {
             lock: BusyLock::new(),
@@ -61,25 +42,26 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// Acquire the mutex, sleeping until it becomes available.
+    /// Acquires the mutex, sleeping until it becomes available.
     ///
     /// # Panics
     ///
-    /// Panics if called while already inside `KernelCell::exclusive`, because
-    /// contended acquisition may sleep and reschedule.
+    /// Panics on recursive locking or if called inside a [`KernelCell`] borrow.
     pub fn lock(&self) -> MutexGuard<'_, T> {
         assert_can_schedule("Mutex::lock");
 
         let current_slot = task::current_slot();
-        self.owner_slot.exclusive(|owner_slot| {
-            if *owner_slot == Some(current_slot) {
-                panic!("Mutex::lock recursive acquisition");
-            }
+        self.owner_slot.exclusive(|slot| {
+            assert_ne!(
+                *slot,
+                Some(current_slot),
+                "Mutex::lock recursive acquisition"
+            );
         });
         self.lock.acquire();
-        self.owner_slot.exclusive(|owner_slot| {
-            assert!(owner_slot.is_none(), "Mutex::lock owner slot already set");
-            *owner_slot = Some(current_slot);
+        self.owner_slot.exclusive(|slot| {
+            assert!(slot.is_none(), "Mutex::lock owner slot already set");
+            *slot = Some(current_slot);
         });
         MutexGuard {
             mutex: self,
@@ -88,63 +70,11 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// Try to acquire the mutex without sleeping.
-    ///
-    /// Returns `None` if another task currently holds the mutex.
-    ///
-    /// # Panics
-    ///
-    /// Panics on recursive acquisition by the same task.
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        let current_slot = task::current_slot();
-        let owner_slot = self.owner_slot.exclusive(|owner_slot| *owner_slot);
-        if owner_slot == Some(current_slot) {
-            panic!("Mutex::try_lock recursive acquisition");
-        }
-        if !self.lock.try_acquire() {
-            return None;
-        }
-        self.owner_slot.exclusive(|owner_slot| {
-            assert!(
-                owner_slot.is_none(),
-                "Mutex::try_lock owner slot already set"
-            );
-            *owner_slot = Some(current_slot);
-        });
-        Some(MutexGuard {
-            mutex: self,
-            _marker: PhantomData,
-            _not_send: PhantomData,
-        })
-    }
-
-    /// Execute `f` while holding the mutex.
-    ///
-    /// This convenience wrapper matches the closure-heavy style already used
-    /// throughout the kernel and keeps the guard lifetime short by default.
-    pub fn with_lock<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut T) -> R,
-    {
-        let mut guard = self.lock();
-        f(&mut *guard)
-    }
-
-    /// Return whether the mutex is currently held by any task.
-    pub fn is_locked(&self) -> bool {
-        self.lock.is_locked()
-    }
-
-    /// Release the mutex and wake one waiting task.
     fn unlock(&self) {
         let current_slot = task::current_slot();
-        self.owner_slot.exclusive(|owner_slot| {
-            assert_eq!(
-                *owner_slot,
-                Some(current_slot),
-                "Mutex::unlock by non-owner"
-            );
-            *owner_slot = None;
+        self.owner_slot.exclusive(|slot| {
+            assert_eq!(*slot, Some(current_slot), "Mutex::unlock by non-owner");
+            *slot = None;
         });
         self.lock.release();
     }
@@ -153,16 +83,15 @@ impl<T> Mutex<T> {
 impl<T> Deref for MutexGuard<'_, T> {
     type Target = T;
 
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: The guard represents exclusive ownership of the mutex, so no
-        // other mutable or shared access to `value` may exist.
+    fn deref(&self) -> &T {
+        // SAFETY: the guard holds exclusive access.
         unsafe { &*self.mutex.value.get() }
     }
 }
 
 impl<T> DerefMut for MutexGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        // SAFETY: Same argument as `Deref`; the guard is the unique accessor.
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: the guard holds exclusive access.
         unsafe { &mut *self.mutex.value.get() }
     }
 }

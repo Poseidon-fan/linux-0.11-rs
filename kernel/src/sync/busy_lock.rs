@@ -1,27 +1,19 @@
-//! Ownerless sleepable busy-bit lock.
-//!
-//! This primitive mirrors the classic Linux 0.11 pattern used by inode,
-//! buffer, and superblock locks:
-//! - one busy bit,
-//! - one wait queue,
-//! - `wait`, `acquire`, and `release` operations.
-//!
-//! Unlike [`super::Mutex`], a `BusyLock` does not track ownership and allows
-//! one context to acquire the lock while another context later releases it.
-
 use crate::{
     sync::{KernelCell, cell::assert_can_schedule, irq::IrqSaveGuard},
     task::wait_queue::WaitQueue,
 };
 
-/// Sleepable ownerless busy lock for single-core kernel code.
+/// Ownerless sleepable busy-bit lock.
+///
+/// Models the classic Linux 0.11 lock pattern:
+/// a single busy flag guarded by a wait queue. Unlike [`super::Mutex`], one
+/// task may acquire and a different task may release.
 pub struct BusyLock {
     locked: KernelCell<bool>,
     wait_queue: WaitQueue,
 }
 
 impl BusyLock {
-    /// Create one unlocked busy lock.
     pub const fn new() -> Self {
         Self {
             locked: KernelCell::new(false),
@@ -29,54 +21,40 @@ impl BusyLock {
         }
     }
 
-    /// Wait until the busy bit becomes clear without taking ownership.
+    /// Sleeps until the lock is released, without acquiring it.
     pub fn wait(&self) {
         assert_can_schedule("BusyLock::wait");
-
-        let _irq_guard = IrqSaveGuard::enter();
+        let _irq = IrqSaveGuard::enter();
         unsafe {
-            while self.locked.exclusive_unchecked(|locked| *locked) {
+            while self.locked.exclusive_unchecked(|l| *l) {
                 WaitQueue::sleep_on(&self.wait_queue);
             }
         }
     }
 
-    /// Acquire the busy bit, sleeping until it becomes available.
+    /// Acquires the lock, sleeping until it becomes available.
     pub fn acquire(&self) {
         assert_can_schedule("BusyLock::acquire");
-
-        let _irq_guard = IrqSaveGuard::enter();
+        let _irq = IrqSaveGuard::enter();
         unsafe {
-            while self.locked.exclusive_unchecked(|locked| *locked) {
+            while self.locked.exclusive_unchecked(|l| *l) {
                 WaitQueue::sleep_on(&self.wait_queue);
             }
-            self.locked.exclusive_unchecked(|locked| *locked = true);
+            self.locked.exclusive_unchecked(|l| *l = true);
         }
     }
 
-    /// Try to acquire the busy bit without sleeping.
-    pub fn try_acquire(&self) -> bool {
-        self.locked.exclusive(|locked| {
-            if *locked {
-                false
-            } else {
-                *locked = true;
-                true
-            }
-        })
-    }
-
-    /// Release the busy bit and wake one waiter.
+    /// Releases the lock and wakes one waiter.
     pub fn release(&self) {
-        self.locked.exclusive(|locked| {
-            assert!(*locked, "BusyLock::release released an unlocked lock");
-            *locked = false;
+        self.locked.exclusive(|l| {
+            assert!(*l, "BusyLock::release on unlocked lock");
+            *l = false;
         });
         WaitQueue::wake_up(&self.wait_queue);
     }
 
-    /// Return whether the busy bit is currently set.
+    /// Returns `true` if the lock is currently held.
     pub fn is_locked(&self) -> bool {
-        self.locked.exclusive(|locked| *locked)
+        self.locked.exclusive(|l| *l)
     }
 }
