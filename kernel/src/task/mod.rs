@@ -13,7 +13,7 @@ use crate::{
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
     sync::assert_can_schedule,
     task::task_struct::TaskState,
-    trap::{set_intr_gate, set_system_gate},
+    trap::{TrapHandler, set_intr_gate, set_system_gate},
 };
 
 use self::current::{init_current_task, set_current_task};
@@ -241,6 +241,6 @@ pub fn init() {
     outb(inb_p(0x21) & !0x01, 0x21);
 
     set_system_gate(0x80, unsafe {
-        mem::transmute::<unsafe extern "C" fn(), extern "C" fn()>(system_call)
+        mem::transmute::<unsafe extern "C" fn(), TrapHandler>(system_call)
     });
 }

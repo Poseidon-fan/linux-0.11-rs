@@ -1,70 +1,71 @@
+use crate::segment::KERNEL_CS;
+
 unsafe extern "C" {
-    /// Interrupt Descriptor Table, defined in `boot/head.s`.
-    static mut idt: [InterruptDescriptor; 256];
+    static mut idt: [GateDescriptor; 256];
 }
 
-/// Interrupt handler function type (naked functions use extern "C" ABI).
-pub type Handler = extern "C" fn();
+pub type TrapHandler = extern "C" fn();
 
 #[inline]
-pub fn set_intr_gate(n: usize, handler: Handler) {
-    set_gate(n, InterruptDescriptor::intr(handler, 0x0));
+pub fn set_intr_gate(n: usize, handler: TrapHandler) {
+    set_gate(n, GateDescriptor::interrupt(handler, 0));
 }
 
 #[inline]
-pub fn set_trap_gate(n: usize, handler: Handler) {
-    set_gate(n, InterruptDescriptor::trap(handler, 0x0));
+pub fn set_trap_gate(n: usize, handler: TrapHandler) {
+    set_gate(n, GateDescriptor::trap(handler, 0));
 }
 
 #[inline]
-pub fn set_system_gate(n: usize, handler: Handler) {
-    set_gate(n, InterruptDescriptor::trap(handler, 0x3));
+pub fn set_system_gate(n: usize, handler: TrapHandler) {
+    set_gate(n, GateDescriptor::trap(handler, 3));
 }
 
-/// Interrupt Descriptor Table Entry.
+/// An i386 IDT gate descriptor (interrupt gate or trap gate).
 ///
-/// In fact, there're three descriptor for i386:
-/// - Task Gate
-/// - Interrupt Gate
-/// - Trap Gate
+/// ```text
+///  63       48 47 46-45 44 43-40 39-32 31     16 15        0
+/// ┌──────────┬──┬─────┬──┬─────┬─────┬──────────┬──────────┐
+/// │offset_hi │P │ DPL │0 │type │  0  │ selector │offset_lo │
+/// └──────────┴──┴─────┴──┴─────┴─────┴──────────┴──────────┘
+/// ```
 ///
-/// We'll not use task gate, so the following struct describes interrupt gate and trap gate.
+/// - Interrupt gate (type `0xE`): clears IF on entry.
+/// - Trap gate (type `0xF`): leaves IF unchanged.
 #[repr(C)]
-struct InterruptDescriptor {
+struct GateDescriptor {
     offset_low: u16,
     selector: u16,
-    zero: u8,
+    _reserved: u8,
     flags: u8,
     offset_high: u16,
 }
 
 #[inline]
-fn set_gate(n: usize, descriptor: InterruptDescriptor) {
+fn set_gate(n: usize, desc: GateDescriptor) {
     unsafe {
-        idt[n] = descriptor;
+        idt[n] = desc;
     }
 }
 
-impl InterruptDescriptor {
+impl GateDescriptor {
     #[inline]
-    fn intr(handler: Handler, dpl: u8) -> Self {
+    fn interrupt(handler: TrapHandler, dpl: u8) -> Self {
         Self::new(handler, dpl, 0xE)
     }
 
     #[inline]
-    fn trap(handler: Handler, dpl: u8) -> Self {
+    fn trap(handler: TrapHandler, dpl: u8) -> Self {
         Self::new(handler, dpl, 0xF)
     }
 
     #[inline]
-    fn new(handler: Handler, dpl: u8, gate_type: u8) -> Self {
-        const KERNEL_CS: u16 = 0x08;
+    fn new(handler: TrapHandler, dpl: u8, gate_type: u8) -> Self {
         let addr = handler as usize;
-
         Self {
             offset_low: (addr & 0xFFFF) as u16,
-            selector: KERNEL_CS,
-            zero: 0,
+            selector: KERNEL_CS.as_u16(),
+            _reserved: 0,
             flags: 0x80 | ((dpl & 0x3) << 5) | (gate_type & 0x1F),
             offset_high: (addr >> 16) as u16,
         }

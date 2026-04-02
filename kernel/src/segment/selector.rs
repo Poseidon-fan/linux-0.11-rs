@@ -36,6 +36,9 @@ impl SegmentSelector {
     }
 }
 
+/// Kernel code segment (GDT index 1, Ring 0) = `0x08`.
+pub const KERNEL_CS: SegmentSelector = SegmentSelector::gdt(1, 0);
+
 /// Kernel data segment (GDT index 2, Ring 0) = `0x10`.
 pub const KERNEL_DS: SegmentSelector = SegmentSelector::gdt(2, 0);
 

@@ -5,7 +5,9 @@ mod selector;
 pub mod uaccess;
 
 pub use descriptor::Descriptor;
-pub use selector::{KERNEL_DS, SegmentSelector, USER_CS, USER_DS, ldt_selector, tss_selector};
+pub use selector::{
+    KERNEL_CS, KERNEL_DS, SegmentSelector, USER_CS, USER_DS, ldt_selector, tss_selector,
+};
 
 use core::arch::{asm, naked_asm};
 
