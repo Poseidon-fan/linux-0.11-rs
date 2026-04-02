@@ -4,7 +4,7 @@ use core::{arch::naked_asm, ptr};
 
 use crate::{
     pmio::outb,
-    segment::selectors::{USER_CS, USER_DS},
+    segment::{USER_CS, USER_DS},
     signal::{self, DeliverAction, SignalDeliveryFrame, SignalSavedRegisters},
     task,
 };

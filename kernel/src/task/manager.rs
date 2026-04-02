@@ -8,10 +8,7 @@ use lazy_static::lazy_static;
 
 use crate::{
     mm::space::{MemorySpace, TASK_LINEAR_SIZE},
-    segment::{
-        self,
-        selectors::{self, KERNEL_DS, USER_CS, USER_DS},
-    },
+    segment::{KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
     syscall::SyscallContext,
     task::{self, task_struct::*},
@@ -145,7 +142,7 @@ impl TaskManager {
                 ds: ctx.ds & 0xffff,
                 fs: ctx.fs & 0xffff,
                 gs: ctx.gs & 0xffff,
-                ldt: selectors::ldt_selector(slot as u16).as_u32(),
+                ldt: crate::segment::ldt_selector(slot as u16).as_u32(),
                 trace_bitmap: 0x8000_0000,
                 i387: I387Struct::empty(),
             },
@@ -170,8 +167,8 @@ impl TaskManager {
         });
 
         // 6. Install TSS and LDT descriptors in GDT for the new task.
-        segment::set_tss_desc(slot as u16, tss_addr);
-        segment::set_ldt_desc(slot as u16, ldt_addr);
+        super::gdt::set_tss_desc(slot as u16, tss_addr);
+        super::gdt::set_ldt_desc(slot as u16, ldt_addr);
 
         // 7. Insert into task table as runnable.
         self.tasks[slot] = Some(Arc::new(new_task));
@@ -360,7 +357,7 @@ lazy_static! {
                     ds: USER_DS.as_u32(),
                     fs: USER_DS.as_u32(),
                     gs: USER_DS.as_u32(),
-                    ldt: selectors::ldt_selector(0).as_u32(),
+                    ldt: crate::segment::ldt_selector(0).as_u32(),
                     trace_bitmap: 0x8000_0000,
                     i387: I387Struct::empty(),
                 },

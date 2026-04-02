@@ -15,7 +15,7 @@ use crate::{
         minix::InodeId,
         path::{self, AccessMask, check_permission},
     },
-    segment,
+    segment::uaccess,
     syscall::{
         EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, ENOTEMPTY, EPERM,
         SYSCALL_TABLE, context::SyscallContext,
@@ -37,7 +37,7 @@ define_syscall_handler!(
     user_lib::NR_OPEN = 5,
     fn sys_open(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
         let flags = OpenFlags::from_raw(raw_flags);
         let (access_mode, open_options) = flags.into_parts().ok_or(EINVAL)?;
 
@@ -115,7 +115,7 @@ define_syscall_handler!(
 
         let mut kernel_buf = vec![0u8; count as usize];
         let bytes_read = file.read(&mut kernel_buf)?;
-        segment::put_fs_bytes(&kernel_buf[..bytes_read], buf_ptr as *mut u8);
+        uaccess::write_bytes(&kernel_buf[..bytes_read], buf_ptr as *mut u8);
 
         Ok(bytes_read as u32)
     }
@@ -128,7 +128,7 @@ define_syscall_handler!(
         let file = get_file(fd)?;
 
         let mut kernel_buf = vec![0u8; count as usize];
-        segment::get_fs_bytes(buf_ptr as *const u8, &mut kernel_buf);
+        uaccess::read_bytes(buf_ptr as *const u8, &mut kernel_buf);
         let bytes_written = file.write(&kernel_buf)?;
 
         Ok(bytes_written as u32)
@@ -154,7 +154,7 @@ define_syscall_handler!(
     user_lib::NR_UNLINK = 10,
     fn sys_unlink(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -188,7 +188,7 @@ define_syscall_handler!(
     user_lib::NR_CHDIR = 12,
     fn sys_chdir(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
         if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
@@ -210,7 +210,7 @@ define_syscall_handler!(
     user_lib::NR_MKDIR = 39,
     fn sys_mkdir(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -232,7 +232,7 @@ define_syscall_handler!(
     user_lib::NR_RMDIR = 40,
     fn sys_rmdir(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -278,13 +278,13 @@ define_syscall_handler!(
     user_lib::NR_STAT = 18,
     fn sys_stat(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
-        let pathname = segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
         let stat = inode.stat();
         let bytes = unsafe {
             core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
         };
-        segment::put_fs_bytes(bytes, buf_ptr as *mut u8);
+        uaccess::write_bytes(bytes, buf_ptr as *mut u8);
         Ok(0)
     }
 );
@@ -298,7 +298,7 @@ define_syscall_handler!(
         let bytes = unsafe {
             core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
         };
-        segment::put_fs_bytes(bytes, buf_ptr as *mut u8);
+        uaccess::write_bytes(bytes, buf_ptr as *mut u8);
         Ok(0)
     }
 );

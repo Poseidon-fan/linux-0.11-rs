@@ -1,5 +1,5 @@
 use crate::{
-    segment::selectors::{USER_CS, USER_DS},
+    segment::{USER_CS, USER_DS},
     signal::{self, DeliverAction, SignalDeliveryFrame, SignalSavedRegisters},
 };
 

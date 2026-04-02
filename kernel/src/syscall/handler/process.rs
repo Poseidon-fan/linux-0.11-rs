@@ -4,7 +4,8 @@ use linkme::distributed_slice;
 use crate::syscall::SYSCALL_TABLE;
 
 use crate::{
-    define_syscall_handler, mm, segment,
+    define_syscall_handler, mm,
+    segment::uaccess,
     signal::{SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
     syscall::{EAGAIN, ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
     task::{
@@ -151,7 +152,7 @@ define_syscall_handler!(
 
             match scan_result {
                 ScanResult::Stopped { pid, status } | ScanResult::Zombie { pid, status, .. } => {
-                    segment::put_fs_long(status, stat_addr);
+                    uaccess::write_u32(status, stat_addr);
                     return Ok(pid);
                 }
                 ScanResult::NeedWait if (options & WNOHANG) != 0 => return Ok(0),
@@ -327,7 +328,7 @@ define_syscall_handler!(
             let base = ptr as *const u8;
             let mut bytes = [0u8; 16];
             for (i, byte) in bytes.iter_mut().enumerate() {
-                *byte = segment::get_fs_byte(unsafe { base.add(i) });
+                *byte = uaccess::read_u8(unsafe { base.add(i) });
             }
             unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const SigAction) }
         }
@@ -337,7 +338,7 @@ define_syscall_handler!(
             let base = ptr as *mut u8;
             let sa_bytes = sa as *const SigAction as *const [u8; 16];
             for (i, b) in unsafe { *sa_bytes }.iter().enumerate() {
-                segment::put_fs_byte(*b, unsafe { base.add(i) });
+                uaccess::write_u8(*b, unsafe { base.add(i) });
             }
         }
 
@@ -539,7 +540,7 @@ define_syscall_handler!(
         let t = time::current_time();
         if tloc != 0 {
             mm::ensure_user_area_writable(tloc, 4);
-            segment::put_fs_long(t, tloc as *mut u32);
+            uaccess::write_u32(t, tloc as *mut u32);
         }
         Ok(t)
     }
@@ -570,10 +571,10 @@ define_syscall_handler!(
             mm::ensure_user_area_writable(tbuf, 16);
             let base = tbuf as *mut u32;
             unsafe {
-                segment::put_fs_long(utime, base);
-                segment::put_fs_long(stime, base.add(1));
-                segment::put_fs_long(cutime, base.add(2));
-                segment::put_fs_long(cstime, base.add(3));
+                uaccess::write_u32(utime, base);
+                uaccess::write_u32(stime, base.add(1));
+                uaccess::write_u32(cutime, base.add(2));
+                uaccess::write_u32(cstime, base.add(3));
             }
         }
         Ok(task::jiffies())
@@ -603,7 +604,7 @@ define_syscall_handler!(
         mm::ensure_user_area_writable(name, 45);
         let base = name as *mut u8;
         for (i, &b) in UTSNAME.iter().enumerate() {
-            segment::put_fs_byte(b, unsafe { base.add(i) });
+            uaccess::write_u8(b, unsafe { base.add(i) });
         }
         Ok(0)
     }

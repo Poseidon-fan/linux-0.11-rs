@@ -8,7 +8,7 @@ use crate::{
     fs::buffer::{self, BufferKey},
     pmio::{self, inb_p, outb, outb_p, port_write_words},
     println,
-    segment::{get_fs_byte, get_fs_word},
+    segment::uaccess,
     sync::KernelCell,
     trap::set_intr_gate,
 };
@@ -115,12 +115,12 @@ impl DriveGeometry {
         // SAFETY: caller guarantees `entry_addr` points to a valid BIOS drive-info entry.
         let geo = unsafe {
             Self {
-                cylinder_count: get_fs_word(entry_addr.cast::<u16>()),
-                head_count: u16::from(get_fs_byte(entry_addr.add(2))),
-                write_precompensation: get_fs_word(entry_addr.add(5).cast::<u16>()),
-                control: get_fs_byte(entry_addr.add(8)),
-                landing_zone: get_fs_word(entry_addr.add(12).cast::<u16>()),
-                sectors_per_track: u16::from(get_fs_byte(entry_addr.add(14))),
+                cylinder_count: uaccess::read_u16(entry_addr.cast::<u16>()),
+                head_count: u16::from(uaccess::read_u8(entry_addr.add(2))),
+                write_precompensation: uaccess::read_u16(entry_addr.add(5).cast::<u16>()),
+                control: uaccess::read_u8(entry_addr.add(8)),
+                landing_zone: uaccess::read_u16(entry_addr.add(12).cast::<u16>()),
+                sectors_per_track: u16::from(uaccess::read_u8(entry_addr.add(14))),
             }
         };
         (geo.cylinder_count != 0).then_some(geo)

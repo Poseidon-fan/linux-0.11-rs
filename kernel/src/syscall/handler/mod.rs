@@ -30,7 +30,7 @@ define_syscall_handler!(
     user_lib::NR_TEST = 74,
     fn sys_test(ctx: &SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = crate::segment::get_fs_string(path_ptr as *const u8, 256);
+        let pathname = crate::segment::uaccess::read_string(path_ptr as *const u8, 256);
 
         let inode = crate::fs::path::resolve_path(&pathname).ok_or(crate::syscall::ENOENT)?;
 

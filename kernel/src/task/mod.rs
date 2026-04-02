@@ -1,4 +1,5 @@
 pub mod current;
+mod gdt;
 mod manager;
 pub mod task_struct;
 mod timer;
@@ -8,7 +9,7 @@ use core::{arch::asm, mem};
 
 use crate::{
     pmio::{inb_p, outb, outb_p},
-    segment::{self, Descriptor, selectors},
+    segment,
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
     sync::assert_can_schedule,
     task::task_struct::TaskState,
@@ -31,11 +32,11 @@ pub fn is_super() -> bool {
 }
 
 unsafe extern "C" {
-    /// GDT defined in head.s
-    static mut gdt: [u64; 256];
     /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
     fn system_call();
 }
+
+pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY};
 
 pub const HZ: u32 = 100;
 const LATCH: u16 = (1193180 / HZ) as u16;
@@ -84,7 +85,7 @@ pub fn schedule() {
     let target = FarPointer {
         // For hardware task switching, only the selector is used.
         offset: 0,
-        selector: selectors::tss_selector(next_slot as u16).as_u16(),
+        selector: segment::tss_selector(next_slot as u16).as_u16(),
     };
 
     unsafe {
@@ -209,23 +210,12 @@ pub fn init() {
     init_current_task(&task0);
 
     // Set TSS and LDT descriptors for task 0 in GDT
-    segment::set_tss_desc(0, tss_addr);
-    segment::set_ldt_desc(0, ldt_addr);
+    gdt::set_tss_desc(0, tss_addr);
+    gdt::set_ldt_desc(0, ldt_addr);
 
     // Clear GDT entries for tasks 1 to TASK_NUM-1
-    // Each task uses 2 GDT entries (TSS and LDT descriptor)
     for i in 1..TASK_NUM {
-        let n = i as u16;
-        // TSS entry index: FIRST_TSS_ENTRY + n * 2
-        // LDT entry index: FIRST_LDT_ENTRY + n * 2
-        let tss_index = (segment::FIRST_TSS_ENTRY + n * 2) as usize;
-        let ldt_index = (segment::FIRST_LDT_ENTRY + n * 2) as usize;
-
-        // Clear TSS and LDT descriptors
-        unsafe {
-            core::ptr::write_volatile(&mut gdt[tss_index], Descriptor::null().as_u64());
-            core::ptr::write_volatile(&mut gdt[ldt_index], Descriptor::null().as_u64());
-        }
+        gdt::clear_task_descs(i as u16);
     }
 
     // Clear NT (Nested Task) flag in EFLAGS to prevent issues with task switching
@@ -239,10 +229,10 @@ pub fn init() {
     }
 
     // Load Task Register with task 0's TSS selector
-    segment::ltr(selectors::tss_selector(0));
+    segment::ltr(segment::tss_selector(0));
 
     // Load LDT Register with task 0's LDT selector
-    segment::lldt(selectors::ldt_selector(0));
+    segment::lldt(segment::ldt_selector(0));
 
     outb_p(0x36, 0x43);
     outb_p((LATCH & 0xff) as u8, 0x40);

@@ -3,7 +3,7 @@
 //! This module contains the shared signal handling flow and the return-frame
 //! abstraction used by syscall/timer return paths.
 
-use crate::{mm, segment, task, task::task_struct::NSIG};
+use crate::{mm, segment::uaccess, task, task::task_struct::NSIG};
 
 /// SA_NOMASK flag bit.
 pub const SA_NOMASK: u32 = 0x4000_0000;
@@ -142,25 +142,25 @@ pub fn push_user_signal_frame(
     mm::ensure_user_area_writable(new_esp, frame_bytes);
 
     let mut sp = new_esp as *mut u32;
-    segment::put_fs_long(restorer, sp);
+    uaccess::write_u32(restorer, sp);
     sp = sp.wrapping_add(1);
-    segment::put_fs_long(signr, sp);
+    uaccess::write_u32(signr, sp);
     sp = sp.wrapping_add(1);
 
     if !has_nomask {
-        segment::put_fs_long(blocked, sp);
+        uaccess::write_u32(blocked, sp);
         sp = sp.wrapping_add(1);
     }
 
-    segment::put_fs_long(regs.eax, sp);
+    uaccess::write_u32(regs.eax, sp);
     sp = sp.wrapping_add(1);
-    segment::put_fs_long(regs.ecx, sp);
+    uaccess::write_u32(regs.ecx, sp);
     sp = sp.wrapping_add(1);
-    segment::put_fs_long(regs.edx, sp);
+    uaccess::write_u32(regs.edx, sp);
     sp = sp.wrapping_add(1);
-    segment::put_fs_long(regs.eflags, sp);
+    uaccess::write_u32(regs.eflags, sp);
     sp = sp.wrapping_add(1);
-    segment::put_fs_long(regs.old_eip, sp);
+    uaccess::write_u32(regs.old_eip, sp);
 
     new_esp
 }

@@ -19,7 +19,7 @@
 
 use core::arch::naked_asm;
 
-use crate::segment::selectors::{USER_CS, USER_DS};
+use crate::segment::{USER_CS, USER_DS};
 
 mod busy_lock;
 mod cell;
