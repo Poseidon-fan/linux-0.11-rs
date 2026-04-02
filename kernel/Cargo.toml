@@ -16,5 +16,6 @@ lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 linkme = { version = "0.3", features = ["used_linker"] }
 log = "0.4.29"
 
-[profile.dev.package."*"]
-opt-level = "s"
+[profile.dev]
+opt-level = 1
+debug = true
