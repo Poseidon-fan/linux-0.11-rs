@@ -78,8 +78,12 @@ fn user_init() -> ! {
 
     let argv: [*const u8; 2] = [c"update".as_ptr().cast(), core::ptr::null()];
     let envp: [*const u8; 1] = [core::ptr::null()];
-    user_lib::process::execve(c"/bin/update".as_ptr().cast(), argv.as_ptr(), envp.as_ptr())
-        .unwrap();
+    user_lib::process::execve(
+        c"/usr/home/test1".as_ptr().cast(),
+        argv.as_ptr(),
+        envp.as_ptr(),
+    )
+    .unwrap();
 
     user_lib::exit().unwrap();
 

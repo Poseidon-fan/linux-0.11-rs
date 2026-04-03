@@ -295,4 +295,4 @@ use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
 
-use_syscall!(crate::syscall::NR_TEST => test(path: *const u8) -> u32);
+use_syscall!(crate::syscall::NR_TEST => test() -> u32);

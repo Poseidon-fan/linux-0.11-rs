@@ -25,6 +25,18 @@ repos:
         entry: bash -c 'cd user_lib && cargo clippy -- -D warnings'
         pass_filenames: false
         files: ^user_lib/
+      - id: user-program-fmt
+        name: user-program-fmt
+        language: system
+        entry: bash -c 'cd user_program && cargo fmt'
+        pass_filenames: false
+        files: ^user_program/
+      - id: user-program-clippy
+        name: user-program-clippy
+        language: system
+        entry: bash -c 'cd user_program && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^user_program/
       - id: miniximg-fmt
         name: miniximg-fmt
         language: system

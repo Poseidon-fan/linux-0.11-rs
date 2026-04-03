@@ -16,6 +16,7 @@
                 "rust-analyzer.linkedProjects": [
                     "kernel/Cargo.toml",
                     "user_lib/Cargo.toml",
+                    "user_program/Cargo.toml",
                     "miniximg/Cargo.toml",
                     "mbrkit/Cargo.toml"
                 ],
