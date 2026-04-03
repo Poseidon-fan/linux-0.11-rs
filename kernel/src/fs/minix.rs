@@ -460,6 +460,23 @@ impl Inode {
         self.alloc_and_link(name, 0o100000, mode, 1)
     }
 
+    /// Create a block or character device node inside this directory.
+    /// The caller is responsible for permission and superuser checks.
+    pub fn create_device(
+        self: &Arc<Self>,
+        name: &str,
+        type_bits: u16,
+        mode: u16,
+        dev: u16,
+    ) -> Result<Arc<Inode>, u32> {
+        let inode = self.alloc_and_link(name, type_bits, mode, 1)?;
+        let mut inner = inode.inner.lock();
+        inner.disk_inode.direct_zones[0] = dev;
+        inner.is_dirty = true;
+        drop(inner);
+        Ok(inode)
+    }
+
     /// Create a new directory inside this directory.
     /// The caller is responsible for permission checks.
     pub fn create_directory(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {

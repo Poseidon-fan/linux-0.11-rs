@@ -277,6 +277,36 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
+    user_lib::NR_MKNOD = 14,
+    fn sys_mknod(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (path_ptr, mode, dev) = ctx.args();
+        if !task::is_super() {
+            return Err(EPERM);
+        }
+
+        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        if basename.is_empty() {
+            return Err(ENOENT);
+        }
+        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+            return Err(EACCES);
+        }
+        if dir.lookup(basename)?.is_some() {
+            return Err(EEXIST);
+        }
+
+        let type_bits = mode as u16 & InodeMode::TYPE_MASK;
+        if type_bits != 0o060000 && type_bits != 0o020000 {
+            return Err(EINVAL);
+        }
+        let perm_bits = mode as u16 & InodeMode::FLAGS_MASK;
+        dir.create_device(basename, type_bits, perm_bits, dev as u16)?;
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
     user_lib::NR_RMDIR = 40,
     fn sys_rmdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
