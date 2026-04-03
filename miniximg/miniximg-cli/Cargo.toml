@@ -3,9 +3,13 @@ name = "miniximg-cli"
 version = "0.1.0"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
+readme = "README.md"
 
 [dependencies]
+clap = { version = "4.5.50", features = ["derive"] }
 miniximg = { path = "../miniximg-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.9.8"
 
 [[bin]]
 name = "miniximg"
