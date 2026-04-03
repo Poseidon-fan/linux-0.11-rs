@@ -36,7 +36,7 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
                 .unwrap_or(0);
             (
                 inner.fs.executable_inode.clone(),
-                address.wrapping_sub(base),
+                fault_addr.as_u32().wrapping_sub(base),
                 inner.mem_layout.end_data,
                 pde_base,
             )
