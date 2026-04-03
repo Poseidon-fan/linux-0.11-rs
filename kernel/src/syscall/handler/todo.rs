@@ -41,15 +41,3 @@ define_syscall_handler!(
         todo!()
     }
 );
-define_syscall_handler!(
-    user_lib::NR_IAM = 72,
-    fn sys_iam(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_WHOAMI = 73,
-    fn sys_whoami(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);

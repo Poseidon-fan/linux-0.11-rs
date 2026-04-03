@@ -144,10 +144,8 @@ pub const NR_SGETMASK: u32 = 68;
 pub const NR_SSETMASK: u32 = 69;
 pub const NR_SETREUID: u32 = 70;
 pub const NR_SETREGID: u32 = 71;
-pub const NR_IAM: u32 = 72;
-pub const NR_WHOAMI: u32 = 73;
 
-pub const NR_TEST: u32 = 74;
+pub const NR_TEST: u32 = 72;
 
 // ===========================================================================
 // Low-level syscall primitives — thin wrappers around `int $0x80`

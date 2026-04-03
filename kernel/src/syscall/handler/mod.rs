@@ -28,7 +28,7 @@ macro_rules! define_syscall_handler {
 }
 
 define_syscall_handler!(
-    user_lib::NR_TEST = 74,
+    user_lib::NR_TEST = 72,
     fn sys_test(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = crate::segment::uaccess::read_string(path_ptr as *const u8, 256);
