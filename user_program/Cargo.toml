@@ -1,6 +1,7 @@
 [package]
 name = "user_program"
 version = "0.1.0"
+authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 
 [dependencies]
