@@ -75,4 +75,18 @@ impl MountTable {
                 .flatten()
         })
     }
+
+    /// Return `true` if some filesystem is already mounted on top of `id`.
+    pub fn is_mount_point(&self, id: InodeId) -> bool {
+        self.get_mounted_root_by_mount_point(id).is_some()
+    }
+
+    /// Remove the mount entry for `dev` and return it, or `None` if not mounted.
+    pub fn remove_by_device(&mut self, dev: DevNum) -> Option<Arc<Mount>> {
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|s| s.as_ref().is_some_and(|m| m.device == dev))?;
+        slot.take()
+    }
 }

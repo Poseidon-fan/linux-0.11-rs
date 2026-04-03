@@ -387,6 +387,25 @@ impl Inode {
     }
 }
 
+// Device-node operations (BlockDevice / CharacterDevice)
+impl Inode {
+    /// Return the device number stored in `direct_zones[0]`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this inode is not a block or character device node.
+    pub fn device_number(&self) -> DevNum {
+        let inner = self.inner.lock();
+        let file_type = inner.disk_inode.mode.file_type();
+        assert!(
+            file_type == InodeType::BlockDevice || file_type == InodeType::CharacterDevice,
+            "device_number() called on {:?} inode",
+            file_type,
+        );
+        DevNum(inner.disk_inode.direct_zones[0])
+    }
+}
+
 // Directory operations
 impl Inode {
     pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>, u32> {
@@ -798,6 +817,27 @@ impl InodeTable {
         }
 
         dirty_fallback
+    }
+
+    /// Return `true` if any cached inode on `dev` is referenced outside
+    /// the table (i.e. still in active use by some task).
+    pub fn has_active_inodes(&self, dev: DevNum) -> bool {
+        self.slots.iter().any(|slot| {
+            let Some(arc) = slot else { return false };
+            arc.id.device == dev && Arc::strong_count(arc) > 1
+        })
+    }
+
+    /// Flush and remove every cached inode that belongs to `dev`.
+    pub fn evict_device(&mut self, dev: DevNum) {
+        for idx in 0..INODE_TABLE_CAPACITY {
+            let belongs_to_dev = self.slots[idx]
+                .as_ref()
+                .is_some_and(|arc| arc.id.device == dev);
+            if belongs_to_dev {
+                self.flush_slot(idx);
+            }
+        }
     }
 
     /// Write back and clean up the inode at `idx` before eviction.

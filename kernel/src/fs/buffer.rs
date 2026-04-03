@@ -496,11 +496,20 @@ fn flush_dirty_victim(handle: &Arc<BufferHandle>) {
 
 /// Write all dirty buffers back to disk.
 pub fn sync_buffers() {
+    sync_dirty(|_| true);
+}
+
+/// Write dirty buffers belonging to `dev` back to disk.
+pub fn sync_dev(dev: DevNum) {
+    sync_dirty(|key| key.dev == dev);
+}
+
+fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
     let handles: alloc::vec::Vec<Arc<BufferHandle>> = BUFFER_MANAGER
         .lock()
         .buffer_index
         .values()
-        .filter(|h| h.is_dirty())
+        .filter(|h| h.is_dirty() && h.key().is_some_and(|k| predicate(&k)))
         .map(Arc::clone)
         .collect();
 

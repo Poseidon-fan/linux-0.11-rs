@@ -6,19 +6,20 @@ use user_lib::fs::{AccessMode, OpenFlags, OpenOptions, Stat, Whence};
 
 use crate::{
     define_syscall_handler,
-    driver::blk::hd,
+    driver::{self, blk::hd},
     fs::{
         self, buffer,
         file::{File, InodeFile},
         get_inode,
-        layout::{InodeMode, InodeType},
-        minix::{INODE_TABLE, InodeId},
+        layout::{InodeMode, InodeType, ROOT_INODE_NUMBER},
+        minix::{INODE_TABLE, InodeId, MinixFileSystem},
+        mount::{MOUNT_TABLE, Mount},
         path::{self, AccessMask, check_permission, check_permission_as},
     },
     segment::uaccess,
     syscall::{
-        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTDIR, ENOTEMPTY, EPERM, EXDEV,
-        SYSCALL_TABLE, context::SyscallContext,
+        EACCES, EBADF, EBUSY, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTBLK, ENOTDIR, ENOTEMPTY,
+        EPERM, EXDEV, SYSCALL_TABLE, context::SyscallContext,
     },
     task, time,
 };
@@ -522,6 +523,94 @@ define_syscall_handler!(
         inner.access_time = actime;
         inner.disk_inode.modification_time = modtime;
         inner.is_dirty = true;
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_MOUNT = 21,
+    fn sys_mount(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (dev_name_ptr, dir_name_ptr, _rw_flag) = ctx.args();
+        let dev_name = uaccess::read_string(dev_name_ptr as *const u8, 256);
+        let dir_name = uaccess::read_string(dir_name_ptr as *const u8, 256);
+
+        // Resolve the device node and extract its device number.
+        let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
+        if dev_inode.inner.lock().disk_inode.mode.file_type() != InodeType::BlockDevice {
+            return Err(EPERM);
+        }
+        let dev = dev_inode.device_number();
+        drop(dev_inode);
+
+        // Resolve the mount-point directory.
+        let dir_inode = path::resolve_path(&dir_name).ok_or(ENOENT)?;
+        if dir_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+            return Err(EPERM);
+        }
+        if dir_inode.id.inode_number == ROOT_INODE_NUMBER {
+            return Err(EBUSY);
+        }
+
+        let mut mt = MOUNT_TABLE.lock();
+        if mt.get_fs(dev).is_some() {
+            return Err(EBUSY);
+        }
+        if mt.is_mount_point(dir_inode.id) {
+            return Err(EPERM);
+        }
+
+        // Load the filesystem from the target device.
+        let new_fs = MinixFileSystem::open(dev).ok_or(EBUSY)?;
+        let root_inode = INODE_TABLE.lock().get_inode_raw(
+            InodeId {
+                device: dev,
+                inode_number: ROOT_INODE_NUMBER,
+            },
+            &new_fs,
+        );
+
+        mt.insert(Arc::new(Mount {
+            device: dev,
+            file_system: new_fs,
+            root_inode,
+            mount_point_inode: Some(dir_inode),
+        }))
+        .ok_or(EBUSY)?;
+
+        Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_UMOUNT = 22,
+    fn sys_umount(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (dev_name_ptr, _, _) = ctx.args();
+        let dev_name = uaccess::read_string(dev_name_ptr as *const u8, 256);
+
+        // Resolve the device node and extract its device number.
+        let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
+        if dev_inode.inner.lock().disk_inode.mode.file_type() != InodeType::BlockDevice {
+            return Err(ENOTBLK);
+        }
+        let dev = dev_inode.device_number();
+        drop(dev_inode);
+
+        if dev == driver::root_dev() {
+            return Err(EBUSY);
+        }
+        if MOUNT_TABLE.lock().get_fs(dev).is_none() {
+            return Err(ENOENT);
+        }
+
+        let mut inode_table = INODE_TABLE.lock();
+        if inode_table.has_active_inodes(dev) {
+            return Err(EBUSY);
+        }
+        inode_table.evict_device(dev);
+        drop(inode_table);
+
+        buffer::sync_dev(dev);
+        MOUNT_TABLE.lock().remove_by_device(dev);
         Ok(0)
     }
 );

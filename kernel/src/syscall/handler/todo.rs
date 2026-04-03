@@ -12,18 +12,6 @@ define_syscall_handler!(
     }
 );
 define_syscall_handler!(
-    user_lib::NR_MOUNT = 21,
-    fn sys_mount(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
-    user_lib::NR_UMOUNT = 22,
-    fn sys_umount(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        todo!()
-    }
-);
-define_syscall_handler!(
     user_lib::NR_PIPE = 42,
     fn sys_pipe(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         todo!()
