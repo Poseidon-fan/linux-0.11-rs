@@ -4,6 +4,7 @@
 #![allow(unused)]
 #![no_std]
 
+pub mod console;
 mod syscall;
 
 pub use syscall::*;
