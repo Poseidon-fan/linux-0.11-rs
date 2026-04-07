@@ -33,10 +33,10 @@ allocation inside the kernel.
 This repository also includes two companion tools for working with bootable
 disk images:
 
-- `[mbrkit](./mbrkit)`: a small CLI for building, inspecting, extracting, and
-verifying MBR disk images
-- `[miniximg](./miniximg)`: a Minix filesystem image tool tailored to the
-filesystem format currently supported by this kernel
+- [mbrkit](./mbrkit): a small CLI for building, inspecting, extracting, and
+  verifying MBR disk images
+- [miniximg](./miniximg): a Minix filesystem image tool tailored to the
+  filesystem format currently supported by this kernel
 
 Together, they make it much easier to prepare disk images for development,
 testing, and experimentation.
@@ -69,7 +69,7 @@ known-good image is the recommended way to get started.
 
 Recommended image:
 
-- [https://github.com/yuan-xy/Linux-0.11/blob/master/hdc-0.11.img](https://github.com/yuan-xy/Linux-0.11/blob/master/hdc-0.11.img)
+- [yuan-xy/Linux-0.11: `hdc-0.11.img`](https://github.com/yuan-xy/Linux-0.11/blob/master/hdc-0.11.img)
 
 Example download command from the repository root:
 
@@ -101,14 +101,14 @@ mdbook serve --open
 
 ## 🗂️ Repository Layout
 
-- `[kernel](./kernel)`: kernel source code
-- `[user_lib](./user_lib)`: user-space support library and syscall wrappers
-- `[user_program](./user_program)`: user-space programs and experiments, still
-evolving
-- `[mbrkit](./mbrkit)`: MBR disk image tool
-- `[miniximg](./miniximg)`: Minix filesystem image tool
-- `[tutorial](./tutorial)`: tutorial and book sources
-- `[ref](./ref)`: original Linux 0.11 source kept for reference
+- [kernel](./kernel): kernel source code
+- [user_lib](./user_lib): user-space support library and syscall wrappers
+- [user_program](./user_program): user-space programs and experiments, still
+  evolving
+- [mbrkit](./mbrkit): MBR disk image tool
+- [miniximg](./miniximg): Minix filesystem image tool
+- [tutorial](./tutorial): tutorial and book sources
+- [ref](./ref): original Linux 0.11 source kept for reference
 
 ## 🛣️ Project Status
 
@@ -142,8 +142,8 @@ Current status: **TBD / in progress**
 
 ## 🙏 Acknowledgements
 
-- Thanks to [`yuan-xy/Linux-0.11`](https://github.com/yuan-xy/Linux-0.11) for
+- Thanks to [yuan-xy/Linux-0.11](https://github.com/yuan-xy/Linux-0.11) for
   providing the original Linux 0.11 kernel source used as an important
   reference during development.
 - Many parts of this project were also inspired by or implemented with
-  reference to [`rcore-os/rCore-Tutorial-v3`](https://github.com/rcore-os/rCore-Tutorial-v3).
+  reference to [rcore-os/rCore-Tutorial-v3](https://github.com/rcore-os/rCore-Tutorial-v3).
