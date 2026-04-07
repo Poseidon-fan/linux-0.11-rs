@@ -106,3 +106,37 @@ pub fn write_bytes(buf: &[u8], addr: *mut u8) {
         write_u8(b, unsafe { addr.add(i) });
     }
 }
+
+/// Execute `f` with `%fs` temporarily set to the kernel data segment (0x10).
+///
+/// This makes `read_u8` / `write_u8` operate on kernel memory instead of
+/// user memory, mirroring the original Linux 0.11 `push %ds; pop %fs`
+/// trick used by `printk` and device drivers.
+#[inline]
+pub fn with_kernel_fs<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let saved_fs: u16;
+    unsafe {
+        asm!(
+            "movw %fs, {0:x}",
+            out(reg) saved_fs,
+            options(att_syntax, nomem, nostack, preserves_flags),
+        );
+        asm!(
+            "movw {0:x}, %fs",
+            in(reg) 0x10u16,
+            options(att_syntax, nomem, nostack, preserves_flags),
+        );
+    }
+    let result = f();
+    unsafe {
+        asm!(
+            "movw {0:x}, %fs",
+            in(reg) saved_fs,
+            options(att_syntax, nomem, nostack, preserves_flags),
+        );
+    }
+    result
+}

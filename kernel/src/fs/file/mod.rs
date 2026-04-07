@@ -1,5 +1,7 @@
+pub mod block_device;
+pub mod char_device;
 pub mod inode;
-#[allow(unused_imports)]
+
 pub use inode::InodeFile;
 
 use user_lib::fs::{Stat, Whence};

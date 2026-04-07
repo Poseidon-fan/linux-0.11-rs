@@ -13,7 +13,6 @@
 //!   the kernel-owned format buffer.
 
 use core::{
-    arch::asm,
     fmt::{self, Write},
     ptr::{self, addr_of, addr_of_mut},
     sync::atomic::{AtomicBool, Ordering},
@@ -83,28 +82,9 @@ pub fn put_fmt(args: fmt::Arguments) {
         let len = LOG_LEN;
         let buf_ptr = addr_of!(LOG_BUF) as *const u8;
 
-        // Save %fs and replace with kernel data segment (0x10).
-        // This makes uaccess::read_u8() read from the kernel buffer.
-        let saved_fs: u16;
-        asm!(
-            "movw %fs, {0:x}",
-            out(reg) saved_fs,
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
-        asm!(
-            "movw {0:x}, %fs",
-            in(reg) 0x10u16,
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
-
-        let _ = crate::driver::chr::tty::Tty::device(0).write(0, buf_ptr, len);
-
-        // Restore %fs.
-        asm!(
-            "movw {0:x}, %fs",
-            in(reg) saved_fs,
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
+        crate::segment::uaccess::with_kernel_fs(|| {
+            let _ = crate::driver::chr::tty::Tty::device(0).write(0, buf_ptr, len);
+        });
     }
 }
 

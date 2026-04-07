@@ -9,7 +9,7 @@ use crate::{
     driver::{self, blk::hd},
     fs::{
         self, buffer,
-        file::{File, InodeFile},
+        file::{File, InodeFile, block_device::BlockDeviceFile, char_device::CharDeviceFile},
         get_inode,
         layout::{InodeMode, InodeType, ROOT_INODE_NUMBER},
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
@@ -94,7 +94,8 @@ define_syscall_handler!(
             InodeType::Regular | InodeType::Directory => {
                 Arc::new(InodeFile::new(inode, access_mode, open_options))
             }
-            // TODO: BlockDevice / CharacterDevice / Fifo
+            InodeType::CharacterDevice => Arc::new(CharDeviceFile::new(inode)),
+            InodeType::BlockDevice => Arc::new(BlockDeviceFile::new(inode)),
             _ => return Err(EPERM),
         };
 

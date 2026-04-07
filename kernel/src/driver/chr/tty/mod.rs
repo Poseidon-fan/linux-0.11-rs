@@ -74,6 +74,8 @@ static DEVICES: [Tty; DEVICE_COUNT] = [
 ];
 
 impl Tty {
+    pub const DEVICE_COUNT: usize = DEVICE_COUNT;
+
     const fn new(termios: Termios, flush: FlushOutputFn) -> Self {
         Self {
             state: KernelCell::new(TtyState {

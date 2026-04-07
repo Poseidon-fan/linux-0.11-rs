@@ -111,6 +111,13 @@ impl Inode {
     pub fn stat(&self) -> Stat {
         let inner = self.inner.lock();
         let disk = &inner.disk_inode;
+        let file_type = disk.mode.file_type();
+        let st_rdev =
+            if file_type == InodeType::BlockDevice || file_type == InodeType::CharacterDevice {
+                disk.direct_zones[0]
+            } else {
+                0
+            };
         Stat {
             st_dev: self.id.device.0,
             st_ino: self.id.inode_number.0,
@@ -118,7 +125,7 @@ impl Inode {
             st_nlink: disk.link_count,
             st_uid: disk.user_id,
             st_gid: disk.group_id,
-            st_rdev: 0,
+            st_rdev,
             st_size: disk.size,
             st_atime: inner.access_time,
             st_mtime: disk.modification_time,
