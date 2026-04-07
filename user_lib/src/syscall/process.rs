@@ -11,11 +11,14 @@ pub const NSIG: usize = 32;
 
 // Signal numbers (POSIX subset).
 pub const SIGHUP: u32 = 1;
+pub const SIGINT: u32 = 2;
+pub const SIGQUIT: u32 = 3;
 pub const SIGKILL: u32 = 9;
 pub const SIGSEGV: u32 = 11;
 pub const SIGALRM: u32 = 14;
 pub const SIGCHLD: u32 = 17;
 pub const SIGSTOP: u32 = 19;
+pub const SIGTSTP: u32 = 20;
 
 // Signal handler sentinels.
 pub const SIG_DFL: u32 = 0;

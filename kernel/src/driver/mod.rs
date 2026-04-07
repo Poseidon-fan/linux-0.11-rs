@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicU16, Ordering};
 
 pub mod blk;
+pub mod chr;
 
 static ROOT_DEV: AtomicU16 = AtomicU16::new(0);
 

@@ -202,27 +202,27 @@ pub struct Termios {
 
 impl Termios {
     /// Returns the default console configuration.
-    pub fn console_default() -> Self {
+    pub const fn console_default() -> Self {
         Self {
             input_mode: InputMode::ICRNL,
-            output_mode: OutputMode::OPOST | OutputMode::ONLCR,
+            output_mode: OutputMode::OPOST.union(OutputMode::ONLCR),
             control_mode: ControlMode::empty(),
             local_mode: LocalMode::ISIG
-                | LocalMode::ICANON
-                | LocalMode::ECHO
-                | LocalMode::ECHOCTL
-                | LocalMode::ECHOKE,
+                .union(LocalMode::ICANON)
+                .union(LocalMode::ECHO)
+                .union(LocalMode::ECHOCTL)
+                .union(LocalMode::ECHOKE),
             line_discipline: 0,
             control_chars: INIT_CONTROL_CHARS,
         }
     }
 
     /// Returns the default serial configuration.
-    pub fn serial_default() -> Self {
+    pub const fn serial_default() -> Self {
         Self {
             input_mode: InputMode::empty(),
             output_mode: OutputMode::empty(),
-            control_mode: ControlMode::B2400 | ControlMode::CS8,
+            control_mode: ControlMode::B2400.union(ControlMode::CS8),
             local_mode: LocalMode::empty(),
             line_discipline: 0,
             control_chars: INIT_CONTROL_CHARS,
