@@ -72,22 +72,118 @@ pub extern "C" fn rust_main() -> ! {
     }
 }
 
+/// Process 1 — the init process.
+///
+/// 1. Call `setup()` to initialise the root filesystem.
+/// 2. Open `/dev/tty0` as stdin/stdout/stderr.
+/// 3. Fork a child to run `/bin/sh` with `/etc/rc` as stdin.
+/// 4. After the rc-shell exits, loop forever spawning interactive shells.
 fn user_init() -> ! {
-    // Boot-time location of the BIOS drive table (set up by setup.s).
+    use user_lib::{fs, process};
+
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
     user_lib::setup(DRIVE_INFO_ADDR).unwrap();
 
-    let argv: [*const u8; 2] = [c"update".as_ptr().cast(), core::ptr::null()];
-    let envp: [*const u8; 1] = [core::ptr::null()];
-    user_lib::process::execve(
-        c"/usr/root/tmp/test1".as_ptr().cast(),
-        argv.as_ptr(),
-        envp.as_ptr(),
+    // Open /dev/tty0 as fd 0 (stdin), then dup to fd 1 (stdout) and fd 2 (stderr).
+    fs::open(
+        c"/dev/tty0".as_ptr().cast(),
+        fs::OpenFlags::from_raw(fs::AccessMode::ReadWrite as u32),
+        0,
     )
     .unwrap();
+    fs::dup(0).unwrap();
+    fs::dup(0).unwrap();
 
-    user_lib::exit().unwrap();
+    user_lib::println!("hello linux");
 
-    #[allow(clippy::empty_loop)]
-    loop {}
+    // --- Phase 1: run /bin/sh with /etc/rc as stdin ---
+    let pid = user_lib::fork().unwrap();
+    if pid == 0 {
+        fs::close(0).unwrap();
+        if fs::open(
+            c"/etc/rc".as_ptr().cast(),
+            fs::OpenFlags::from_raw(fs::AccessMode::ReadOnly as u32),
+            0,
+        )
+        .is_err()
+        {
+            user_lib::exit().unwrap();
+        }
+        let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
+        let envp_rc: [*const u8; 4] = [
+            c"HOME=/".as_ptr().cast(),
+            c"ENV=/.shinit".as_ptr().cast(),
+            c"TERM=console".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        let _ = process::execve(
+            c"/bin/sh".as_ptr().cast(),
+            argv_rc.as_ptr(),
+            envp_rc.as_ptr(),
+        );
+        user_lib::exit().unwrap();
+        #[allow(clippy::empty_loop)]
+        loop {}
+    }
+
+    // Wait for the rc-shell to finish.
+    if pid > 0 {
+        let mut status = 0u32;
+        loop {
+            let waited = process::waitpid(-1, &mut status as *mut u32, 0);
+            if waited == Ok(pid) {
+                break;
+            }
+        }
+    }
+
+    // --- Phase 2: respawn interactive shells forever ---
+    loop {
+        let pid = match user_lib::fork() {
+            Ok(p) => p,
+            Err(_) => {
+                user_lib::println!("Fork failed in init");
+                continue;
+            }
+        };
+
+        if pid == 0 {
+            // Child: set up a new session with a fresh controlling terminal.
+            fs::close(0).unwrap();
+            fs::close(1).unwrap();
+            fs::close(2).unwrap();
+            process::setsid().unwrap();
+            fs::open(
+                c"/dev/tty0".as_ptr().cast(),
+                fs::OpenFlags::from_raw(fs::AccessMode::ReadWrite as u32),
+                0,
+            )
+            .unwrap();
+            fs::dup(0).unwrap();
+            fs::dup(0).unwrap();
+
+            let argv: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
+            let envp: [*const u8; 4] = [
+                c"HOME=/".as_ptr().cast(),
+                c"ENV=/.shinit".as_ptr().cast(),
+                c"TERM=console".as_ptr().cast(),
+                core::ptr::null(),
+            ];
+            let _ = process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr());
+            user_lib::exit().unwrap();
+            #[allow(clippy::empty_loop)]
+            loop {}
+        }
+
+        // Parent: wait for the shell to exit, then report and restart.
+        let mut status = 0u32;
+        loop {
+            let waited = process::waitpid(-1, &mut status as *mut u32, 0);
+            if waited == Ok(pid) {
+                break;
+            }
+        }
+        user_lib::println!("\nchild {} died with code {:04x}", pid, status);
+        fs::sync().unwrap();
+    }
 }

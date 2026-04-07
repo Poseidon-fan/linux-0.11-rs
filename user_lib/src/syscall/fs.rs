@@ -139,3 +139,4 @@ use_syscall!(crate::syscall::NR_DUP => dup(fd: u32) -> u32);
 use_syscall!(crate::syscall::NR_DUP2 => dup2(oldfd: u32, newfd: u32) -> u32);
 use_syscall!(crate::syscall::NR_MKDIR => mkdir(path: *const u8, mode: u32) -> u32);
 use_syscall!(crate::syscall::NR_RMDIR => rmdir(path: *const u8) -> u32);
+use_syscall!(crate::syscall::NR_SYNC => sync() -> u32);

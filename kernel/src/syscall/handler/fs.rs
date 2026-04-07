@@ -2,7 +2,9 @@ use alloc::sync::Arc;
 use alloc::vec;
 use core::mem;
 use linkme::distributed_slice;
-use user_lib::fs::{AccessMode, OpenFlags, OpenOptions, Stat, Whence};
+use user_lib::fs::{
+    AccessMode, F_DUPFD, F_GETFD, F_GETFL, F_SETFD, F_SETFL, OpenFlags, OpenOptions, Stat, Whence,
+};
 
 use crate::{
     define_syscall_handler,
@@ -21,7 +23,8 @@ use crate::{
         EACCES, EBADF, EBUSY, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTBLK, ENOTDIR, ENOTEMPTY,
         EPERM, EXDEV, SYSCALL_TABLE, context::SyscallContext,
     },
-    task, time,
+    task::{self, task_struct::TASK_OPEN_FILES_LIMIT},
+    time,
 };
 
 define_syscall_handler!(
@@ -643,6 +646,57 @@ define_syscall_handler!(
         buffer::sync_dev(dev);
         MOUNT_TABLE.lock().remove_by_device(dev);
         Ok(0)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_IOCTL = 54,
+    fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (fd, cmd, arg) = ctx.args();
+        let file = get_file(fd)?;
+        file.ioctl(cmd, arg)
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_FCNTL = 55,
+    fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (fd, cmd, arg) = ctx.args();
+        let file = get_file(fd)?;
+
+        match cmd {
+            F_DUPFD => task::current_task().pcb.inner.exclusive(|inner| {
+                let new_fd = (arg as usize..TASK_OPEN_FILES_LIMIT)
+                    .find(|&i| inner.fs.open_files[i].is_none())
+                    .ok_or(EMFILE)?;
+                inner.fs.open_files[new_fd] = Some(Arc::clone(&file));
+                inner.fs.close_on_exec &= !(1 << new_fd);
+                Ok(new_fd as u32)
+            }),
+
+            F_GETFD => {
+                let cloexec = task::current_task()
+                    .pcb
+                    .inner
+                    .exclusive(|inner| (inner.fs.close_on_exec >> fd) & 1);
+                Ok(cloexec)
+            }
+
+            F_SETFD => {
+                task::current_task().pcb.inner.exclusive(|inner| {
+                    if arg & 1 != 0 {
+                        inner.fs.close_on_exec |= 1 << fd;
+                    } else {
+                        inner.fs.close_on_exec &= !(1 << fd);
+                    }
+                });
+                Ok(0)
+            }
+
+            F_GETFL | F_SETFL => Ok(0),
+
+            _ => Err(EINVAL),
+        }
     }
 );
 
