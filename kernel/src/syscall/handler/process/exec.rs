@@ -14,15 +14,15 @@ use crate::{
         path,
     },
     mm::{
+        self,
         address::LinAddr,
         frame::{self, PAGE_SIZE, PhysFrame},
-        page,
         space::{MemorySpace, TASK_LINEAR_SIZE},
     },
     segment::uaccess,
     signal::NSIG,
     syscall::{EACCES, ENOENT, ENOEXEC, ENOMEM, context::SyscallContext},
-    task::{self, task_struct::TASK_OPEN_FILES_LIMIT},
+    task::{self, TASK_OPEN_FILES_LIMIT},
 };
 
 const MAX_ARG_PAGES: usize = 32;
@@ -173,7 +173,7 @@ impl ArgumentPages {
                 }
             }
         }
-        page::invalidate_tlb();
+        mm::invalidate_tlb();
     }
 }
 

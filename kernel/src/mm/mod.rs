@@ -1,11 +1,17 @@
 pub mod address;
 pub mod frame;
 mod heap;
-pub(crate) mod page;
-pub(crate) mod page_fault;
+mod page;
+mod page_fault;
 pub mod space;
 
-use crate::{mm::page::PageEntry, task};
+pub use page::{
+    ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable, PageTableEntry,
+    invalidate_tlb, read_pde, write_pde,
+};
+pub use page_fault::{handle_no_page, handle_wp_page};
+
+use crate::task;
 
 unsafe extern "C" {
     fn ekernel();
@@ -37,7 +43,7 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
             while size > 0 {
                 let lin_page = address::LinAddr(linear_addr).floor();
                 if let Some(pte) = ms.find_pte(lin_page) {
-                    if pte.is_present() && !pte.flags().contains(page::PageFlags::WRITABLE) {
+                    if pte.is_present() && !pte.flags().contains(PageFlags::WRITABLE) {
                         ms.ensure_page_writable(lin_page);
                     }
                 }

@@ -22,13 +22,13 @@ use alloc::sync::Arc;
 
 use user_lib::fs::Stat;
 
+use super::File;
 use crate::{
-    fs::file::File,
     mm::frame::{self, PAGE_SIZE, PhysFrame},
     signal::SIGPIPE,
     sync::KernelCell,
     syscall::{ENOMEM, EPIPE},
-    task::{self, wait_queue::WaitQueue},
+    task::{self, WaitQueue},
 };
 
 const PIPE_BUF_SIZE: usize = PAGE_SIZE;

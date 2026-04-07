@@ -1,24 +1,25 @@
-pub mod current;
+mod current;
 mod gdt;
 mod manager;
 pub mod task_struct;
 mod timer;
-pub mod wait_queue;
+mod wait_queue;
 
 use core::{arch::asm, mem};
 
-pub use current::{current_slot, current_task, try_current_slot};
+pub use current::{cur_irq_state, current_slot, current_task, set_cur_irq_state, try_current_slot};
+pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 pub use manager::{TASK_MANAGER, TASK_NUM};
+pub use task_struct::{TASK_OPEN_FILES_LIMIT, TaskState};
 pub use timer::jiffies;
+pub use wait_queue::WaitQueue;
 
-use self::current::{init_current_task, set_current_task};
 use crate::{
     pmio::{inb_p, outb, outb_p},
     segment,
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
     sync::assert_can_schedule,
-    task::task_struct::TaskState,
-    trap::{TrapHandler, set_intr_gate, set_system_gate},
+    trap::{self, TrapHandler},
 };
 
 /// Returns true if the current process has superuser privileges (euid == 0).
@@ -30,15 +31,13 @@ pub fn is_super() -> bool {
         .exclusive(|inner| inner.identity.euid == 0)
 }
 
+pub const HZ: u32 = 100;
+const LATCH: u16 = (1193180 / HZ) as u16;
+
 unsafe extern "C" {
     /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
     fn system_call();
 }
-
-pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
-
-pub const HZ: u32 = 100;
-const LATCH: u16 = (1193180 / HZ) as u16;
 
 /// Select and switch to the next runnable task.
 ///
@@ -80,7 +79,7 @@ pub fn schedule() {
     let next_slot = next.pcb.slot;
     debug_assert!(next_slot < TASK_NUM);
     // Publish software-visible current task before hardware task switch.
-    set_current_task(&next);
+    current::set_current_task(&next);
     let target = FarPointer {
         // For hardware task switching, only the selector is used.
         offset: 0,
@@ -206,7 +205,7 @@ pub fn init() {
             (task0, tss_addr, ldt_addr)
         })
     };
-    init_current_task(&task0);
+    current::init_current_task(&task0);
 
     // Set TSS and LDT descriptors for task 0 in GDT
     gdt::set_tss_desc(0, tss_addr);
@@ -236,10 +235,10 @@ pub fn init() {
     outb_p(0x36, 0x43);
     outb_p((LATCH & 0xff) as u8, 0x40);
     outb_p((LATCH >> 8) as u8, 0x40);
-    set_intr_gate(0x20, timer::timer_interrupt);
+    trap::set_intr_gate(0x20, timer::timer_interrupt);
     outb(inb_p(0x21) & !0x01, 0x21);
 
-    set_system_gate(0x80, unsafe {
+    trap::set_system_gate(0x80, unsafe {
         mem::transmute::<unsafe extern "C" fn(), TrapHandler>(system_call)
     });
 }

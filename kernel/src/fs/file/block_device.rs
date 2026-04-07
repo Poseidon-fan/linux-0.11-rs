@@ -27,12 +27,12 @@ use core::ptr;
 
 use user_lib::fs::{Stat, Whence};
 
+use super::File;
 use crate::{
     driver::DevNum,
     fs::{
         BLOCK_SIZE,
         buffer::{self, BufferKey},
-        file::File,
         minix::Inode,
     },
     sync::Mutex,

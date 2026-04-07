@@ -2,7 +2,7 @@ use core::cell::RefCell;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::sync::irq::IrqSaveGuard;
+use crate::sync::IrqSaveGuard;
 
 /// IRQ-safe interior mutability wrapper for `static` kernel data.
 ///

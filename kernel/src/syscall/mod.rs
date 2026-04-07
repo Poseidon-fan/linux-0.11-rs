@@ -10,7 +10,7 @@ pub use handler::*;
 
 use crate::{
     signal,
-    task::{self, task_struct::TaskState},
+    task::{self, TaskState},
 };
 
 global_asm!(include_str!("syscall_entry.s"), options(att_syntax));

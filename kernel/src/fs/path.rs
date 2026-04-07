@@ -48,7 +48,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
 ///
 /// The returned parent directory is guaranteed to be a directory inode with
 /// search (execute) permission for the current task.
-pub(crate) fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
+pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
     let parsed_path = ParsedPath::parse(path)?;
     let fs_ctx = task::current_task()
         .pcb
@@ -131,7 +131,7 @@ fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option
 
 bitflags! {
     /// Permission mask bits matching the original kernel's `MAY_*` constants.
-    pub(crate) struct AccessMask: u16 {
+    pub struct AccessMask: u16 {
         const MAY_EXEC  = 1;
         const MAY_WRITE = 2;
         const MAY_READ  = 4;
@@ -146,7 +146,7 @@ bitflags! {
 ///
 /// A deleted file (link_count == 0) is inaccessible to everyone, including
 /// the superuser, matching the original kernel behaviour.
-pub(crate) fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
+pub fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
     let (euid, egid) = task::current_task()
         .pcb
         .inner
@@ -158,7 +158,7 @@ pub(crate) fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
 ///
 /// Used by `sys_access` which checks against the real uid/gid rather than
 /// the effective ones.
-pub(crate) fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) -> bool {
+pub fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) -> bool {
     let inner = inode.inner.lock();
     let disk = &inner.disk_inode;
 

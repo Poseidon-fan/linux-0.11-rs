@@ -1,6 +1,6 @@
-pub mod fs;
-pub mod nosys;
-pub mod process;
+mod fs;
+mod nosys;
+mod process;
 
 use linkme::distributed_slice;
 

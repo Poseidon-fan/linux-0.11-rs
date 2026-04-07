@@ -28,7 +28,7 @@ use crate::{
     fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
     sync::{BusyLock, KernelCell, Mutex},
-    task::wait_queue::WaitQueue,
+    task::WaitQueue,
 };
 
 lazy_static! {
@@ -166,7 +166,7 @@ impl BufferHandle {
     }
 
     /// Return the current binding key, if any.
-    pub(crate) fn key(&self) -> Option<BufferKey> {
+    pub fn key(&self) -> Option<BufferKey> {
         self.meta.exclusive(|meta| meta.key)
     }
 
@@ -201,27 +201,27 @@ impl BufferHandle {
     }
 
     /// Mark the buffer dirty or clean.
-    pub(crate) fn set_dirty(&self, dirty: bool) {
+    pub fn set_dirty(&self, dirty: bool) {
         self.meta.exclusive(|meta| meta.dirty = dirty);
     }
 
     /// Return whether the buffer is dirty.
-    pub(crate) fn is_dirty(&self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.meta.exclusive(|meta| meta.dirty)
     }
 
     /// Mark the buffer up-to-date or invalid.
-    pub(crate) fn set_uptodate(&self, uptodate: bool) {
+    pub fn set_uptodate(&self, uptodate: bool) {
         self.meta.exclusive(|meta| meta.uptodate = uptodate);
     }
 
     /// Return whether the buffer contents are valid.
-    pub(crate) fn is_uptodate(&self) -> bool {
+    pub fn is_uptodate(&self) -> bool {
         self.meta.exclusive(|meta| meta.uptodate)
     }
 
     /// Interpret the block start as one `T` reference.
-    pub(crate) fn as_ref<T>(&self) -> &T {
+    pub fn as_ref<T>(&self) -> &T {
         assert!(
             size_of::<T>() <= BLOCK_SIZE,
             "typed buffer view must fit within one block"
@@ -231,7 +231,7 @@ impl BufferHandle {
     }
 
     /// Interpret the block start as one mutable `T` reference.
-    pub(crate) fn as_mut<T>(&mut self) -> &mut T {
+    pub fn as_mut<T>(&mut self) -> &mut T {
         assert!(
             size_of::<T>() <= BLOCK_SIZE,
             "typed buffer view must fit within one block"
@@ -241,12 +241,12 @@ impl BufferHandle {
     }
 
     /// Read one typed view from the start of this buffer block.
-    pub(crate) fn read<T, R>(&self, reader: impl FnOnce(&T) -> R) -> R {
+    pub fn read<T, R>(&self, reader: impl FnOnce(&T) -> R) -> R {
         reader(self.as_ref::<T>())
     }
 
     /// Mutate one typed view from the start of this buffer block and mark it dirty.
-    pub(crate) fn write<T, R>(&self, writer: impl FnOnce(&mut T) -> R) -> R {
+    pub fn write<T, R>(&self, writer: impl FnOnce(&mut T) -> R) -> R {
         let result = unsafe { writer(&mut *self.data.as_ptr().cast::<T>()) };
         self.set_dirty(true);
         result

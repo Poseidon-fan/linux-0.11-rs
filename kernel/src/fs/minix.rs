@@ -758,11 +758,7 @@ impl InodeTable {
     /// Panics if `id.device` is zero.
     /// Panics if every slot is actively referenced by external code and no
     /// eviction candidate exists.
-    pub(crate) fn get_inode_raw(
-        &mut self,
-        id: InodeId,
-        fs: &Arc<Mutex<MinixFileSystem>>,
-    ) -> Arc<Inode> {
+    pub fn get_inode_raw(&mut self, id: InodeId, fs: &Arc<Mutex<MinixFileSystem>>) -> Arc<Inode> {
         assert_ne!(id.device.0, 0, "iget with dev==0");
 
         if let Some(inode) = self.lookup(id) {

@@ -10,7 +10,7 @@ use crate::{
     segment::uaccess,
     signal::{NSIG, SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
     syscall::{ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
-    task::{self, HZ, TASK_MANAGER, is_super, task_struct::*},
+    task::{self, HZ, TASK_MANAGER, TaskState, is_super, task_struct::*},
     time,
 };
 

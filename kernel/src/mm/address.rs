@@ -1,6 +1,6 @@
 //! This module defines Memory Address structures.
 
-use crate::mm::frame::PAGE_SHIFT;
+use super::frame::PAGE_SHIFT;
 
 const PAGE_OFFSET_MASK: u32 = (1u32 << PAGE_SHIFT) - 1;
 

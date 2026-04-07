@@ -2,11 +2,8 @@ use alloc::sync::Arc;
 
 use user_lib::fs::{AccessMode, OpenOptions, Stat, Whence};
 
-use crate::{
-    fs::{file::File, minix::Inode},
-    sync::Mutex,
-    syscall::EINVAL,
-};
+use super::File;
+use crate::{fs::minix::Inode, sync::Mutex, syscall::EINVAL};
 
 /// Open file object backed by one inode data area.
 ///

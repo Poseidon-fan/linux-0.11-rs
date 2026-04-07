@@ -21,7 +21,7 @@ use vga::CONSOLE;
 use super::tty::Tty;
 use crate::{
     pmio::{inb_p, outb, outb_p},
-    trap::set_intr_gate,
+    trap,
 };
 
 /// Initialize the VGA console and register the keyboard interrupt handler.
@@ -31,7 +31,7 @@ use crate::{
 pub fn init() {
     CONSOLE.exclusive(|vga| vga.detect_and_init());
 
-    set_intr_gate(0x21, keyboard::keyboard_interrupt);
+    trap::set_intr_gate(0x21, keyboard::keyboard_interrupt);
 
     // Unmask IRQ1 (keyboard) on the master 8259A PIC.
     outb_p(inb_p(0x21) & 0xfd, 0x21);
@@ -80,5 +80,5 @@ pub fn flush_output(channel: usize) {
     }
 
     // Wake writers that may be blocked on a full tx queue.
-    crate::task::wait_queue::WaitQueue::wake_up(&Tty::device(channel).output_wait);
+    crate::task::WaitQueue::wake_up(&Tty::device(channel).output_wait);
 }

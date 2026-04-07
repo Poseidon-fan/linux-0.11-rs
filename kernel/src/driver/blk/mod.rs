@@ -9,20 +9,20 @@ use crate::{
     driver::DevNum,
     fs::{BLOCK_SIZE, buffer::BufferHandle},
     sync::KernelCell,
-    task::wait_queue::WaitQueue,
+    task::WaitQueue,
 };
 
 const REQUEST_POOL_CAPACITY: usize = 32;
 const BLOCK_DEVICE_SLOT_COUNT: usize = 7;
 /// All block requests are addressed in 512-byte sectors.
-pub(super) const SECTOR_SIZE: usize = 512;
+const SECTOR_SIZE: usize = 512;
 const BUFFER_BLOCK_SECTOR_COUNT: u32 = (BLOCK_SIZE / SECTOR_SIZE) as u32;
 
 static BLOCK_MANAGER: KernelCell<BlockManager> = KernelCell::new(BlockManager::new());
 static DEVICE_WAIT_QUEUE: WaitQueue = WaitQueue::new();
 
 // Register one block-device major with the shared request queue.
-pub(super) fn register_device(
+fn register_device(
     major: usize,
     request_handler: fn(),
     activate: Option<fn(DevNum)>,
@@ -129,7 +129,7 @@ pub enum BlockRequestType {
 
 /// Cloneable request fields consumed by device request handlers.
 #[derive(Clone)]
-pub(super) struct BlockRequestIo {
+struct BlockRequestIo {
     pub dev: DevNum,
     pub ty: BlockRequestType,
     pub first_sector: u32,

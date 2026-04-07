@@ -1,9 +1,12 @@
-pub mod block_device;
-pub mod char_device;
-pub mod inode;
-pub mod pipe;
+mod block_device;
+mod char_device;
+mod inode;
+mod pipe;
 
+pub use block_device::BlockDeviceFile;
+pub use char_device::CharDeviceFile;
 pub use inode::InodeFile;
+pub use pipe::PipeFile;
 use user_lib::fs::{Stat, Whence};
 
 /// Generic opened file object in kernel.

@@ -10,7 +10,7 @@ use crate::{
     println,
     segment::uaccess,
     sync::KernelCell,
-    trap::set_intr_gate,
+    trap,
 };
 
 static HARD_DISK_MANAGER: KernelCell<HardDiskManager> = KernelCell::new(HardDiskManager::new());
@@ -181,7 +181,7 @@ impl DriveDescriptor {
 /// Register the hard disk block device and install its interrupt gate.
 pub fn init() {
     super::register_device(HARD_DISK_MAJOR, handle_request, None, None);
-    set_intr_gate(0x2E, interrupt::hd_interrupt);
+    trap::set_intr_gate(0x2E, interrupt::hd_interrupt);
 
     // Keep the cascade IRQ enabled on the master PIC and unmask IRQ14 on the slave PIC.
     outb_p(inb_p(0x21) & !0x04, 0x21);

@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::task::current::{cur_irq_state, set_cur_irq_state};
+use crate::task::{cur_irq_state, set_cur_irq_state};
 
 /// RAII guard that masks interrupts for the duration of its lifetime.
 ///

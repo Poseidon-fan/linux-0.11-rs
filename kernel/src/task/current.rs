@@ -73,19 +73,19 @@ pub fn try_current_slot() -> Option<usize> {
 }
 
 /// Initialize current-task tracking with task 0 during boot.
-pub(crate) fn init_current_task(task: &Arc<Task>) {
+pub fn init_current_task(task: &Arc<Task>) {
     let ptr = Arc::as_ptr(task).cast_mut();
     CURRENT_TASK.store(ptr, Ordering::Release);
 }
 
 /// Update current-task pointer before hardware task switch.
-pub(crate) fn set_current_task(task: &Arc<Task>) {
+pub fn set_current_task(task: &Arc<Task>) {
     let ptr = Arc::as_ptr(task).cast_mut();
     CURRENT_TASK.store(ptr, Ordering::Release);
 }
 
 /// Return the packed IRQ state of the currently running task.
-pub(crate) fn cur_irq_state() -> (bool, u8) {
+pub fn cur_irq_state() -> (bool, u8) {
     let ptr = CURRENT_TASK.load(Ordering::Acquire);
     let packed = unsafe {
         // SAFETY:
@@ -101,7 +101,7 @@ pub(crate) fn cur_irq_state() -> (bool, u8) {
 /// Update selected fields of the current task's packed IRQ state.
 ///
 /// Passing `None` keeps the previous value for that field.
-pub(crate) fn set_cur_irq_state(saved_if_enabled: Option<bool>, depth: Option<u8>) {
+pub fn set_cur_irq_state(saved_if_enabled: Option<bool>, depth: Option<u8>) {
     let ptr = CURRENT_TASK.load(Ordering::Acquire);
     unsafe {
         // SAFETY:

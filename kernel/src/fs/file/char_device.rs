@@ -18,9 +18,10 @@ use alloc::sync::Arc;
 
 use user_lib::fs::Stat;
 
+use super::File;
 use crate::{
     driver::{DevNum, chr::tty::Tty},
-    fs::{file::File, minix::Inode},
+    fs::minix::Inode,
     segment::uaccess,
     syscall::*,
     task,

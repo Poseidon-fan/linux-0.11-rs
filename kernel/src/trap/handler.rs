@@ -2,7 +2,7 @@ use core::arch::{asm, naked_asm};
 
 use log::{error, info};
 
-use crate::mm::page_fault;
+use crate::mm;
 
 /// CPU exception frame built by the common entry stubs.
 ///
@@ -322,9 +322,9 @@ extern "C" fn on_page_fault(frame: &ExceptionFrame) {
     }
 
     if frame.error_code & 0x1 == 0 {
-        page_fault::handle_no_page(frame.error_code, fault_addr);
+        mm::handle_no_page(frame.error_code, fault_addr);
     } else {
-        page_fault::handle_wp_page(fault_addr);
+        mm::handle_wp_page(fault_addr);
     }
 }
 

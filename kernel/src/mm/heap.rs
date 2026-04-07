@@ -38,7 +38,7 @@ fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
 }
 
 /// Initializes the kernel heap allocator.
-pub(super) fn init() {
+pub fn init() {
     unsafe {
         HEAP_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }

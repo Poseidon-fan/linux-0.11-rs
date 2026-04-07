@@ -14,4 +14,5 @@ mod mutex;
 
 pub use busy_lock::BusyLock;
 pub use cell::{KernelCell, assert_can_schedule};
+pub use irq::IrqSaveGuard;
 pub use mutex::Mutex;

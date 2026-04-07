@@ -12,20 +12,15 @@ use core::{arch::asm, ptr};
 
 use hashbrown::HashMap;
 
-use crate::{
-    fs::{
-        BLOCK_SIZE,
-        buffer::{self, BufferKey},
-        minix::Inode,
-    },
-    mm::{
-        address::{LinPageNum, PhysAddr, PhysPageNum},
-        frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
-        page::{
-            self, ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable,
-            PageTableEntry,
-        },
-    },
+use super::{
+    ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable, PageTableEntry,
+    address::{LinPageNum, PhysAddr, PhysPageNum},
+    frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
+};
+use crate::fs::{
+    BLOCK_SIZE,
+    buffer::{self, BufferKey},
+    minix::Inode,
 };
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
@@ -80,7 +75,7 @@ impl MemorySpace {
         if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
             let new_flag = pte.flags().union(PageFlags::WRITABLE);
             *pte = PageTableEntry::new(old_ppn, new_flag);
-            page::invalidate_tlb();
+            super::invalidate_tlb();
             return;
         }
         let Some(new_frame) = frame::alloc() else {
@@ -93,7 +88,7 @@ impl MemorySpace {
         );
         // debug_assert!(self.data_frames.contains_key(&fault_page));
         self.data_frames.insert(fault_page, new_frame);
-        page::invalidate_tlb();
+        super::invalidate_tlb();
         Self::copy_page(old_ppn, new_ppn);
     }
 
@@ -118,7 +113,7 @@ impl MemorySpace {
             PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
         );
         self.data_frames.insert(fault_page, frame);
-        page::invalidate_tlb();
+        super::invalidate_tlb();
         Ok(())
     }
 
@@ -148,13 +143,13 @@ impl MemorySpace {
     ///
     /// Returns `None` when the page is outside this memory space range or
     /// when the corresponding PDE is not present.
-    pub(crate) fn find_pte(&mut self, page: LinPageNum) -> Option<&mut PageTableEntry> {
+    pub fn find_pte(&mut self, page: LinPageNum) -> Option<&mut PageTableEntry> {
         let pde_index = page.pde_index();
         if !(self.pde_base..self.pde_base + PDES_PER_PROCESS).contains(&pde_index) {
             return None;
         }
 
-        let pde = page::read_pde(pde_index);
+        let pde = super::read_pde(pde_index);
         if !pde.is_present() {
             return None;
         }
@@ -175,12 +170,12 @@ impl MemorySpace {
 
     /// Allocate a page table for `pde_index` if one does not already exist.
     fn ensure_page_table(&mut self, pde_index: usize) -> Result<(), ()> {
-        if page::read_pde(pde_index).is_present() {
+        if super::read_pde(pde_index).is_present() {
             return Ok(());
         }
         let local = self.local_pde_index(pde_index).ok_or(())?;
         let page_table = PageTable::new().ok_or(())?;
-        page::write_pde(
+        super::write_pde(
             pde_index,
             PageDirectoryEntry::user_page_table(page_table.phys_addr()),
         );
@@ -298,7 +293,7 @@ impl MemorySpace {
             PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
         );
         self.data_frames.insert(fault_page, frame);
-        page::invalidate_tlb();
+        super::invalidate_tlb();
         true
     }
 
@@ -355,7 +350,7 @@ impl MemorySpace {
         let shared_frame = frame::share(phys_addr.into());
         self.data_frames.insert(target_page, shared_frame);
 
-        page::invalidate_tlb();
+        super::invalidate_tlb();
         true
     }
 
@@ -399,13 +394,13 @@ impl MemorySpace {
         let mut child = MemorySpace::new(child_nr);
 
         for i in 0..nr_pdes {
-            let parent_pde = page::read_pde(parent_pde_start + i);
+            let parent_pde = super::read_pde(parent_pde_start + i);
             if !parent_pde.is_present() {
                 continue;
             }
 
             debug_assert!(
-                !page::read_pde(child_pde_start + i).is_present(),
+                !super::read_pde(child_pde_start + i).is_present(),
                 "cow_copy: child PDE {} already present",
                 child_pde_start + i
             );
@@ -456,14 +451,14 @@ impl MemorySpace {
             }
 
             // Install the child's page table in the page directory.
-            page::write_pde(
+            super::write_pde(
                 child_pde_start + i,
                 PageDirectoryEntry::user_page_table(child_pt.phys_addr()),
             );
             child.page_tables[i] = Some(child_pt);
         }
 
-        page::invalidate_tlb();
+        super::invalidate_tlb();
         Ok(child)
     }
 }
@@ -485,10 +480,10 @@ impl Drop for MemorySpace {
         // PageTable frames are freed (otherwise the PDEs would dangle).
         for i in 0..PDES_PER_PROCESS {
             if self.page_tables[i].is_some() {
-                page::write_pde(self.pde_base + i, PageDirectoryEntry::empty());
+                super::write_pde(self.pde_base + i, PageDirectoryEntry::empty());
             }
         }
-        page::invalidate_tlb();
+        super::invalidate_tlb();
 
         // `page_tables` and `data_frames` are dropped automatically after
         // this, which decrements the reference counts for all owned frames.

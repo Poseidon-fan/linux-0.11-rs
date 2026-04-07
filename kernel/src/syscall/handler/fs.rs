@@ -11,22 +11,19 @@ use crate::{
     driver::{self, blk::hd},
     fs::{
         self, buffer,
-        file::{
-            File, InodeFile, block_device::BlockDeviceFile, char_device::CharDeviceFile,
-            pipe::PipeFile,
-        },
+        file::{BlockDeviceFile, CharDeviceFile, File, InodeFile, PipeFile},
         get_inode,
         layout::{InodeMode, InodeType, ROOT_INODE_NUMBER},
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
         mount::{MOUNT_TABLE, Mount},
-        path::{self, AccessMask, check_permission, check_permission_as},
+        path::{self, AccessMask},
     },
     segment::uaccess,
     syscall::{
         EACCES, EBADF, EBUSY, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, ENOTBLK, ENOTDIR, ENOTEMPTY,
         EPERM, EXDEV, SYSCALL_TABLE, context::SyscallContext,
     },
-    task::{self, task_struct::TASK_OPEN_FILES_LIMIT},
+    task::{self, TASK_OPEN_FILES_LIMIT},
     time,
 };
 
@@ -60,7 +57,7 @@ define_syscall_handler!(
         } else {
             match dir.lookup(basename)? {
                 None if open_options.contains(OpenOptions::CREATE) => {
-                    if !check_permission(&dir, AccessMask::MAY_WRITE) {
+                    if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
                         return Err(EACCES);
                     }
                     dir.create_file(basename, mode as u16)?
@@ -83,7 +80,7 @@ define_syscall_handler!(
                         AccessMode::WriteOnly => AccessMask::MAY_WRITE,
                         AccessMode::ReadWrite => AccessMask::MAY_READ | AccessMask::MAY_WRITE,
                     };
-                    if !check_permission(&inode, required) {
+                    if !path::check_permission(&inode, required) {
                         return Err(EPERM);
                     }
                     inode.inner.lock().access_time = time::current_time();
@@ -183,7 +180,7 @@ define_syscall_handler!(
         }
 
         // Check write permission on parent directory
-        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
             return Err(EACCES);
         }
 
@@ -215,7 +212,7 @@ define_syscall_handler!(
         if basename.is_empty() {
             return Err(ENOENT);
         }
-        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
             return Err(EACCES);
         }
 
@@ -249,7 +246,7 @@ define_syscall_handler!(
         if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
             return Err(ENOTDIR);
         }
-        if !check_permission(&inode, AccessMask::MAY_EXEC) {
+        if !path::check_permission(&inode, AccessMask::MAY_EXEC) {
             return Err(EACCES);
         }
 
@@ -271,7 +268,7 @@ define_syscall_handler!(
         if basename.is_empty() {
             return Err(ENOENT);
         }
-        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
             return Err(EACCES);
         }
         if dir.lookup(basename)?.is_some() {
@@ -296,7 +293,7 @@ define_syscall_handler!(
         if basename.is_empty() {
             return Err(ENOENT);
         }
-        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
             return Err(EACCES);
         }
         if dir.lookup(basename)?.is_some() {
@@ -323,7 +320,7 @@ define_syscall_handler!(
         if basename.is_empty() {
             return Err(ENOENT);
         }
-        if !check_permission(&dir, AccessMask::MAY_WRITE) {
+        if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
             return Err(EACCES);
         }
 
@@ -529,7 +526,7 @@ define_syscall_handler!(
             .inner
             .exclusive(|inner| (inner.identity.uid, inner.identity.gid));
 
-        if check_permission_as(&inode, mask, uid, gid) {
+        if path::check_permission_as(&inode, mask, uid, gid) {
             Ok(0)
         } else {
             Err(EACCES)
@@ -726,7 +723,7 @@ define_syscall_handler!(
 );
 
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
-pub(super) fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
+fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()
         .pcb
         .inner

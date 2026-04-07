@@ -8,11 +8,11 @@ use core::{
 
 use lazy_static::lazy_static;
 
+use super::task_struct::*;
 use crate::{
     mm::space::MemorySpace,
     segment::{KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
-    task::task_struct::*,
 };
 
 pub const TASK_NUM: usize = 64;
@@ -38,7 +38,7 @@ impl TaskManager {
     /// Returns:
     /// - `Some(next)` if caller should perform a hardware switch.
     /// - `None` if current task remains unchanged.
-    pub(super) fn select_next_task(&self) -> Option<Arc<Task>> {
+    pub fn select_next_task(&self) -> Option<Arc<Task>> {
         let current_slot = super::current_slot();
         loop {
             // Pick a runnable non-idle task with the largest counter.
@@ -99,7 +99,7 @@ impl TaskManager {
     ///
     /// Returns `(slot, pid)` on success.
     /// Returns `None` if no empty slot is available.
-    pub(crate) fn find_empty_process(&self) -> Option<(usize, u32)> {
+    pub fn find_empty_process(&self) -> Option<(usize, u32)> {
         // Step 1: find a unique PID not used by any existing task.
         let pid = 'retry: loop {
             let previous = self

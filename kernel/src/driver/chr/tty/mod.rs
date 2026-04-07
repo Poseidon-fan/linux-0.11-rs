@@ -11,8 +11,8 @@
 //!   user write  ──► tx ──► flush_output() ──► hardware
 //! ```
 
-pub mod line_discipline;
-pub mod ring_buffer;
+mod line_discipline;
+mod ring_buffer;
 
 use ring_buffer::RingBuffer;
 use user_lib::termios::*;
@@ -21,7 +21,7 @@ use crate::{
     segment::uaccess,
     sync::KernelCell,
     syscall::*,
-    task::{self, wait_queue::WaitQueue},
+    task::{self, WaitQueue},
 };
 
 /// Signature of the backend flush callback. Receives the channel index so the

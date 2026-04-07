@@ -156,7 +156,7 @@ pub const NR_TEST: u32 = 72;
 ///
 /// Returns `Ok(retval)` on success or `Err(errno)` on failure.
 #[inline(always)]
-pub(crate) fn raw_syscall0(nr: u32) -> Result<u32, u32> {
+pub fn raw_syscall0(nr: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -174,7 +174,7 @@ pub(crate) fn raw_syscall0(nr: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **one argument** (in `EBX`).
 #[inline(always)]
-pub(crate) fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
+pub fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -193,7 +193,7 @@ pub(crate) fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **two arguments** (in `EBX`, `ECX`).
 #[inline(always)]
-pub(crate) fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
+pub fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(
@@ -213,7 +213,7 @@ pub(crate) fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
 
 /// Issue a system call with **three arguments** (in `EBX`, `ECX`, `EDX`).
 #[inline(always)]
-pub(crate) fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
+pub fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
     let ret: i32;
     unsafe {
         asm!(

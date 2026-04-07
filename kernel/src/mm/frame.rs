@@ -1,10 +1,7 @@
 use core::ptr;
 
-use crate::{
-    mm::address::{PhysAddr, PhysPageNum},
-    println,
-    sync::KernelCell,
-};
+use super::address::{PhysAddr, PhysPageNum};
+use crate::{println, sync::KernelCell};
 
 pub const PAGE_SHIFT: u32 = 12;
 pub const PAGE_SIZE: usize = 1usize << PAGE_SHIFT;
