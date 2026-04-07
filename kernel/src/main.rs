@@ -110,12 +110,7 @@ fn user_init() -> ! {
             user_lib::exit().unwrap();
         }
         let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
-        let envp_rc: [*const u8; 4] = [
-            c"HOME=/".as_ptr().cast(),
-            c"ENV=/.shinit".as_ptr().cast(),
-            c"TERM=console".as_ptr().cast(),
-            core::ptr::null(),
-        ];
+        let envp_rc: [*const u8; 2] = [c"HOME=/".as_ptr().cast(), core::ptr::null()];
         let _ = process::execve(
             c"/bin/sh".as_ptr().cast(),
             argv_rc.as_ptr(),
@@ -162,13 +157,8 @@ fn user_init() -> ! {
             fs::dup(0).unwrap();
             fs::dup(0).unwrap();
 
-            let argv: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
-            let envp: [*const u8; 4] = [
-                c"HOME=/".as_ptr().cast(),
-                c"ENV=/.shinit".as_ptr().cast(),
-                c"TERM=console".as_ptr().cast(),
-                core::ptr::null(),
-            ];
+            let argv: [*const u8; 2] = [c"-/bin/sh".as_ptr().cast(), core::ptr::null()];
+            let envp: [*const u8; 2] = [c"HOME=/usr/root".as_ptr().cast(), core::ptr::null()];
             let _ = process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr());
             user_lib::exit().unwrap();
             #[allow(clippy::empty_loop)]

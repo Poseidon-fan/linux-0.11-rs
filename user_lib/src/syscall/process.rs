@@ -23,6 +23,7 @@ pub const SIGINT: u32 = 2;
 pub const SIGQUIT: u32 = 3;
 pub const SIGKILL: u32 = 9;
 pub const SIGSEGV: u32 = 11;
+pub const SIGPIPE: u32 = 13;
 pub const SIGALRM: u32 = 14;
 pub const SIGCHLD: u32 = 17;
 pub const SIGSTOP: u32 = 19;

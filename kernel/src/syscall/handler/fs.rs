@@ -11,7 +11,10 @@ use crate::{
     driver::{self, blk::hd},
     fs::{
         self, buffer,
-        file::{File, InodeFile, block_device::BlockDeviceFile, char_device::CharDeviceFile},
+        file::{
+            File, InodeFile, block_device::BlockDeviceFile, char_device::CharDeviceFile,
+            pipe::PipeFile,
+        },
         get_inode,
         layout::{InodeMode, InodeType, ROOT_INODE_NUMBER},
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
@@ -697,6 +700,29 @@ define_syscall_handler!(
 
             _ => Err(EINVAL),
         }
+    }
+);
+
+define_syscall_handler!(
+    user_lib::NR_PIPE = 42,
+    fn sys_pipe(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (fildes_ptr, _, _) = ctx.args();
+        let (reader, writer) = PipeFile::create_pair()?;
+
+        let (fd0, fd1) = task::current_task().pcb.inner.exclusive(|inner| {
+            let fd0 = inner.fs.add_file(reader as Arc<dyn File>).ok_or(EMFILE)?;
+            match inner.fs.add_file(writer as Arc<dyn File>) {
+                Some(fd1) => Ok((fd0, fd1)),
+                None => {
+                    inner.fs.open_files[fd0] = None;
+                    Err(EMFILE)
+                }
+            }
+        })?;
+
+        uaccess::write_u32(fd0 as u32, fildes_ptr as *mut u32);
+        uaccess::write_u32(fd1 as u32, unsafe { (fildes_ptr as *mut u32).add(1) });
+        Ok(0)
     }
 );
 

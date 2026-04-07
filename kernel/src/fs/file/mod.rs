@@ -1,6 +1,7 @@
 pub mod block_device;
 pub mod char_device;
 pub mod inode;
+pub mod pipe;
 
 pub use inode::InodeFile;
 
