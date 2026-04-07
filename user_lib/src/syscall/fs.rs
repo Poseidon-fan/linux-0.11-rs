@@ -89,6 +89,19 @@ impl SyscallArg for Whence {
     }
 }
 
+// ---- fcntl command numbers ----
+
+/// Duplicate file descriptor (find first free fd >= arg).
+pub const F_DUPFD: u32 = 0;
+/// Get close-on-exec flag.
+pub const F_GETFD: u32 = 1;
+/// Set close-on-exec flag.
+pub const F_SETFD: u32 = 2;
+/// Get file status flags.
+pub const F_GETFL: u32 = 3;
+/// Set file status flags.
+pub const F_SETFL: u32 = 4;
+
 /// File metadata structure matching the Linux 0.11 `struct stat` ABI.
 #[repr(C)]
 #[derive(Clone, Copy)]

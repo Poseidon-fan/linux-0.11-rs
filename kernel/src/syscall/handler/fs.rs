@@ -647,7 +647,7 @@ define_syscall_handler!(
 );
 
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
-fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
+pub(super) fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
     task::current_task()
         .pcb
         .inner

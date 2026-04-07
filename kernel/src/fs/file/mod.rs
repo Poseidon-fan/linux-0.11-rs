@@ -19,4 +19,12 @@ pub trait File: Send + Sync {
     fn seek(&self, _offset: i32, _whence: Whence) -> Result<usize, u32> {
         Err(crate::syscall::ESPIPE)
     }
+
+    /// Device-specific control operation.
+    ///
+    /// The default implementation returns `ENOTTY`, which is correct for
+    /// non-device file types (regular files, directories, etc.).
+    fn ioctl(&self, _cmd: u32, _arg: u32) -> Result<u32, u32> {
+        Err(crate::syscall::ENOTTY)
+    }
 }

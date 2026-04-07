@@ -286,4 +286,59 @@ impl Tty {
 
         Ok(sent as u32)
     }
+
+    /// Handle TTY ioctl commands (TCGETS, TCSETS, TIOCGPGRP, etc.).
+    ///
+    /// `arg` is a user-space pointer whose meaning depends on `cmd`:
+    /// - TCGETS / TCSETS*: pointer to a `Termios` struct
+    /// - TIOCGPGRP / TIOCSPGRP: pointer to a `u32` process group ID
+    pub fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32, u32> {
+        match cmd {
+            TCGETS => {
+                let termios = self.state.exclusive(|state| state.termios);
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &termios as *const Termios as *const u8,
+                        core::mem::size_of::<Termios>(),
+                    )
+                };
+                uaccess::write_bytes(bytes, arg as *mut u8);
+                Ok(0)
+            }
+            TCSETSF => {
+                self.state.exclusive(|state| {
+                    state.raw_rx.flush();
+                    state.cooked_rx.flush();
+                    state.pending_lines = 0;
+                });
+                (self.flush_output)(channel);
+                self.set_termios_from_user(arg)
+            }
+            TCSETSW => {
+                (self.flush_output)(channel);
+                self.set_termios_from_user(arg)
+            }
+            TCSETS => self.set_termios_from_user(arg),
+            TIOCGPGRP => {
+                let pgrp = self.state.exclusive(|state| state.foreground_group);
+                uaccess::write_u32(pgrp as u32, arg as *mut u32);
+                Ok(0)
+            }
+            TIOCSPGRP => {
+                let pgrp = uaccess::read_u32(arg as *const u32);
+                self.state
+                    .exclusive(|state| state.foreground_group = pgrp as i32);
+                Ok(0)
+            }
+            _ => Err(EINVAL),
+        }
+    }
+
+    fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32, u32> {
+        let mut buf = [0u8; core::mem::size_of::<Termios>()];
+        uaccess::read_bytes(user_ptr as *const u8, &mut buf);
+        let termios = unsafe { core::ptr::read(buf.as_ptr() as *const Termios) };
+        self.state.exclusive(|state| state.termios = termios);
+        Ok(0)
+    }
 }

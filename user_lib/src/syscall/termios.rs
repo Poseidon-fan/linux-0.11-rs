@@ -3,6 +3,21 @@
 use bitflags::bitflags;
 use core::mem::size_of;
 
+// ---- TTY ioctl command numbers ----
+
+/// Get terminal attributes.
+pub const TCGETS: u32 = 0x5401;
+/// Set terminal attributes immediately.
+pub const TCSETS: u32 = 0x5402;
+/// Set terminal attributes after output drains.
+pub const TCSETSW: u32 = 0x5403;
+/// Flush input, then set terminal attributes after output drains.
+pub const TCSETSF: u32 = 0x5404;
+/// Get foreground process group ID.
+pub const TIOCGPGRP: u32 = 0x540F;
+/// Set foreground process group ID.
+pub const TIOCSPGRP: u32 = 0x5410;
+
 /// Number of control characters stored in `Termios::control_chars`.
 pub const NCCS: usize = 17;
 

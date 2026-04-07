@@ -53,6 +53,33 @@ impl File for CharDeviceFile {
     fn stat(&self) -> Result<Stat, u32> {
         Ok(self.inode.stat())
     }
+
+    fn ioctl(&self, cmd: u32, arg: u32) -> Result<u32, u32> {
+        ioctl_char(self.dev, cmd, arg)
+    }
+}
+
+/// Character device ioctl dispatcher — equivalent of `sys_ioctl`'s
+/// `ioctl_table[MAJOR(dev)]` lookup.
+fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32, u32> {
+    let minor = dev.minor() as usize;
+    match dev.major() {
+        4 => {
+            if minor >= Tty::DEVICE_COUNT {
+                return Err(ENODEV);
+            }
+            Tty::device(minor).ioctl(minor, cmd, arg)
+        }
+        5 => {
+            let tty_nr = task::current_task().pcb.inner.exclusive(|inner| inner.tty);
+            if tty_nr < 0 {
+                return Err(EPERM);
+            }
+            let minor = tty_nr as usize;
+            Tty::device(minor).ioctl(minor, cmd, arg)
+        }
+        _ => Err(ENOTTY),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
