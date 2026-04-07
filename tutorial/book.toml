@@ -1,0 +1,4 @@
+[book]
+title = "Rewrite Linux 0.11 kernel in Rust"
+authors = ["Poseidon"]
+language = "en"
