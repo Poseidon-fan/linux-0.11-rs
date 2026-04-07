@@ -108,7 +108,6 @@ mdbook serve --open
 - [mbrkit](./mbrkit): MBR disk image tool
 - [miniximg](./miniximg): Minix filesystem image tool
 - [tutorial](./tutorial): tutorial and book sources
-- [ref](./ref): original Linux 0.11 source kept for reference
 
 ## 🛣️ Project Status
 
