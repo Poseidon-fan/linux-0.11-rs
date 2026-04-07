@@ -14,6 +14,7 @@
 pub mod line_discipline;
 pub mod ring_buffer;
 
+use ring_buffer::RingBuffer;
 use user_lib::termios::*;
 
 use crate::{
@@ -22,8 +23,6 @@ use crate::{
     syscall::*,
     task::{self, wait_queue::WaitQueue},
 };
-
-use ring_buffer::RingBuffer;
 
 /// Signature of the backend flush callback. Receives the channel index so the
 /// backend can locate the correct [`Tty`] in [`DEVICES`] and drain `tx`.

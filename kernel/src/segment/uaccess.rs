@@ -3,9 +3,8 @@
 //! Reads and writes through the FS segment register, used for kernel/user
 //! data transfer when FS points to a user data segment.
 
-use core::arch::asm;
-
 use alloc::string::String;
+use core::arch::asm;
 
 /// Reads a `u8` from `addr` through the FS segment.
 #[inline]
@@ -114,9 +113,7 @@ pub fn write_bytes(buf: &[u8], addr: *mut u8) {
 /// trick used by `printk` and device drivers.
 #[inline]
 pub fn with_kernel_fs<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
+where F: FnOnce() -> R {
     let saved_fs: u16;
     unsafe {
         asm!(

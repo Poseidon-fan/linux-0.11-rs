@@ -27,8 +27,7 @@
 
 use user_lib::termios::*;
 
-use super::Tty;
-use super::TtyState;
+use super::{Tty, TtyState};
 
 pub struct LineDiscipline;
 

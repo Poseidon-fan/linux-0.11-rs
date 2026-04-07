@@ -1,8 +1,10 @@
 use alloc::sync::Arc;
-use core::array;
-use core::mem::MaybeUninit;
-use core::ptr::{addr_of_mut, write_bytes};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    array,
+    mem::MaybeUninit,
+    ptr::{addr_of_mut, write_bytes},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use lazy_static::lazy_static;
 

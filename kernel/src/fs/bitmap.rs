@@ -4,9 +4,8 @@
 //! and allocation scans those bits in ascending order. Bit 0 is always marked
 //! as occupied during construction so it is never handed out.
 
-use core::array;
-
 use alloc::sync::Arc;
+use core::array;
 
 use crate::fs::{BLOCK_SIZE, buffer::BufferHandle, layout::BitmapBlock};
 

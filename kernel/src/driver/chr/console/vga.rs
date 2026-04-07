@@ -18,8 +18,10 @@
 
 use core::ptr;
 
-use crate::pmio::{inb_p, outb_p};
-use crate::sync::KernelCell;
+use crate::{
+    pmio::{inb_p, outb_p},
+    sync::KernelCell,
+};
 
 /// BIOS data area addresses written by setup.s during boot.
 const ORIG_X: *const u8 = 0x90000 as *const u8;

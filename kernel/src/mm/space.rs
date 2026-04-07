@@ -8,8 +8,8 @@
 //! and data frames (decrementing reference counts), and clears the
 //! corresponding page directory entries in the shared page directory.
 
-use core::arch::asm;
-use core::ptr;
+use core::{arch::asm, ptr};
+
 use hashbrown::HashMap;
 
 use crate::{

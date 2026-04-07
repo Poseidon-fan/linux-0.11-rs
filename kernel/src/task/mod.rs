@@ -7,6 +7,11 @@ pub mod wait_queue;
 
 use core::{arch::asm, mem};
 
+pub use current::{current_slot, current_task, try_current_slot};
+pub use manager::{TASK_MANAGER, TASK_NUM};
+pub use timer::jiffies;
+
+use self::current::{init_current_task, set_current_task};
 use crate::{
     pmio::{inb_p, outb, outb_p},
     segment,
@@ -15,12 +20,6 @@ use crate::{
     task::task_struct::TaskState,
     trap::{TrapHandler, set_intr_gate, set_system_gate},
 };
-
-use self::current::{init_current_task, set_current_task};
-
-pub use current::{current_slot, current_task, try_current_slot};
-pub use manager::{TASK_MANAGER, TASK_NUM};
-pub use timer::jiffies;
 
 /// Returns true if the current process has superuser privileges (euid == 0).
 #[inline]

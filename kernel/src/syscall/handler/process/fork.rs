@@ -1,10 +1,9 @@
+use alloc::sync::Arc;
+
 use linkme::distributed_slice;
 
 #[allow(unused_imports)]
 use crate::syscall::SYSCALL_TABLE;
-
-use alloc::sync::Arc;
-
 use crate::{
     define_syscall_handler,
     mm::space::TASK_LINEAR_SIZE,

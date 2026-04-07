@@ -1,6 +1,6 @@
-use alloc::sync::Arc;
-use alloc::vec;
+use alloc::{sync::Arc, vec};
 use core::mem;
+
 use linkme::distributed_slice;
 use user_lib::fs::{
     AccessMode, F_DUPFD, F_GETFD, F_GETFL, F_SETFD, F_SETFL, OpenFlags, OpenOptions, Stat, Whence,

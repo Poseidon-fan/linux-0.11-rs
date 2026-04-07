@@ -8,9 +8,8 @@ use core::hint::spin_loop;
 use bitflags::bitflags;
 use log::warn;
 
-use crate::pmio::{inb, inb_p, outb, outb_p};
-
 use super::{DriveGeometry, HARD_DISK_MANAGER, InterruptPhase};
+use crate::pmio::{inb, inb_p, outb, outb_p};
 
 /// Primary ATA task-file data register.
 pub const DATA_PORT: u16 = 0x1F0;

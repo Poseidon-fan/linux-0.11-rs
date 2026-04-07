@@ -2,6 +2,7 @@
 
 use core::arch::naked_asm;
 
+use super::{HARD_DISK_MANAGER, InterruptPhase, handle_request, mark_request_error};
 use crate::{
     driver::blk::{
         self, BLOCK_MANAGER, SECTOR_SIZE,
@@ -13,8 +14,6 @@ use crate::{
     pmio::{outb, port_read_words, port_write_words},
     println,
 };
-
-use super::{HARD_DISK_MANAGER, InterruptPhase, handle_request, mark_request_error};
 
 /// IRQ14 entry stub for the hard disk controller.
 ///

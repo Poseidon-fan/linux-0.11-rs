@@ -1,7 +1,6 @@
 use alloc::sync::Arc;
-use user_lib::fs::{AccessMode, OpenOptions};
 
-use user_lib::fs::{Stat, Whence};
+use user_lib::fs::{AccessMode, OpenOptions, Stat, Whence};
 
 use crate::{
     fs::{file::File, minix::Inode},

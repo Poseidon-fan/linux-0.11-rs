@@ -4,6 +4,7 @@
 //! resolution code can reuse one structured view of the input path.
 
 use alloc::sync::Arc;
+
 use bitflags::bitflags;
 
 use crate::{

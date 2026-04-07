@@ -1,12 +1,10 @@
 use alloc::string::String;
-use core::arch::asm;
-use core::mem;
+use core::{arch::asm, mem};
 
 use linkme::distributed_slice;
 
 #[allow(unused_imports)]
 use crate::syscall::SYSCALL_TABLE;
-
 use crate::{
     define_syscall_handler,
     fs::{

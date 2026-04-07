@@ -32,9 +32,7 @@ impl<T> KernelCell<T> {
     /// Runs `f` with exclusive access while IRQs are masked.
     #[inline]
     pub fn exclusive<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut T) -> R,
-    {
+    where F: FnOnce(&mut T) -> R {
         let _irq = IrqSaveGuard::enter();
         let _borrow = BorrowGuard::enter();
         f(&mut *self.inner.borrow_mut())
@@ -48,9 +46,7 @@ impl<T> KernelCell<T> {
     /// or inside an interrupt handler that already holds IRQs masked).
     #[inline]
     pub unsafe fn exclusive_unchecked<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut T) -> R,
-    {
+    where F: FnOnce(&mut T) -> R {
         let _borrow = BorrowGuard::enter();
         f(&mut *self.inner.borrow_mut())
     }

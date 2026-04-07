@@ -1,8 +1,8 @@
 pub mod hd;
 
+use alloc::sync::Arc;
 use core::ptr::NonNull;
 
-use alloc::sync::Arc;
 use log::warn;
 
 use crate::{

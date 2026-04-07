@@ -4,7 +4,6 @@ pub mod inode;
 pub mod pipe;
 
 pub use inode::InodeFile;
-
 use user_lib::fs::{Stat, Whence};
 
 /// Generic opened file object in kernel.

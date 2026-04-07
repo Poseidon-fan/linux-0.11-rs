@@ -1,7 +1,8 @@
 //! TTY configuration types with an ioctl-compatible C layout.
 
-use bitflags::bitflags;
 use core::mem::size_of;
+
+use bitflags::bitflags;
 
 // ---- TTY ioctl command numbers ----
 

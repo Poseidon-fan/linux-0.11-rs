@@ -16,11 +16,13 @@
 mod keyboard;
 mod vga;
 
-use crate::pmio::{inb_p, outb, outb_p};
-use crate::trap::set_intr_gate;
+use vga::CONSOLE;
 
 use super::tty::Tty;
-use vga::CONSOLE;
+use crate::{
+    pmio::{inb_p, outb, outb_p},
+    trap::set_intr_gate,
+};
 
 /// Initialize the VGA console and register the keyboard interrupt handler.
 ///

@@ -4,12 +4,12 @@ mod descriptor;
 mod selector;
 pub mod uaccess;
 
+use core::arch::{asm, naked_asm};
+
 pub use descriptor::Descriptor;
 pub use selector::{
     KERNEL_CS, KERNEL_DS, SegmentSelector, USER_CS, USER_DS, ldt_selector, tss_selector,
 };
-
-use core::arch::{asm, naked_asm};
 
 /// Loads the Task Register with a TSS selector (`ltr` instruction).
 #[inline]

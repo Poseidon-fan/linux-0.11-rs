@@ -16,13 +16,15 @@
 //!                                └─ cursor keys: push ESC [ <letter> sequence
 //! ```
 
-use bitflags::bitflags;
 use core::arch::naked_asm;
 
-use crate::pmio::{inb, outb};
-use crate::sync::KernelCell;
+use bitflags::bitflags;
 
 use super::super::tty::Tty;
+use crate::{
+    pmio::{inb, outb},
+    sync::KernelCell,
+};
 
 bitflags! {
     /// Active modifier key state, tracked across make/break scan codes.

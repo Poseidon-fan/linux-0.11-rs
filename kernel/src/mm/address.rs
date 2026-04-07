@@ -15,7 +15,7 @@ const PAGE_OFFSET_MASK: u32 = (1u32 << PAGE_SHIFT) - 1;
 /// # Linear Address Structure (32-bit, 4KB pages)
 ///
 /// ```text
-//  31                22 21                12 11                 0
+///  31                22 21                12 11                 0
 /// +--------------------+--------------------+--------------------+
 /// | Page Directory Idx |   Page Table Idx   |    Page Offset     |
 /// +--------------------+--------------------+--------------------+

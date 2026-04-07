@@ -10,12 +10,11 @@
 
 use alloc::sync::{Arc, Weak};
 
+use super::task_struct::{Task, TaskState, TaskState::Running};
 use crate::{
     sync::{KernelCell, assert_can_schedule},
     task,
 };
-
-use super::task_struct::{Task, TaskState, TaskState::Running};
 
 /// Single-slot wait queue.
 pub struct WaitQueue {
