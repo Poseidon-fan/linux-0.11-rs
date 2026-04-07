@@ -18,7 +18,7 @@ use crate::{
 
 use self::current::{init_current_task, set_current_task};
 
-pub use current::{current_slot, current_task};
+pub use current::{current_slot, current_task, try_current_slot};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 pub use timer::jiffies;
 

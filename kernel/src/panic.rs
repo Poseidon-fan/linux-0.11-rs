@@ -1,23 +1,35 @@
+use core::{hint::spin_loop, panic::PanicInfo};
+
 use log::error;
 
-use crate::println;
+use crate::{fs, println, task};
 
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
     match info.location() {
         Some(location) => {
             println!(
-                "[kernel] Panicked at {}:{} {}",
+                "Kernel panic: {} ({}:{})",
+                info.message(),
                 location.file(),
                 location.line(),
-                info.message()
             );
         }
         None => {
-            println!("[kernel] Panicked: {}", info.message());
+            println!("Kernel panic: {}", info.message());
         }
     }
-    loop {}
+    match task::try_current_slot() {
+        Some(0) => {
+            println!("In swapper task - not syncing");
+        }
+        Some(_) => fs::sync(),
+        None => {}
+    }
+
+    loop {
+        spin_loop();
+    }
 }
 
 #[unsafe(no_mangle)]

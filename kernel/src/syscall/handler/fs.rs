@@ -510,8 +510,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_SYNC = 36,
     fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        INODE_TABLE.lock().sync_inodes();
-        buffer::sync_buffers();
+        fs::sync();
         Ok(0)
     }
 );

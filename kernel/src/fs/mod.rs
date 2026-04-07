@@ -21,6 +21,12 @@ pub mod minix;
 pub mod mount;
 pub mod path;
 
+/// Flush all dirty inode and buffer-cache state to disk.
+pub fn sync() {
+    INODE_TABLE.lock().sync_inodes();
+    buffer::sync_buffers();
+}
+
 /// Filesystem logical block size in bytes.
 pub const BLOCK_SIZE: usize = 1024;
 

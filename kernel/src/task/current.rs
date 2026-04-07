@@ -31,25 +31,45 @@ const IRQ_DEPTH_MASK: u8 = 0x7f;
 ///
 /// Panics if called before `task::init()` initializes current-task tracking.
 pub fn current_task() -> Arc<Task> {
-    let ptr = CURRENT_TASK.load(Ordering::Acquire);
-    assert!(
-        !ptr.is_null(),
-        "current_task called before task::init initialized current task",
-    );
+    try_current_task().expect("current_task called before task::init initialized current task")
+}
 
-    unsafe {
+/// Return the current task as a strong `Arc` when task tracking is initialized.
+pub fn try_current_task() -> Option<Arc<Task>> {
+    let ptr = CURRENT_TASK.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
+    }
+
+    Some(unsafe {
         // SAFETY:
         // - `ptr` comes from `Arc::as_ptr` in init/set path.
         // - The task table keeps a long-lived strong reference.
         Arc::increment_strong_count(ptr.cast_const());
         Arc::from_raw(ptr.cast_const())
-    }
+    })
 }
 
 /// Return the current task's slot index.
 #[inline]
 pub fn current_slot() -> usize {
     current_task().pcb.slot
+}
+
+/// Return the current task's slot index when task tracking is initialized.
+#[inline]
+pub fn try_current_slot() -> Option<usize> {
+    let ptr = CURRENT_TASK.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
+    }
+
+    Some(unsafe {
+        // SAFETY:
+        // - `ptr` is the stable `Arc::as_ptr` stored in `CURRENT_TASK`.
+        // - The currently running task stays alive while it is scheduled.
+        (*ptr).pcb.slot
+    })
 }
 
 /// Initialize current-task tracking with task 0 during boot.
