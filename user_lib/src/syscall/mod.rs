@@ -36,6 +36,7 @@
 
 pub mod fs;
 pub mod process;
+pub mod termios;
 
 use core::arch::asm;
 
