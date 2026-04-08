@@ -16,7 +16,6 @@ use crate::{
         path,
     },
     mm::{
-        self,
         address::LinAddr,
         frame::{self, PAGE_SIZE, PhysFrame},
         space::{MemorySpace, TASK_LINEAR_SIZE},
@@ -173,7 +172,6 @@ impl ArgumentPages {
                 }
             }
         }
-        mm::invalidate_tlb();
     }
 }
 

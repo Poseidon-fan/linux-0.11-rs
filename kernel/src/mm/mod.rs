@@ -56,7 +56,7 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
                 let lin_page = address::LinAddr(linear_addr).floor();
                 if let Some(pte) = ms.find_pte(lin_page) {
                     if pte.is_present() && !pte.flags().contains(PageFlags::WRITABLE) {
-                        ms.ensure_page_writable(lin_page);
+                        let _ = ms.ensure_page_writable(lin_page);
                     }
                 }
                 size = size.saturating_sub(frame::PAGE_SIZE as u32);

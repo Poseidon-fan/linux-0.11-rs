@@ -7,8 +7,13 @@
 //! Dropping a `MemorySpace` automatically releases all owned page tables
 //! and data frames (decrementing reference counts), and clears the
 //! corresponding page directory entries in the shared page directory.
+//!
+//! # TLB consistency
+//!
+//! All public methods that modify page table entries flush the TLB before
+//! returning.  Callers never need to invalidate the TLB themselves.
 
-use core::arch::asm;
+use core::ptr;
 
 use hashbrown::HashMap;
 
@@ -17,6 +22,7 @@ use super::{
     address::{LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
 };
+use crate::syscall::ENOMEM;
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
 const PDES_PER_PROCESS: usize = 16;
@@ -24,8 +30,8 @@ const PDES_PER_PROCESS: usize = 16;
 /// Linear address space size per task slot (64MB).
 pub const TASK_LINEAR_SIZE: u32 = (PDES_PER_PROCESS * ENTRIES_PER_TABLE * PAGE_SIZE) as u32;
 
-/// Number of PTEs to copy when forking from task 0 (640KB / 4KB = 160).
-const TASK0_NR_PAGES: usize = 0xA0;
+/// Number of PTEs to copy when forking from task 0 (640KB).
+const TASK0_NR_PAGES: usize = 0xA0000 / PAGE_SIZE;
 
 /// A process's virtual memory space.
 ///
@@ -44,34 +50,6 @@ pub struct MemorySpace {
     /// Starting index in the shared page directory for this process.
     /// For process n, this is `n * 16`.
     pde_base: usize,
-}
-
-/// Copy one 4KB physical page via raw x86 loads/stores.
-///
-/// Uses inline assembly because Rust's `ptr::copy` rejects null pointers,
-/// but physical address 0 is a valid source in this bare-metal kernel.
-fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
-    let src_phys: PhysAddr = src_page.into();
-    let dst_phys: PhysAddr = dst_page.into();
-    let src = src_phys.as_u32();
-    let dst = dst_phys.as_u32();
-    let words = PAGE_SIZE / 4;
-    unsafe {
-        asm!(
-            "1:",
-            "mov ({src}), {tmp:e}",
-            "mov {tmp:e}, ({dst})",
-            "add $4, {src}",
-            "add $4, {dst}",
-            "sub $1, {words}",
-            "jnz 1b",
-            src = in(reg) src,
-            dst = in(reg) dst,
-            words = in(reg) words,
-            tmp = out(reg) _,
-            options(att_syntax, nostack),
-        );
-    }
 }
 
 impl MemorySpace {
@@ -122,12 +100,12 @@ impl MemorySpace {
     }
 
     /// Allocate a page table for `pde_index` if one does not already exist.
-    fn ensure_page_table(&mut self, pde_index: usize) -> Result<(), ()> {
+    fn ensure_page_table(&mut self, pde_index: usize) -> Result<(), u32> {
         if super::read_pde(pde_index).is_present() {
             return Ok(());
         }
-        let local = self.local_pde_index(pde_index).ok_or(())?;
-        let page_table = PageTable::new().ok_or(())?;
+        let local = self.local_pde_index(pde_index).ok_or(ENOMEM)?;
+        let page_table = PageTable::new().ok_or(ENOMEM)?;
         super::write_pde(
             pde_index,
             PageDirectoryEntry::user_page_table(page_table.phys_addr()),
@@ -138,38 +116,37 @@ impl MemorySpace {
 
     /// Map a pre-allocated physical frame at the given linear page address.
     ///
-    /// Ownership of `frame` is transferred into this memory space. If the
-    /// target PDE slot is outside this space's range or a page table cannot
-    /// be allocated, the frame is returned to the caller via `Err`.
-    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), PhysFrame> {
-        if self.ensure_page_table(lin_page.pde_index()).is_err() {
-            return Err(frame);
-        }
-        let pte = match self.find_pte(lin_page) {
-            Some(pte) => pte,
-            None => return Err(frame),
+    /// Ownership of `frame` is transferred into this memory space.  On
+    /// failure the frame is dropped (freed) and `ENOMEM` is returned.
+    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), u32> {
+        self.ensure_page_table(lin_page.pde_index())?;
+        let Some(pte) = self.find_pte(lin_page) else {
+            return Err(ENOMEM);
         };
         let ppn = frame.ppn;
         *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
         self.data_frames.insert(lin_page, frame);
+        super::invalidate_tlb();
         Ok(())
     }
 
     /// Ensure `fault_page` is mapped to a present, writable, user page.
     ///
-    /// This is the anonymous-demand-paging path for no-present page faults:
+    /// This is the anonymous-demand-paging path for not-present page faults:
     /// - Allocate a page table when the PDE is missing.
     /// - Allocate a zeroed data frame.
     /// - Install a user/writable/present PTE.
-    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), ()> {
+    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), u32> {
         self.ensure_page_table(fault_page.pde_index())?;
 
-        let pte = self.find_pte(fault_page).ok_or(())?;
+        let Some(pte) = self.find_pte(fault_page) else {
+            return Err(ENOMEM);
+        };
         if pte.is_present() {
             return Ok(());
         }
 
-        let frame = frame::alloc().ok_or(())?;
+        let frame = frame::alloc().ok_or(ENOMEM)?;
         let ppn = frame.ppn;
         *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
         self.data_frames.insert(fault_page, frame);
@@ -181,67 +158,63 @@ impl MemorySpace {
     ///
     /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
     /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
-    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) {
-        let pte = self.find_pte(fault_page).expect("find pte failed");
+    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) -> Result<(), u32> {
+        let pte = self
+            .find_pte(fault_page)
+            .expect("ensure_page_writable: PTE not found");
         let old_phys_addr = pte.phys_addr();
         let old_ppn = old_phys_addr.into();
         if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
             let new_flag = pte.flags().union(PageFlags::WRITABLE);
             *pte = PageTableEntry::new(old_ppn, new_flag);
             super::invalidate_tlb();
-            return;
+            return Ok(());
         }
-        let Some(new_frame) = frame::alloc() else {
-            todo!("oom")
-        };
+        let new_frame = frame::alloc().ok_or(ENOMEM)?;
         let new_ppn = new_frame.ppn;
         *pte = PageTableEntry::new(new_ppn, PageFlags::USER_RW);
         self.data_frames.insert(fault_page, new_frame);
         super::invalidate_tlb();
         copy_page(old_ppn, new_ppn);
+        Ok(())
     }
 
     /// Try to share a page from `source_space` at `source_page`.
     ///
-    /// Succeeds only when the source page is present and clean (not dirty).
-    /// On success, both PTEs are write-protected and the physical frame's
-    /// reference count is incremented.
+    /// Returns `Ok(true)` when the page was successfully shared (both PTEs
+    /// are write-protected and the frame's reference count is incremented).
+    ///
+    /// Returns `Ok(false)` when the source page is not eligible for sharing
+    /// (not present, dirty, below LOW_MEM, or target already mapped).
+    ///
+    /// Returns `Err(ENOMEM)` when a page table allocation fails.
     pub fn try_share_from(
         &mut self,
         source_space: &mut MemorySpace,
         source_page: LinPageNum,
         target_page: LinPageNum,
-    ) -> bool {
-        let source_pte = match source_space.find_pte(source_page) {
-            Some(pte) => pte,
-            None => return false,
+    ) -> Result<bool, u32> {
+        let Some(source_pte) = source_space.find_pte(source_page) else {
+            return Ok(false);
         };
 
-        if !source_pte.is_present() {
-            return false;
-        }
-
-        // Only share clean (non-dirty) pages.
-        if source_pte.flags().contains(PageFlags::DIRTY) {
-            return false;
+        if !source_pte.is_present() || source_pte.flags().contains(PageFlags::DIRTY) {
+            return Ok(false);
         }
 
         let phys_addr = source_pte.phys_addr();
         if phys_addr.as_u32() < LOW_MEM {
-            return false;
+            return Ok(false);
         }
 
-        if self.ensure_page_table(target_page.pde_index()).is_err() {
-            return false;
-        }
+        self.ensure_page_table(target_page.pde_index())?;
 
-        let target_pte = match self.find_pte(target_page) {
-            Some(pte) => pte,
-            None => return false,
+        let Some(target_pte) = self.find_pte(target_page) else {
+            return Ok(false);
         };
 
         if target_pte.is_present() {
-            return false;
+            return Ok(false);
         }
 
         // Write-protect the source page for COW semantics.
@@ -255,7 +228,7 @@ impl MemorySpace {
         self.data_frames.insert(target_page, shared_frame);
 
         super::invalidate_tlb();
-        true
+        Ok(true)
     }
 
     /// Create a COW (Copy-on-Write) copy of this memory space for fork.
@@ -283,16 +256,15 @@ impl MemorySpace {
     ///
     /// # Returns
     ///
-    /// A new `MemorySpace` for the child on success, or `Err(())` if a
+    /// A new `MemorySpace` for the child on success, or `Err(ENOMEM)` if a
     /// page table frame could not be allocated.  On failure, any partially
     /// built state is cleaned up automatically when the returned
     /// `MemorySpace` is dropped.
-    pub fn cow_copy(&self, child_nr: usize, data_limit: u32) -> Result<MemorySpace, ()> {
+    pub fn cow_copy(&mut self, child_nr: usize, data_limit: u32) -> Result<MemorySpace, u32> {
         let parent_pde_start = self.pde_base;
         let child_pde_start = child_nr * PDES_PER_PROCESS;
         let is_task0 = parent_pde_start == 0;
 
-        // Round data_limit up to 4MB boundary, then convert to PDE count.
         let nr_pdes = (data_limit as usize)
             .div_ceil(ENTRIES_PER_TABLE * PAGE_SIZE)
             .min(PDES_PER_PROCESS);
@@ -311,23 +283,20 @@ impl MemorySpace {
                 child_pde_start + i
             );
 
-            let mut child_pt = PageTable::new().ok_or(())?;
+            let mut child_pt = PageTable::new().ok_or(ENOMEM)?;
 
-            // Interpret the parent's page table as a PTE slice.
             let parent_ptes = unsafe {
                 &mut *(parent_pde
                     .phys_addr()
                     .as_mut_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>())
             };
 
-            // Task 0 special case: only copy first 640KB.
             let nr_entries = if is_task0 {
                 TASK0_NR_PAGES
             } else {
                 ENTRIES_PER_TABLE
             };
 
-            // Copy present PTEs with COW semantics.
             let child_ptes = child_pt.as_pte_array_mut();
             for (j, (parent_pte, child_pte)) in parent_ptes[..nr_entries]
                 .iter_mut()
@@ -338,15 +307,14 @@ impl MemorySpace {
                 let cow_pte = parent_pte.without_writable();
                 *child_pte = cow_pte;
 
-                // Pages >= LOW_MEM participate in COW reference counting.
                 let parent_ppn = parent_pte.ppn();
                 let parent_phys: PhysAddr = parent_ppn.into();
                 if parent_phys.as_u32() >= LOW_MEM {
                     *parent_pte = cow_pte;
                     let parent_lin_page = LinPageNum::from_indices(parent_pde_start + i, j);
-                    assert!(
+                    debug_assert!(
                         self.data_frames.contains_key(&parent_lin_page),
-                        "cow_copy invariant broken: parent missing frame handle for lin_page={} phys={:#x} pde_base={}",
+                        "cow_copy: parent missing frame handle for lin_page={} phys={:#x} pde_base={}",
                         parent_lin_page.as_u32(),
                         parent_phys.as_u32(),
                         self.pde_base
@@ -356,7 +324,6 @@ impl MemorySpace {
                 }
             }
 
-            // Install the child's page table in the page directory.
             super::write_pde(
                 child_pde_start + i,
                 PageDirectoryEntry::user_page_table(child_pt.phys_addr()),
@@ -376,22 +343,28 @@ impl Drop for MemorySpace {
             return;
         }
 
-        // Never free task 0's kernel page directory entries.
         assert!(
             self.pde_base != 0,
             "Trying to free kernel memory space (task 0)"
         );
 
-        // Clear our PDEs in the shared page directory before the
-        // PageTable frames are freed (otherwise the PDEs would dangle).
         for i in 0..PDES_PER_PROCESS {
             if self.page_tables[i].is_some() {
                 super::write_pde(self.pde_base + i, PageDirectoryEntry::empty());
             }
         }
         super::invalidate_tlb();
+    }
+}
 
-        // `page_tables` and `data_frames` are dropped automatically after
-        // this, which decrements the reference counts for all owned frames.
+/// Copy one 4KB physical page.
+///
+/// Both `src_page` and `dst_page` must be valid allocated frames
+/// (physical addresses well above zero).
+fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
+    let src: PhysAddr = src_page.into();
+    let dst: PhysAddr = dst_page.into();
+    unsafe {
+        ptr::copy_nonoverlapping(src.as_ptr::<u8>(), dst.as_mut_ptr::<u8>(), PAGE_SIZE);
     }
 }

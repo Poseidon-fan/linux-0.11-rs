@@ -49,7 +49,7 @@ define_syscall_handler!(
 
             let child_memory_space = p
                 .memory_space
-                .as_ref()
+                .as_mut()
                 .expect("parent has no memory space")
                 .cow_copy(slot, data_limit)
                 .map_err(|_| EAGAIN)?;

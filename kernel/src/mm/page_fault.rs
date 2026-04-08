@@ -67,7 +67,6 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
                     ms.map_page(fault_page, frame).is_ok()
                 });
                 if mapped {
-                    super::invalidate_tlb();
                     return;
                 }
             }
@@ -181,7 +180,9 @@ fn try_share_page(fault_page: LinPageNum, exe_inode: &Arc<Inode>, current_pde_ba
                         Some(ms) => ms,
                         None => return false,
                     };
-                    target_ms.try_share_from(source_ms, source_page, fault_page)
+                    target_ms
+                        .try_share_from(source_ms, source_page, fault_page)
+                        .unwrap_or(false)
                 })
             });
 
@@ -202,5 +203,6 @@ pub fn handle_wp_page(address: u32) {
             .as_mut()
             .expect("handle_wp_page: current task has no memory space")
             .ensure_page_writable(fault_page)
+            .expect("handle_wp_page: out of memory during COW")
     });
 }
