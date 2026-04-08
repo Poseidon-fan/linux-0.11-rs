@@ -46,6 +46,34 @@ pub struct MemorySpace {
     pde_base: usize,
 }
 
+/// Copy one 4KB physical page via raw x86 loads/stores.
+///
+/// Uses inline assembly because Rust's `ptr::copy` rejects null pointers,
+/// but physical address 0 is a valid source in this bare-metal kernel.
+fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
+    let src_phys: PhysAddr = src_page.into();
+    let dst_phys: PhysAddr = dst_page.into();
+    let src = src_phys.as_u32();
+    let dst = dst_phys.as_u32();
+    let words = PAGE_SIZE / 4;
+    unsafe {
+        asm!(
+            "1:",
+            "mov ({src}), {tmp:e}",
+            "mov {tmp:e}, ({dst})",
+            "add $4, {src}",
+            "add $4, {dst}",
+            "sub $1, {words}",
+            "jnz 1b",
+            src = in(reg) src,
+            dst = in(reg) dst,
+            words = in(reg) words,
+            tmp = out(reg) _,
+            options(att_syntax, nostack),
+        );
+    }
+}
+
 impl MemorySpace {
     /// Create an empty memory space for the given task slot.
     ///
@@ -59,70 +87,9 @@ impl MemorySpace {
         }
     }
 
-    /// Ensure the faulting page mapping becomes writable.
-    ///
-    /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
-    /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
-    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) {
-        let pte = self.find_pte(fault_page).expect("find pte failed");
-        let old_phys_addr = pte.phys_addr();
-        let old_ppn = old_phys_addr.into();
-        if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
-            let new_flag = pte.flags().union(PageFlags::WRITABLE);
-            *pte = PageTableEntry::new(old_ppn, new_flag);
-            super::invalidate_tlb();
-            return;
-        }
-        let Some(new_frame) = frame::alloc() else {
-            todo!("oom")
-        };
-        let new_ppn = new_frame.ppn;
-        *pte = PageTableEntry::new(new_ppn, PageFlags::USER_RW);
-        // debug_assert!(self.data_frames.contains_key(&fault_page));
-        self.data_frames.insert(fault_page, new_frame);
-        super::invalidate_tlb();
-        Self::copy_page(old_ppn, new_ppn);
-    }
-
-    /// Ensure `fault_page` is mapped to a present, writable, user page.
-    ///
-    /// This is the anonymous-demand-paging path for no-present page faults:
-    /// - Allocate a page table when the PDE is missing.
-    /// - Allocate a zeroed data frame.
-    /// - Install a user/writable/present PTE.
-    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), ()> {
-        self.ensure_page_table(fault_page.pde_index())?;
-
-        let pte = self.find_pte(fault_page).ok_or(())?;
-        if pte.is_present() {
-            return Ok(());
-        }
-
-        let frame = frame::alloc().ok_or(())?;
-        let ppn = frame.ppn;
-        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
-        self.data_frames.insert(fault_page, frame);
-        super::invalidate_tlb();
-        Ok(())
-    }
-
-    /// Map a pre-allocated physical frame at the given linear page address.
-    ///
-    /// Ownership of `frame` is transferred into this memory space. If the
-    /// target PDE slot is outside this space's range or a page table cannot
-    /// be allocated, the frame is returned to the caller via `Err`.
-    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), PhysFrame> {
-        if self.ensure_page_table(lin_page.pde_index()).is_err() {
-            return Err(frame);
-        }
-        let pte = match self.find_pte(lin_page) {
-            Some(pte) => pte,
-            None => return Err(frame),
-        };
-        let ppn = frame.ppn;
-        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
-        self.data_frames.insert(lin_page, frame);
-        Ok(())
+    /// Starting PDE index for this process in the shared page directory.
+    pub fn pde_base(&self) -> usize {
+        self.pde_base
     }
 
     /// Find the mutable PTE for a linear page.
@@ -169,36 +136,69 @@ impl MemorySpace {
         Ok(())
     }
 
-    /// Copy one 4KB page from `src_page` to `dst_page`.
-    fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
-        let src_phys: PhysAddr = src_page.into();
-        let dst_phys: PhysAddr = dst_page.into();
-        // Use raw x86 loads/stores so physical address 0 remains a valid source.
-        // Rust pointer intrinsics reject null pointers even in bare-metal use.
-        let src = src_phys.as_u32();
-        let dst = dst_phys.as_u32();
-        let words = PAGE_SIZE / 4;
-        unsafe {
-            asm!(
-                "1:",
-                "mov ({src}), {tmp:e}",
-                "mov {tmp:e}, ({dst})",
-                "add $4, {src}",
-                "add $4, {dst}",
-                "sub $1, {words}",
-                "jnz 1b",
-                src = in(reg) src,
-                dst = in(reg) dst,
-                words = in(reg) words,
-                tmp = out(reg) _,
-                options(att_syntax, nostack),
-            );
+    /// Map a pre-allocated physical frame at the given linear page address.
+    ///
+    /// Ownership of `frame` is transferred into this memory space. If the
+    /// target PDE slot is outside this space's range or a page table cannot
+    /// be allocated, the frame is returned to the caller via `Err`.
+    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), PhysFrame> {
+        if self.ensure_page_table(lin_page.pde_index()).is_err() {
+            return Err(frame);
         }
+        let pte = match self.find_pte(lin_page) {
+            Some(pte) => pte,
+            None => return Err(frame),
+        };
+        let ppn = frame.ppn;
+        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
+        self.data_frames.insert(lin_page, frame);
+        Ok(())
     }
 
-    /// Starting PDE index for this process in the shared page directory.
-    pub fn pde_base(&self) -> usize {
-        self.pde_base
+    /// Ensure `fault_page` is mapped to a present, writable, user page.
+    ///
+    /// This is the anonymous-demand-paging path for no-present page faults:
+    /// - Allocate a page table when the PDE is missing.
+    /// - Allocate a zeroed data frame.
+    /// - Install a user/writable/present PTE.
+    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), ()> {
+        self.ensure_page_table(fault_page.pde_index())?;
+
+        let pte = self.find_pte(fault_page).ok_or(())?;
+        if pte.is_present() {
+            return Ok(());
+        }
+
+        let frame = frame::alloc().ok_or(())?;
+        let ppn = frame.ppn;
+        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
+        self.data_frames.insert(fault_page, frame);
+        super::invalidate_tlb();
+        Ok(())
+    }
+
+    /// Ensure the faulting page mapping becomes writable.
+    ///
+    /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
+    /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
+    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) {
+        let pte = self.find_pte(fault_page).expect("find pte failed");
+        let old_phys_addr = pte.phys_addr();
+        let old_ppn = old_phys_addr.into();
+        if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
+            let new_flag = pte.flags().union(PageFlags::WRITABLE);
+            *pte = PageTableEntry::new(old_ppn, new_flag);
+            super::invalidate_tlb();
+            return;
+        }
+        let Some(new_frame) = frame::alloc() else {
+            todo!("oom")
+        };
+        let new_ppn = new_frame.ppn;
+        *pte = PageTableEntry::new(new_ppn, PageFlags::USER_RW);
+        self.data_frames.insert(fault_page, new_frame);
+        super::invalidate_tlb();
+        copy_page(old_ppn, new_ppn);
     }
 
     /// Try to share a page from `source_space` at `source_page`.
