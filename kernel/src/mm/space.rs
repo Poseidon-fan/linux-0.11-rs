@@ -8,7 +8,7 @@
 //! and data frames (decrementing reference counts), and clears the
 //! corresponding page directory entries in the shared page directory.
 
-use core::{arch::asm, ptr};
+use core::arch::asm;
 
 use hashbrown::HashMap;
 
@@ -16,11 +16,6 @@ use super::{
     ENTRIES_PER_TABLE, PageDirectoryEntry, PageEntry, PageFlags, PageTable, PageTableEntry,
     address::{LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
-};
-use crate::fs::{
-    BLOCK_SIZE,
-    buffer::{self, BufferKey},
-    minix::Inode,
 };
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
@@ -204,85 +199,6 @@ impl MemorySpace {
     /// Starting PDE index for this process in the shared page directory.
     pub fn pde_base(&self) -> usize {
         self.pde_base
-    }
-
-    /// Load a page from an executable file and map it at `fault_page`.
-    ///
-    /// Reads up to 4 consecutive filesystem blocks (one page worth of data)
-    /// from `inode`, zeros any portion that falls beyond `end_data` (the BSS
-    /// region), and installs a user/writable/present PTE.
-    ///
-    /// Returns `true` on success (including the case where the PTE was
-    /// already present), `false` on allocation or I/O failure.
-    pub fn map_demand_page(
-        &mut self,
-        fault_page: LinPageNum,
-        inode: &Inode,
-        address_offset: u32,
-        end_data: u32,
-    ) -> bool {
-        if self.ensure_page_table(fault_page.pde_index()).is_err() {
-            return false;
-        }
-
-        // If another path already mapped this page, nothing to do.
-        if let Some(pte) = self.find_pte(fault_page) {
-            if pte.is_present() {
-                return true;
-            }
-        }
-
-        let frame = match frame::alloc() {
-            Some(f) => f,
-            None => return false,
-        };
-
-        // Read up to 4 blocks (PAGE_SIZE / BLOCK_SIZE) from the executable.
-        // Block 0 is the a.out header, so data starts at block 1.
-        let blocks_per_page = PAGE_SIZE / BLOCK_SIZE;
-        let first_block = 1 + (address_offset as usize / BLOCK_SIZE);
-        let page_phys: PhysAddr = frame.ppn.into();
-
-        for i in 0..blocks_per_page {
-            let block_id = inode.map_block_id(first_block + i, false).unwrap_or(0);
-
-            let dst = page_phys.byte_add(i * BLOCK_SIZE);
-
-            if block_id != 0 {
-                let key = BufferKey {
-                    dev: inode.id.device,
-                    block_nr: block_id,
-                };
-                if let Some(bh) = buffer::read_block(key) {
-                    unsafe {
-                        ptr::copy_nonoverlapping(bh.data.as_ptr(), dst, BLOCK_SIZE);
-                    }
-                    buffer::release_block(bh);
-                } else {
-                    unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
-                }
-            } else {
-                unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
-            }
-        }
-
-        // Zero the BSS portion: bytes beyond end_data within this page.
-        let page_end = address_offset + PAGE_SIZE as u32;
-        if page_end > end_data && address_offset < end_data {
-            let bss_start = (end_data - address_offset) as usize;
-            let bss_len = PAGE_SIZE - bss_start;
-            let dst = page_phys.byte_add(bss_start);
-            unsafe { ptr::write_bytes(dst, 0, bss_len) };
-        }
-
-        let ppn = frame.ppn;
-        let pte = self
-            .find_pte(fault_page)
-            .expect("PTE lookup after table creation");
-        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
-        self.data_frames.insert(fault_page, frame);
-        super::invalidate_tlb();
-        true
     }
 
     /// Try to share a page from `source_space` at `source_page`.

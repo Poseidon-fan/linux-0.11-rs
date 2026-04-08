@@ -13,10 +13,19 @@
 //!    pure BSS regions, or processes with no executable).
 
 use alloc::sync::Arc;
+use core::ptr;
 
 use crate::{
-    fs::minix::Inode,
-    mm::address::{LinAddr, LinPageNum},
+    fs::{
+        BLOCK_SIZE,
+        buffer::{self, BufferKey},
+        minix::Inode,
+    },
+    mm::{
+        PageEntry,
+        address::{LinAddr, LinPageNum, PhysAddr},
+        frame::{self, PAGE_SIZE, PhysFrame},
+    },
     signal::SIGSEGV,
     task::{self, TASK_MANAGER},
 };
@@ -46,22 +55,21 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
                 return;
             }
 
-            // Take the MemorySpace out so the borrow is released before
-            // `map_demand_page` does disk I/O (which may sleep/schedule).
-            let mut space = task::current_task()
-                .pcb
-                .inner
-                .exclusive(|inner| inner.memory_space.take());
-            let loaded = space
-                .as_mut()
-                .map(|ms| ms.map_demand_page(fault_page, inode, addr_offset, end_data))
-                .unwrap_or(false);
-            task::current_task()
-                .pcb
-                .inner
-                .exclusive(|inner| inner.memory_space = space);
-            if loaded {
-                return;
+            // Disk I/O happens here — no task lock held.
+            if let Some(frame) = load_exe_page(inode, addr_offset, end_data) {
+                let mapped = task::with_current(|inner| {
+                    let Some(ms) = inner.memory_space.as_mut() else {
+                        return false;
+                    };
+                    if ms.find_pte(fault_page).is_some_and(|pte| pte.is_present()) {
+                        return true;
+                    }
+                    ms.map_page(fault_page, frame).is_ok()
+                });
+                if mapped {
+                    super::invalidate_tlb();
+                    return;
+                }
             }
         }
     }
@@ -83,6 +91,48 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
     }
 
     task::do_exit((1u32 << (SIGSEGV - 1)) as i32);
+}
+
+/// Read one page of executable data from `inode` into a new physical frame.
+///
+/// Reads up to 4 filesystem blocks starting at `address_offset` (byte offset
+/// within the data segment). Block 0 is the a.out header, so data starts at
+/// block 1. Bytes beyond `end_data` are zeroed (BSS region).
+fn load_exe_page(inode: &Inode, address_offset: u32, end_data: u32) -> Option<PhysFrame> {
+    let frame = frame::alloc()?;
+    let page_phys: PhysAddr = frame.ppn.into();
+
+    let blocks_per_page = PAGE_SIZE / BLOCK_SIZE;
+    let first_block = 1 + (address_offset as usize / BLOCK_SIZE);
+
+    for i in 0..blocks_per_page {
+        let block_id = inode.map_block_id(first_block + i, false).unwrap_or(0);
+        let dst = page_phys.byte_add(i * BLOCK_SIZE);
+
+        if block_id != 0 {
+            let key = BufferKey {
+                dev: inode.id.device,
+                block_nr: block_id,
+            };
+            if let Some(bh) = buffer::read_block(key) {
+                unsafe { ptr::copy_nonoverlapping(bh.data.as_ptr(), dst, BLOCK_SIZE) };
+                buffer::release_block(bh);
+            } else {
+                unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
+            }
+        } else {
+            unsafe { ptr::write_bytes(dst, 0, BLOCK_SIZE) };
+        }
+    }
+
+    // Zero the BSS portion: bytes beyond end_data within this page.
+    let page_end = address_offset + PAGE_SIZE as u32;
+    if page_end > end_data && address_offset < end_data {
+        let bss_start = (end_data - address_offset) as usize;
+        unsafe { ptr::write_bytes(page_phys.byte_add(bss_start), 0, PAGE_SIZE - bss_start) };
+    }
+
+    Some(frame)
 }
 
 /// Scan the task table for a process that runs the same executable and
