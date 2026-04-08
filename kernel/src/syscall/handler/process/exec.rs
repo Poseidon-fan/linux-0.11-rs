@@ -1,3 +1,5 @@
+//! `execve` syscall — load and run a new program image (a.out / `#!` scripts).
+
 use alloc::string::String;
 use core::{arch::asm, mem};
 

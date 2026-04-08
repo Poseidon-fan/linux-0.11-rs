@@ -1,3 +1,5 @@
+//! Reference-counted physical frame allocator (`mem_map` + free bitmap).
+
 use core::ptr;
 
 use super::address::{PhysAddr, PhysPageNum};

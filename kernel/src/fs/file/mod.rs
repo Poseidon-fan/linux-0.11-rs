@@ -1,3 +1,12 @@
+//! Opened-file abstraction and per-type implementations.
+//!
+//! The [`File`] trait provides read/write/seek/stat/ioctl and is implemented by:
+//!
+//! - [`InodeFile`] — regular files and directories backed by a Minix inode.
+//! - [`BlockDeviceFile`] — raw block device access through the buffer cache.
+//! - [`CharDeviceFile`] — character devices dispatched by major number.
+//! - [`PipeFile`] — unidirectional byte channel between processes.
+
 mod block_device;
 mod char_device;
 mod inode;

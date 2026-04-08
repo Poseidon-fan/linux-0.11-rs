@@ -1,3 +1,5 @@
+//! Owner-tracked sleeping mutex with deadlock detection.
+
 use core::{
     cell::UnsafeCell,
     marker::PhantomData,

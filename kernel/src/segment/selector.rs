@@ -1,4 +1,4 @@
-//! Segment selector types and well-known kernel selectors.
+//! 16-bit segment selectors and well-known constants (`KERNEL_CS`, `USER_DS`, etc.).
 
 use crate::task::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY};
 

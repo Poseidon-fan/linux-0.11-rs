@@ -1,3 +1,11 @@
+//! Device driver subsystem.
+//!
+//! Provides the [`DevNum`] major/minor encoding shared by all drivers and
+//! the global root device selector read during boot.
+//!
+//! - [`blk`] — block device request layer and ATA hard disk driver.
+//! - [`chr`] — character device drivers (console, TTY).
+
 use core::sync::atomic::{AtomicU16, Ordering};
 
 pub mod blk;

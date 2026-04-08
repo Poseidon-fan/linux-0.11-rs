@@ -1,3 +1,5 @@
+//! RAII interrupt-flag save/restore guard.
+
 use core::arch::asm;
 
 use crate::task::{cur_irq_state, set_cur_irq_state};

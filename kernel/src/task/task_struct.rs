@@ -1,3 +1,5 @@
+//! Process control block, hardware task state, and per-task memory layout.
+
 use alloc::sync::Arc;
 use core::{
     mem::size_of,

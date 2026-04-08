@@ -1,3 +1,11 @@
+//! Process management: scheduling, task lifecycle, and timer interrupt.
+//!
+//! - [`task_struct`] — PCB, TSS, LDT, and the `Task` / `TaskPage` types.
+//! - [`manager`] — 64-slot task table and runnable-task selection.
+//! - [`current`] — tracks the currently executing task.
+//! - [`timer`] — PIT IRQ0 handler, jiffies counter, CPU time accounting.
+//! - [`wait_queue`] — single-slot sleep/wake primitives.
+
 mod current;
 mod gdt;
 mod manager;

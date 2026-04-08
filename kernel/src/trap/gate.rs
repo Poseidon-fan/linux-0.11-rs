@@ -1,3 +1,5 @@
+//! IDT gate descriptor construction and installation.
+
 use crate::segment::KERNEL_CS;
 
 unsafe extern "C" {

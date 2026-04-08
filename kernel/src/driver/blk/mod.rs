@@ -1,3 +1,11 @@
+//! Block device request layer.
+//!
+//! Manages a shared pool of 32 request slots dispatched to per-major device
+//! handlers. Requests are inserted using an elevator sort (reads before writes,
+//! then by device, then by sector) to minimise disk head movement.
+//!
+//! - [`hd`] — ATA hard disk driver (interrupt-driven, up to 2 drives).
+
 pub mod hd;
 
 use alloc::sync::Arc;

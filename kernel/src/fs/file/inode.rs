@@ -1,3 +1,5 @@
+//! Regular file backed by a Minix inode.
+
 use alloc::sync::Arc;
 
 use user_lib::fs::{AccessMode, OpenOptions, Stat, Whence};

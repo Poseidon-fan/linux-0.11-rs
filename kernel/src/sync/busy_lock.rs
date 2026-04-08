@@ -1,3 +1,5 @@
+//! Ownerless sleepable busy-bit lock.
+
 use crate::{
     sync::{IrqSaveGuard, KernelCell, cell::assert_can_schedule},
     task::WaitQueue,

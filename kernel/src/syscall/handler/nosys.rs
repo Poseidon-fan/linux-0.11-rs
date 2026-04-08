@@ -1,3 +1,5 @@
+//! Placeholder handlers for unimplemented syscall numbers.
+
 use linkme::distributed_slice;
 
 use crate::{

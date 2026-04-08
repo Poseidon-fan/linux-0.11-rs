@@ -1,3 +1,5 @@
+//! IRQ-masked interior mutability for `static` kernel data.
+
 use core::cell::RefCell;
 #[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};

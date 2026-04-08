@@ -1,3 +1,16 @@
+//! Signal delivery for returning to user mode.
+//!
+//! When a system call or timer interrupt is about to return to Ring 3,
+//! [`handle_pending_signal`] checks for pending unblocked signals and, if
+//! one is found, pushes a signal frame onto the user stack so the handler
+//! runs before the interrupted code resumes.
+//!
+//! ```text
+//! User stack after delivery (growing downward):
+//!
+//!   restorer | signr | [blocked] | eax | ecx | edx | eflags | old_eip
+//! ```
+
 pub use user_lib::process::*;
 
 use crate::{mm, segment::uaccess, task};

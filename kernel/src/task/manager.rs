@@ -1,3 +1,5 @@
+//! Global task table and runnable-task selection.
+
 use alloc::sync::Arc;
 use core::{
     array,

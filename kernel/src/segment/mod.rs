@@ -1,4 +1,12 @@
-//! x86 segmentation utilities.
+//! x86 segmentation: descriptors, selectors, and privilege transitions.
+//!
+//! This module manages the segment-based isolation model used by the kernel.
+//! Each task is assigned a 64 MB linear address window through its LDT, and
+//! hardware task switching is driven by per-task TSS/LDT descriptors in the GDT.
+//!
+//! - [`Descriptor`] — 64-bit GDT/LDT segment descriptor encoding.
+//! - [`SegmentSelector`] — 16-bit selector with index, TI, and RPL fields.
+//! - [`uaccess`] — kernel ↔ user data transfer via the FS segment register.
 
 mod descriptor;
 mod selector;

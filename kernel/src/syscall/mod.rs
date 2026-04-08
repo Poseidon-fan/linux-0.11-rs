@@ -1,3 +1,9 @@
+//! System call dispatch via `int 0x80`.
+//!
+//! The assembly entry stub (`syscall_entry.s`) saves registers and calls
+//! [`syscall_rust_entry`], which indexes into the [`SYSCALL_TABLE`](handler::SYSCALL_TABLE)
+//! distributed slice populated by [`define_syscall_handler!`](crate::define_syscall_handler).
+
 mod context;
 mod error;
 mod handler;

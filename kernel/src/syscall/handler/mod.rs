@@ -1,3 +1,12 @@
+//! Syscall handler definitions and the [`SYSCALL_TABLE`] dispatch slice.
+//!
+//! Each handler is registered at compile time via the [`define_syscall_handler!`]
+//! macro, which places it at a fixed index in the `linkme` distributed slice.
+//!
+//! - [`process`] — fork, execve, exit, waitpid, kill, signal, identity, etc.
+//! - [`fs`] — open, read, write, close, link, mkdir, stat, pipe, mount, etc.
+//! - [`nosys`] — `-ENOSYS` stubs for unimplemented syscall numbers.
+
 mod fs;
 mod nosys;
 mod process;

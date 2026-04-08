@@ -1,3 +1,5 @@
+//! Filesystem-related syscall handlers (open, read, write, close, etc.).
+
 use alloc::{sync::Arc, vec};
 use core::mem;
 

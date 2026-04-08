@@ -1,3 +1,5 @@
+//! ATA hard disk driver — partition probing, interrupt-driven read/write.
+
 mod controller;
 mod interrupt;
 

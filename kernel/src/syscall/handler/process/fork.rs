@@ -1,3 +1,5 @@
+//! `fork` syscall — COW process duplication.
+
 use alloc::sync::Arc;
 
 use linkme::distributed_slice;

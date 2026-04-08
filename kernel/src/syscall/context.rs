@@ -1,3 +1,5 @@
+//! Register frame captured on `int 0x80` entry.
+
 use crate::{
     segment::{USER_CS, USER_DS},
     signal::{self, DeliverAction, SignalDeliveryFrame, SignalSavedRegisters},

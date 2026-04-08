@@ -1,3 +1,16 @@
+//! Memory management: paging, physical frame allocation, and per-process address spaces.
+//!
+//! The kernel uses i386 two-level paging with a single shared page directory at
+//! physical address 0. Each task occupies a 64 MB linear window (16 PDEs) via
+//! its LDT base, and memory is managed through demand paging with COW on fork.
+//!
+//! - [`address`] — linear / physical address and page number types.
+//! - [`frame`] — reference-counted physical frame allocator (`mem_map` bitmap).
+//! - [`space`] — per-process [`MemorySpace`](space::MemorySpace) owning page tables and data frames.
+//! - [`page`] — page table / directory entry types and the shared page directory accessors.
+//! - [`page_fault`] — not-present and write-protect fault handlers.
+//! - [`heap`] — kernel heap backed by a buddy-system allocator (1 MB at `0x100000..0x200000`).
+
 pub mod address;
 pub mod frame;
 mod heap;

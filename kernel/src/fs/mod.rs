@@ -1,4 +1,12 @@
-//! Filesystem subsystem.
+//! Filesystem subsystem: Minix v1, buffer cache, and VFS-like inode/file layer.
+//!
+//! - [`minix`] — on-disk and in-memory inode objects, block mapping.
+//! - [`buffer`] — block-level read/write cache with hash lookup.
+//! - [`file`] — [`File`](file::File) trait and typed implementations (regular, device, pipe).
+//! - [`path`] — pathname resolution and permission checks.
+//! - [`mount`] — global mount table.
+//! - [`bitmap`] — inode/zone allocation bitmaps.
+//! - [`layout`] — on-disk superblock and inode format definitions.
 
 use alloc::sync::Arc;
 

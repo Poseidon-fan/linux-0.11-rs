@@ -1,7 +1,4 @@
 //! ATA hard disk controller register and command definitions.
-//!
-//! This module keeps the low-level constants used by the original Linux 0.11
-//! hard disk driver, but exposes them with Rust-style names and types.
 
 use core::hint::spin_loop;
 

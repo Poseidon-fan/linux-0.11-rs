@@ -1,3 +1,5 @@
+//! Kernel entry point and init process bootstrap.
+
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]

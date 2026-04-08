@@ -1,3 +1,5 @@
+//! Kernel panic handler and unknown-interrupt fallback.
+
 use core::{hint::spin_loop, panic::PanicInfo};
 
 use log::error;

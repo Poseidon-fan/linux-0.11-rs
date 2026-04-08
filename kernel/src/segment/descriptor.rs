@@ -1,4 +1,4 @@
-//! x86 segment descriptor.
+//! 64-bit segment descriptor for GDT and LDT entries.
 
 /// A 64-bit segment descriptor for the GDT or LDT.
 ///

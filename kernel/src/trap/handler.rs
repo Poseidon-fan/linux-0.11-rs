@@ -1,3 +1,5 @@
+//! CPU exception entry stubs and per-vector handlers.
+
 use core::arch::{asm, naked_asm};
 
 use log::{error, info};

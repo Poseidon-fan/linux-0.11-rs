@@ -1,4 +1,4 @@
-//! This module defines Memory Address structures.
+//! Linear and physical address types with page-number conversions.
 
 use super::frame::PAGE_SHIFT;
 

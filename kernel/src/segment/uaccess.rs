@@ -1,7 +1,8 @@
-//! User-space data access via the FS segment.
+//! Kernel ↔ user-space data transfer via the FS segment register.
 //!
-//! Reads and writes through the FS segment register, used for kernel/user
-//! data transfer when FS points to a user data segment.
+//! All reads and writes go through `%fs`, which points to the current task's
+//! user data segment during system calls. [`with_kernel_fs`] temporarily
+//! redirects `%fs` to the kernel data segment for in-kernel consumers.
 
 use alloc::string::String;
 use core::arch::asm;
@@ -109,8 +110,8 @@ pub fn write_bytes(buf: &[u8], addr: *mut u8) {
 /// Execute `f` with `%fs` temporarily set to the kernel data segment (0x10).
 ///
 /// This makes `read_u8` / `write_u8` operate on kernel memory instead of
-/// user memory, mirroring the original Linux 0.11 `push %ds; pop %fs`
-/// trick used by `printk` and device drivers.
+/// user memory, using the classic `push %ds; pop %fs` trick for `printk`
+/// and device drivers.
 #[inline]
 pub fn with_kernel_fs<F, R>(f: F) -> R
 where F: FnOnce() -> R {

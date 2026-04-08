@@ -1,3 +1,5 @@
+//! Process-related syscall handlers (exit, waitpid, kill, signal, identity, etc.).
+
 mod exec;
 mod fork;
 
