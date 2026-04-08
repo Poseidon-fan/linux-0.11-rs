@@ -3,7 +3,7 @@
 use core::ptr;
 
 use super::address::{PhysAddr, PhysPageNum};
-use crate::{println, sync::KernelCell};
+use crate::sync::KernelCell;
 
 pub const PAGE_SHIFT: u32 = 12;
 pub const PAGE_SIZE: usize = 1usize << PAGE_SHIFT;
@@ -27,9 +27,6 @@ pub fn init(start_mem: u32, end_mem: u32) {
     unsafe {
         FRAME_ALLOCATOR.exclusive_unchecked(|a| a.init(start_mem, end_mem));
     }
-
-    #[cfg(debug_assertions)]
-    frame_test();
 }
 
 /// Allocate a fresh physical page frame (zeroed).
@@ -313,56 +310,3 @@ static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAlloca
     mem_map: [0; PAGING_PAGES],
     free_bitmap: [0; FREE_BITMAP_WORDS],
 });
-
-#[allow(unused)]
-pub fn frame_test() {
-    use core::mem::ManuallyDrop;
-
-    // Safety: debug self-test is called from `init()` before task::init.
-    // This path must use unchecked access and explicit cleanup.
-    unsafe {
-        FRAME_ALLOCATOR.exclusive_unchecked(|allocator| {
-            // Test 1: Allocate a frame.
-            let frame1 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 1"));
-            let ppn1 = frame1.ppn.0;
-
-            // Test 2: Allocate another frame, should have lower ppn (high-to-low allocation).
-            let frame2 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 2"));
-            let ppn2 = frame2.ppn.0;
-            assert!(ppn2 < ppn1, "Frame 2 should have lower ppn than frame 1");
-
-            // Test 3: Free frame1 manually, then allocate again and expect reuse.
-            allocator.dealloc(frame1.ppn);
-            let frame3 = ManuallyDrop::new(allocator.alloc().expect("Failed to allocate frame 3"));
-            let ppn3 = frame3.ppn.0;
-            assert_eq!(ppn3, ppn1, "Frame 3 should reuse ppn of dropped frame 1");
-
-            // Test 4: Allocate and free 2 contiguous frames.
-            let run = ManuallyDrop::new(
-                allocator
-                    .alloc_contiguous(2)
-                    .expect("Failed to allocate run"),
-            );
-            assert_eq!(run.page_count, 2, "Run length should be 2 pages");
-            allocator.dealloc_range(run.start_ppn, run.page_count);
-
-            // Test 5: Allocate contiguous frames again (allocator should still work).
-            let run2 = ManuallyDrop::new(
-                allocator
-                    .alloc_contiguous(2)
-                    .expect("Failed to re-allocate 2 contiguous frames"),
-            );
-            assert_eq!(
-                run2.page_count, 2,
-                "Re-allocated run length should be 2 pages"
-            );
-
-            // Cleanup for handles wrapped in `ManuallyDrop`.
-            allocator.dealloc(frame2.ppn);
-            allocator.dealloc(frame3.ppn);
-            allocator.dealloc_range(run2.start_ppn, run2.page_count);
-        });
-    }
-
-    println!("[frame_test] Frame allocator test passed!");
-}

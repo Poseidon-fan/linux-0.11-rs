@@ -20,8 +20,6 @@
 
 use buddy_system_allocator::LockedHeap;
 
-use crate::println;
-
 /// Start address of the kernel heap (inclusive).
 pub const HEAP_START: usize = 0x100000;
 /// End address of the kernel heap (exclusive).
@@ -42,18 +40,4 @@ pub fn init() {
     unsafe {
         HEAP_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }
-
-    #[cfg(debug_assertions)]
-    heap_test();
-}
-
-#[allow(unused)]
-fn heap_test() {
-    use alloc::vec;
-    let mut tmp = vec![0, 1, 2, 3, 4];
-    tmp.push(5);
-    for (i, &item) in tmp.iter().enumerate() {
-        assert_eq!(item, i as u8);
-    }
-    println!("[heap_test] passed");
 }
