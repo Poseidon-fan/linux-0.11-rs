@@ -120,7 +120,7 @@ impl<S: Read + Write + Seek> MinixFileSystem<S> {
 
     /// Create a new empty Minix image.
     pub fn create(mut storage: S, options: CreateImageOptions) -> Result<Self> {
-        if options.image_size == 0 || options.image_size % BLOCK_SIZE as u64 != 0 {
+        if options.image_size == 0 || !options.image_size.is_multiple_of(BLOCK_SIZE as u64) {
             return Err(MinixError::InvalidArgument(format!(
                 "image size must be a non-zero multiple of {} bytes",
                 BLOCK_SIZE
@@ -1518,7 +1518,7 @@ impl<S: Read + Write + Seek> MinixFileSystem<S> {
         inode: &DiskInode,
         report: &mut CheckReport,
     ) {
-        if inode.size as usize % DIRECTORY_ENTRY_SIZE != 0 {
+        if !(inode.size as usize).is_multiple_of(DIRECTORY_ENTRY_SIZE) {
             report.issues.push(CheckIssue {
                 path: Some(format!("inode {}", inode_number)),
                 message: format!(
