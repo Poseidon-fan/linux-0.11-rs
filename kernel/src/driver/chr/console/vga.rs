@@ -24,8 +24,8 @@ use crate::{
 };
 
 /// BIOS data area addresses written by setup.s during boot.
-const ORIG_X: *const u8 = 0x90000 as *const u8;
-const ORIG_Y: *const u8 = 0x90001 as *const u8;
+pub(crate) const ORIG_X: *const u8 = 0x90000 as *const u8;
+pub(crate) const ORIG_Y: *const u8 = 0x90001 as *const u8;
 const ORIG_VIDEO_MODE: *const u16 = 0x90006 as *const u16;
 const ORIG_VIDEO_EGA_BX: *const u16 = 0x9000a as *const u16;
 

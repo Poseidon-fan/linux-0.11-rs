@@ -20,9 +20,17 @@ use core::{
 
 use log::{LevelFilter, Log, Metadata};
 
+use crate::driver::chr::console::{ORIG_X, ORIG_Y};
+
 /// Set to `true` after `console::init()` completes. Once set, all output
 /// is routed through the TTY layer instead of direct VGA.
 static TTY_READY: AtomicBool = AtomicBool::new(false);
+
+const EARLY_VGA_BASE: *mut u8 = 0xb8000 as *mut u8;
+const EARLY_VGA_COLUMNS: usize = 80;
+const EARLY_VGA_ROWS: usize = 25;
+const EARLY_VGA_CELLS: usize = EARLY_VGA_COLUMNS * EARLY_VGA_ROWS;
+const EARLY_VGA_ATTR: u8 = 0x07;
 
 /// Mark the TTY subsystem as ready for kernel output.
 /// Called at the end of `driver::chr::console::init()`.
@@ -38,9 +46,9 @@ static mut LOG_LEN: usize = 0;
 pub fn init() {
     // Start early VGA output from where the bootloader left the cursor,
     // so bootloader messages stay visible and our output follows after them.
-    let orig_x = unsafe { ptr::read_volatile(0x90000 as *const u8) } as usize;
-    let orig_y = unsafe { ptr::read_volatile(0x90001 as *const u8) } as usize;
-    EARLY_VGA_POS.store(orig_y * 80 + orig_x, Ordering::Relaxed);
+    let orig_x = unsafe { ptr::read_volatile(ORIG_X) } as usize;
+    let orig_y = unsafe { ptr::read_volatile(ORIG_Y) } as usize;
+    EARLY_VGA_POS.store(orig_y * EARLY_VGA_COLUMNS + orig_x, Ordering::Relaxed);
 
     static LOGGER: KernelLogger = KernelLogger;
     log::set_logger(&LOGGER).unwrap();
@@ -116,7 +124,7 @@ static EARLY_VGA_POS: core::sync::atomic::AtomicUsize = core::sync::atomic::Atom
 /// continue output from where early boot left off.
 pub fn early_vga_cursor() -> (usize, usize) {
     let pos = EARLY_VGA_POS.load(Ordering::Relaxed);
-    (pos % 80, pos / 80)
+    (pos % EARLY_VGA_COLUMNS, pos / EARLY_VGA_COLUMNS)
 }
 
 fn early_put_char(c: u8) {
@@ -124,27 +132,27 @@ fn early_put_char(c: u8) {
 
     match c {
         b'\n' => {
-            let vga = 0xb8000 as *mut u8;
-            let line_end = (pos / 80 + 1) * 80;
-            for i in pos..line_end.min(80 * 25) {
+            let vga = EARLY_VGA_BASE;
+            let line_end = (pos / EARLY_VGA_COLUMNS + 1) * EARLY_VGA_COLUMNS;
+            for i in pos..line_end.min(EARLY_VGA_CELLS) {
                 unsafe {
                     ptr::write_volatile(vga.add(i * 2), b' ');
-                    ptr::write_volatile(vga.add(i * 2 + 1), 0x07);
+                    ptr::write_volatile(vga.add(i * 2 + 1), EARLY_VGA_ATTR);
                 }
             }
             pos = line_end;
-            if pos >= 80 * 25 {
+            if pos >= EARLY_VGA_CELLS {
                 pos = 0;
             }
         }
         _ => {
-            let vga = 0xb8000 as *mut u8;
+            let vga = EARLY_VGA_BASE;
             unsafe {
                 ptr::write_volatile(vga.add(pos * 2), c);
-                ptr::write_volatile(vga.add(pos * 2 + 1), 0x07);
+                ptr::write_volatile(vga.add(pos * 2 + 1), EARLY_VGA_ATTR);
             }
             pos += 1;
-            if pos == 80 * 25 {
+            if pos == EARLY_VGA_CELLS {
                 pos = 0;
             }
         }

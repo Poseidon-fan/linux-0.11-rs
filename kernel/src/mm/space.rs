@@ -82,10 +82,7 @@ impl MemorySpace {
             todo!("oom")
         };
         let new_ppn = new_frame.ppn;
-        *pte = PageTableEntry::new(
-            new_ppn,
-            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-        );
+        *pte = PageTableEntry::new(new_ppn, PageFlags::USER_RW);
         // debug_assert!(self.data_frames.contains_key(&fault_page));
         self.data_frames.insert(fault_page, new_frame);
         super::invalidate_tlb();
@@ -108,10 +105,7 @@ impl MemorySpace {
 
         let frame = frame::alloc().ok_or(())?;
         let ppn = frame.ppn;
-        *pte = PageTableEntry::new(
-            ppn,
-            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-        );
+        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
         self.data_frames.insert(fault_page, frame);
         super::invalidate_tlb();
         Ok(())
@@ -131,10 +125,7 @@ impl MemorySpace {
             None => return Err(frame),
         };
         let ppn = frame.ppn;
-        *pte = PageTableEntry::new(
-            ppn,
-            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-        );
+        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
         self.data_frames.insert(lin_page, frame);
         Ok(())
     }
@@ -255,7 +246,7 @@ impl MemorySpace {
         for i in 0..blocks_per_page {
             let block_id = inode.map_block_id(first_block + i, false).unwrap_or(0);
 
-            let dst = (page_phys.as_u32() + (i * BLOCK_SIZE) as u32) as *mut u8;
+            let dst = page_phys.byte_add(i * BLOCK_SIZE);
 
             if block_id != 0 {
                 let key = BufferKey {
@@ -280,7 +271,7 @@ impl MemorySpace {
         if page_end > end_data && address_offset < end_data {
             let bss_start = (end_data - address_offset) as usize;
             let bss_len = PAGE_SIZE - bss_start;
-            let dst = (page_phys.as_u32() + bss_start as u32) as *mut u8;
+            let dst = page_phys.byte_add(bss_start);
             unsafe { ptr::write_bytes(dst, 0, bss_len) };
         }
 
@@ -288,10 +279,7 @@ impl MemorySpace {
         let pte = self
             .find_pte(fault_page)
             .expect("PTE lookup after table creation");
-        *pte = PageTableEntry::new(
-            ppn,
-            PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-        );
+        *pte = PageTableEntry::new(ppn, PageFlags::USER_RW);
         self.data_frames.insert(fault_page, frame);
         super::invalidate_tlb();
         true
@@ -389,7 +377,9 @@ impl MemorySpace {
         let is_task0 = parent_pde_start == 0;
 
         // Round data_limit up to 4MB boundary, then convert to PDE count.
-        let nr_pdes = ((data_limit as usize + 0x3F_FFFF) >> 22).min(PDES_PER_PROCESS);
+        let nr_pdes = (data_limit as usize)
+            .div_ceil(ENTRIES_PER_TABLE * PAGE_SIZE)
+            .min(PDES_PER_PROCESS);
 
         let mut child = MemorySpace::new(child_nr);
 

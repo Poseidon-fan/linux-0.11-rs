@@ -317,6 +317,28 @@ pub struct TaskSignalInfo {
     pub alarm: u32,
 }
 
+impl TaskSignalInfo {
+    /// Set a pending signal. `signum` is 1-based (e.g. `SIGHUP = 1`).
+    pub fn raise(&mut self, signum: u32) {
+        self.signal |= 1u32 << (signum - 1);
+    }
+
+    /// Clear a pending signal. `signum` is 1-based (e.g. `SIGHUP = 1`).
+    pub fn clear(&mut self, signum: u32) {
+        self.signal &= !(1u32 << (signum - 1));
+    }
+}
+
+impl TaskSchedInfo {
+    /// Transition from [`Interruptible`](TaskState::Interruptible) to
+    /// [`Running`](TaskState::Running) if currently sleeping interruptibly.
+    pub fn wake_if_interruptible(&mut self) {
+        if self.state == TaskState::Interruptible {
+            self.state = TaskState::Running;
+        }
+    }
+}
+
 impl Deref for Task {
     type Target = TaskPage;
 

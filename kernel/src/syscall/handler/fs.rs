@@ -43,7 +43,7 @@ define_syscall_handler!(
     user_lib::NR_OPEN = 5,
     fn sys_open(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
         let flags = OpenFlags::from_raw(raw_flags);
         let (access_mode, open_options) = flags.into_parts().ok_or(EINVAL)?;
 
@@ -73,7 +73,7 @@ define_syscall_handler!(
                         device: dir.id.device,
                         inode_number: inum,
                     });
-                    let file_type = inode.inner.lock().disk_inode.mode.file_type();
+                    let file_type = inode.file_type();
                     if file_type == InodeType::Directory && access_mode != AccessMode::ReadOnly {
                         return Err(EPERM);
                     }
@@ -94,7 +94,7 @@ define_syscall_handler!(
             }
         };
 
-        let file_type = inode.inner.lock().disk_inode.mode.file_type();
+        let file_type = inode.file_type();
         let file: Arc<dyn File> = match file_type {
             InodeType::Regular | InodeType::Directory => {
                 Arc::new(InodeFile::new(inode, access_mode, open_options))
@@ -104,11 +104,7 @@ define_syscall_handler!(
             _ => return Err(EPERM),
         };
 
-        let fd = task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.fs.add_file(file))
-            .ok_or(EMFILE)?;
+        let fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(EMFILE)?;
 
         Ok(fd as u32)
     }
@@ -146,7 +142,7 @@ define_syscall_handler!(
     user_lib::NR_CLOSE = 6,
     fn sys_close(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
-        task::current_task().pcb.inner.exclusive(|inner| {
+        task::with_current(|inner| {
             let slot = inner.fs.open_files.get_mut(fd as usize).ok_or(EBADF)?;
             if slot.is_none() {
                 return Err(EBADF);
@@ -161,12 +157,12 @@ define_syscall_handler!(
     user_lib::NR_LINK = 9,
     fn sys_link(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (oldname_ptr, newname_ptr, _) = ctx.args();
-        let oldname = uaccess::read_string(oldname_ptr as *const u8, 256);
-        let newname = uaccess::read_string(newname_ptr as *const u8, 256);
+        let oldname = uaccess::read_pathname(oldname_ptr);
+        let newname = uaccess::read_pathname(newname_ptr);
 
         // Resolve old file
         let old_inode = path::resolve_path(&oldname).ok_or(ENOENT)?;
-        if old_inode.inner.lock().disk_inode.mode.file_type() == InodeType::Directory {
+        if old_inode.file_type() == InodeType::Directory {
             return Err(EPERM);
         }
 
@@ -208,7 +204,7 @@ define_syscall_handler!(
     user_lib::NR_UNLINK = 10,
     fn sys_unlink(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -223,7 +219,7 @@ define_syscall_handler!(
             device: dir.id.device,
             inode_number: inum,
         });
-        if inode.inner.lock().disk_inode.mode.file_type() == InodeType::Directory {
+        if inode.file_type() == InodeType::Directory {
             return Err(EISDIR);
         }
 
@@ -242,20 +238,17 @@ define_syscall_handler!(
     user_lib::NR_CHDIR = 12,
     fn sys_chdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
-        if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+        if inode.file_type() != InodeType::Directory {
             return Err(ENOTDIR);
         }
         if !path::check_permission(&inode, AccessMask::MAY_EXEC) {
             return Err(EACCES);
         }
 
-        task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.fs.current_directory = Some(inode));
+        task::with_current(|inner| inner.fs.current_directory = Some(inode));
         Ok(0)
     }
 );
@@ -264,7 +257,7 @@ define_syscall_handler!(
     user_lib::NR_MKDIR = 39,
     fn sys_mkdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -290,7 +283,7 @@ define_syscall_handler!(
             return Err(EPERM);
         }
 
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
             return Err(ENOENT);
@@ -316,7 +309,7 @@ define_syscall_handler!(
     user_lib::NR_RMDIR = 40,
     fn sys_rmdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
         if basename.is_empty() {
@@ -331,7 +324,7 @@ define_syscall_handler!(
             device: dir.id.device,
             inode_number: inum,
         });
-        if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+        if inode.file_type() != InodeType::Directory {
             return Err(ENOTDIR);
         }
         if !inode.is_empty_directory()? {
@@ -362,7 +355,7 @@ define_syscall_handler!(
     user_lib::NR_STAT = 18,
     fn sys_stat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
         let stat = inode.stat();
         let bytes = unsafe {
@@ -402,11 +395,7 @@ define_syscall_handler!(
     fn sys_dup(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
-        let new_fd = task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.fs.add_file(file))
-            .ok_or(EMFILE)?;
+        let new_fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(EMFILE)?;
         Ok(new_fd as u32)
     }
 );
@@ -421,7 +410,7 @@ define_syscall_handler!(
             return Ok(newfd);
         }
         let file = get_file(oldfd)?;
-        task::current_task().pcb.inner.exclusive(|inner| {
+        task::with_current(|inner| {
             let slot = inner.fs.open_files.get_mut(newfd as usize).ok_or(EBADF)?;
             *slot = Some(file);
             Ok(newfd)
@@ -447,17 +436,14 @@ define_syscall_handler!(
     user_lib::NR_CHROOT = 61,
     fn sys_chroot(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
-        if inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+        if inode.file_type() != InodeType::Directory {
             return Err(ENOTDIR);
         }
 
-        task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.fs.root_directory = Some(inode));
+        task::with_current(|inner| inner.fs.root_directory = Some(inode));
         Ok(0)
     }
 );
@@ -466,13 +452,10 @@ define_syscall_handler!(
     user_lib::NR_CHMOD = 15,
     fn sys_chmod(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
-        let euid = task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.identity.euid);
+        let euid = task::with_current(|inner| inner.identity.euid);
         if euid != inode.inner.lock().disk_inode.user_id && !task::is_super() {
             return Err(EACCES);
         }
@@ -491,7 +474,7 @@ define_syscall_handler!(
     user_lib::NR_CHOWN = 16,
     fn sys_chown(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, uid, gid) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         if !task::is_super() {
             return Err(EACCES);
@@ -518,15 +501,12 @@ define_syscall_handler!(
     user_lib::NR_ACCESS = 33,
     fn sys_access(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let inode = path::resolve_path(&pathname).ok_or(EACCES)?;
         let mask = AccessMask::from_bits_truncate(mode as u16 & 0o7);
 
-        let (uid, gid) = task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| (inner.identity.uid, inner.identity.gid));
+        let (uid, gid) = task::with_current(|inner| (inner.identity.uid, inner.identity.gid));
 
         if path::check_permission_as(&inode, mask, uid, gid) {
             Ok(0)
@@ -540,7 +520,7 @@ define_syscall_handler!(
     user_lib::NR_UTIME = 30,
     fn sys_utime(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, times_ptr, _) = ctx.args();
-        let pathname = uaccess::read_string(path_ptr as *const u8, 256);
+        let pathname = uaccess::read_pathname(path_ptr);
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
 
@@ -566,12 +546,12 @@ define_syscall_handler!(
     user_lib::NR_MOUNT = 21,
     fn sys_mount(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (dev_name_ptr, dir_name_ptr, _rw_flag) = ctx.args();
-        let dev_name = uaccess::read_string(dev_name_ptr as *const u8, 256);
-        let dir_name = uaccess::read_string(dir_name_ptr as *const u8, 256);
+        let dev_name = uaccess::read_pathname(dev_name_ptr);
+        let dir_name = uaccess::read_pathname(dir_name_ptr);
 
         // Resolve the device node and extract its device number.
         let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
-        if dev_inode.inner.lock().disk_inode.mode.file_type() != InodeType::BlockDevice {
+        if dev_inode.file_type() != InodeType::BlockDevice {
             return Err(EPERM);
         }
         let dev = dev_inode.device_number();
@@ -579,7 +559,7 @@ define_syscall_handler!(
 
         // Resolve the mount-point directory.
         let dir_inode = path::resolve_path(&dir_name).ok_or(ENOENT)?;
-        if dir_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory {
+        if dir_inode.file_type() != InodeType::Directory {
             return Err(EPERM);
         }
         if dir_inode.id.inode_number == ROOT_INODE_NUMBER {
@@ -620,11 +600,11 @@ define_syscall_handler!(
     user_lib::NR_UMOUNT = 22,
     fn sys_umount(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (dev_name_ptr, _, _) = ctx.args();
-        let dev_name = uaccess::read_string(dev_name_ptr as *const u8, 256);
+        let dev_name = uaccess::read_pathname(dev_name_ptr);
 
         // Resolve the device node and extract its device number.
         let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
-        if dev_inode.inner.lock().disk_inode.mode.file_type() != InodeType::BlockDevice {
+        if dev_inode.file_type() != InodeType::BlockDevice {
             return Err(ENOTBLK);
         }
         let dev = dev_inode.device_number();
@@ -666,7 +646,7 @@ define_syscall_handler!(
         let file = get_file(fd)?;
 
         match cmd {
-            F_DUPFD => task::current_task().pcb.inner.exclusive(|inner| {
+            F_DUPFD => task::with_current(|inner| {
                 let new_fd = (arg as usize..TASK_OPEN_FILES_LIMIT)
                     .find(|&i| inner.fs.open_files[i].is_none())
                     .ok_or(EMFILE)?;
@@ -676,15 +656,12 @@ define_syscall_handler!(
             }),
 
             F_GETFD => {
-                let cloexec = task::current_task()
-                    .pcb
-                    .inner
-                    .exclusive(|inner| (inner.fs.close_on_exec >> fd) & 1);
+                let cloexec = task::with_current(|inner| (inner.fs.close_on_exec >> fd) & 1);
                 Ok(cloexec)
             }
 
             F_SETFD => {
-                task::current_task().pcb.inner.exclusive(|inner| {
+                task::with_current(|inner| {
                     if arg & 1 != 0 {
                         inner.fs.close_on_exec |= 1 << fd;
                     } else {
@@ -707,7 +684,7 @@ define_syscall_handler!(
         let (fildes_ptr, _, _) = ctx.args();
         let (reader, writer) = PipeFile::create_pair()?;
 
-        let (fd0, fd1) = task::current_task().pcb.inner.exclusive(|inner| {
+        let (fd0, fd1) = task::with_current(|inner| {
             let fd0 = inner.fs.add_file(reader as Arc<dyn File>).ok_or(EMFILE)?;
             match inner.fs.add_file(writer as Arc<dyn File>) {
                 Some(fd1) => Ok((fd0, fd1)),
@@ -726,9 +703,5 @@ define_syscall_handler!(
 
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
 fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
-    task::current_task()
-        .pcb
-        .inner
-        .exclusive(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten())
-        .ok_or(EBADF)
+    task::with_current(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten()).ok_or(EBADF)
 }

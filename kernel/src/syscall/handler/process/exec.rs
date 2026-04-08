@@ -27,6 +27,7 @@ use crate::{
     task::{self, TASK_OPEN_FILES_LIMIT},
 };
 
+const _: () = assert!(BLOCK_SIZE == 1024);
 const MAX_ARG_PAGES: usize = 32;
 const ZMAGIC: u32 = 0o413;
 
@@ -70,9 +71,6 @@ impl AoutHeader {
         if (file_size as u64) < header_plus_payload {
             return Err(ENOEXEC);
         }
-        if BLOCK_SIZE != 1024 {
-            return Err(ENOEXEC);
-        }
         Ok(())
     }
 }
@@ -109,7 +107,7 @@ impl ArgumentPages {
         let frame = self.pages[page_idx].as_ref().unwrap();
         let phys = frame.ppn.addr();
         let page_off = off % PAGE_SIZE;
-        Ok((phys.as_u32() + page_off as u32) as *mut u8)
+        Ok(phys.byte_add(page_off))
     }
 
     /// Write one byte at the current cursor and advance downward.
@@ -353,7 +351,7 @@ define_syscall_handler!(
     user_lib::NR_EXECVE = 11,
     fn sys_execve(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (filename_ptr, argv_ptr, envp_ptr) = ctx.args();
-        let filename = uaccess::read_string(filename_ptr as *const u8, 256);
+        let filename = uaccess::read_pathname(filename_ptr);
 
         let argc = count_user_ptrs(argv_ptr as *const u32);
         let envc = count_user_ptrs(envp_ptr as *const u32);

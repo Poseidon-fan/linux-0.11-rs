@@ -17,8 +17,9 @@ use crate::{
         bitmap::Bitmap,
         buffer::{self, BufferKey},
         layout::{
-            DIRECTORY_ENTRY_SIZE, DataBlock, DiskDirectoryEntry, DiskInode, DiskSuperBlock,
-            INODES_PER_BLOCK, InodeBlock, InodeMode, InodeNumber, InodeType, MINIX_SUPER_MAGIC,
+            DIRECT_ZONE_COUNT, DIRECTORY_ENTRY_SIZE, DataBlock, DiskDirectoryEntry, DiskInode,
+            DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeMode, InodeNumber, InodeType,
+            MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
@@ -37,7 +38,7 @@ const INDIRECT_ENTRY_COUNT: usize = BLOCK_SIZE / size_of::<u16>();
 
 /// Maximum logical block count representable by direct and indirect pointers.
 const MAX_LOGICAL_BLOCKS: usize =
-    7 + INDIRECT_ENTRY_COUNT + INDIRECT_ENTRY_COUNT * INDIRECT_ENTRY_COUNT;
+    DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT + INDIRECT_ENTRY_COUNT * INDIRECT_ENTRY_COUNT;
 
 /// One indirect block interpreted as 16-bit Minix zone identifiers.
 type IndirectBlock = [u16; INDIRECT_ENTRY_COUNT];
@@ -89,6 +90,13 @@ pub struct InodeInner {
 }
 
 impl Inode {
+    /// Return the file type of this inode.
+    ///
+    /// Acquires `self.inner` — must NOT be called when `inner` is already locked.
+    pub fn file_type(&self) -> InodeType {
+        self.inner.lock().disk_inode.mode.file_type()
+    }
+
     /// Write this inode back to its inode-table block and clear the dirty flag.
     ///
     /// If the inode is not dirty or its backing filesystem is no longer
@@ -231,7 +239,7 @@ impl Inode {
         };
 
         let block_id = match logic_id {
-            0..7 => match (inner.disk_inode.direct_zones[logic_id], create) {
+            0..DIRECT_ZONE_COUNT => match (inner.disk_inode.direct_zones[logic_id], create) {
                 (0, true) => match fs.lock().alloc_zone() {
                     Some(new_zone) => {
                         inner.disk_inode.direct_zones[logic_id] = new_zone;
@@ -243,7 +251,7 @@ impl Inode {
                 },
                 (zone, _) => zone,
             },
-            _ if logic_id < 7 + INDIRECT_ENTRY_COUNT => {
+            _ if logic_id < DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT => {
                 let root_zone = match (inner.disk_inode.single_indirect_zone, create) {
                     (0, true) => match fs.lock().alloc_zone() {
                         Some(new_zone) => {
@@ -257,7 +265,7 @@ impl Inode {
                     (zone, _) => zone,
                 };
 
-                resolve_indirect_entry(root_zone, logic_id - 7)?
+                resolve_indirect_entry(root_zone, logic_id - DIRECT_ZONE_COUNT)?
             }
             _ => {
                 let root_zone = match (inner.disk_inode.double_indirect_zone, create) {
@@ -273,7 +281,7 @@ impl Inode {
                     (zone, _) => zone,
                 };
 
-                let block = logic_id - 7 - INDIRECT_ENTRY_COUNT;
+                let block = logic_id - DIRECT_ZONE_COUNT - INDIRECT_ENTRY_COUNT;
                 let outer_index = block / INDIRECT_ENTRY_COUNT;
                 let inner_index = block % INDIRECT_ENTRY_COUNT;
                 let second_level_zone = resolve_indirect_entry(root_zone, outer_index)?;
@@ -415,7 +423,7 @@ impl Inode {
 // Directory operations
 impl Inode {
     pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>, u32> {
-        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        assert!(self.file_type() == InodeType::Directory);
         let file_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
         for i in 0..file_count {
@@ -436,7 +444,7 @@ impl Inode {
     /// Reuses the first empty slot (inode_number == 0) if one exists; otherwise
     /// appends at the end, allocating a new data block when needed.
     pub fn add_entry(&self, name: &str, inode_number: InodeNumber) -> Result<(), u32> {
-        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        assert!(self.file_type() == InodeType::Directory);
 
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
 
@@ -549,7 +557,7 @@ impl Inode {
 
     /// Check whether this directory contains only `.` and `..` entries.
     pub fn is_empty_directory(&self) -> Result<bool, u32> {
-        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        assert!(self.file_type() == InodeType::Directory);
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
         for i in 0..entry_count {
@@ -567,7 +575,7 @@ impl Inode {
 
     /// Remove the directory entry matching `name` and return its inode number.
     pub fn remove_entry(&self, name: &str) -> Result<InodeNumber, u32> {
-        assert!(self.inner.lock().disk_inode.mode.file_type() == InodeType::Directory);
+        assert!(self.file_type() == InodeType::Directory);
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
         for i in 0..entry_count {

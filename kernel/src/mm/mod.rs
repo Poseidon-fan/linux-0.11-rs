@@ -44,14 +44,13 @@ pub fn init(start_mem: u32, end_mem: u32) {
 ///
 /// `addr` is a raw user-space virtual address passed from syscall context.
 pub fn ensure_user_area_writable(addr: u32, size: usize) {
-    task::current_task().pcb.inner.exclusive(|inner| {
+    task::with_current(|inner| {
         let base = inner.ldt.data_segment().base();
         if let Some(ms) = inner.memory_space.as_mut() {
-            let page_offset_mask = (1u32 << frame::PAGE_SHIFT) - 1;
-            let page_size = 1u32 << frame::PAGE_SHIFT;
-            let first_page_offset = addr & page_offset_mask;
+            let user_addr = address::LinAddr(addr);
+            let first_page_offset = user_addr.page_offset();
             let mut size = (size as u32).saturating_add(first_page_offset);
-            let mut linear_addr = (addr & !page_offset_mask).wrapping_add(base);
+            let mut linear_addr = user_addr.align_down().0.wrapping_add(base);
 
             while size > 0 {
                 let lin_page = address::LinAddr(linear_addr).floor();
@@ -60,8 +59,8 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
                         ms.ensure_page_writable(lin_page);
                     }
                 }
-                size = size.saturating_sub(page_size);
-                linear_addr = linear_addr.wrapping_add(page_size);
+                size = size.saturating_sub(frame::PAGE_SIZE as u32);
+                linear_addr = linear_addr.wrapping_add(frame::PAGE_SIZE as u32);
             }
         }
     });

@@ -62,7 +62,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
         return;
     }
 
-    let action = task::current_task().pcb.inner.exclusive(|inner| {
+    let action = task::with_current(|inner| {
         let pending = inner.signal_info.signal & !inner.signal_info.blocked;
         if pending == 0 {
             return PendingSignalAction::None;
@@ -72,7 +72,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
         if bit >= NSIG {
             return PendingSignalAction::None;
         }
-        inner.signal_info.signal &= !(1u32 << bit);
+        inner.signal_info.clear(bit as u32 + 1);
         let signr = (bit + 1) as u32;
         let sa = inner.signal_info.sigaction[bit].clone();
 
@@ -106,7 +106,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
         PendingSignalAction::Exit { signr } => task::do_exit(1 << (signr - 1)),
         PendingSignalAction::Deliver(deliver) => {
             if frame.deliver_signal(deliver) {
-                task::current_task().pcb.inner.exclusive(|inner| {
+                task::with_current(|inner| {
                     inner.signal_info.blocked |= deliver.sa_mask;
                 });
             }

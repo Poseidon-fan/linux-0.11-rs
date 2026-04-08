@@ -23,24 +23,22 @@ use crate::{
 
 /// Handle a not-present page fault (`P=0` in the CPU error code).
 pub fn handle_no_page(_error_code: u32, address: u32) {
-    let fault_addr = LinAddr::from(address).align_down();
-    let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
+    let fault_page = LinAddr::from(address).floor();
 
-    let (exe_inode, addr_offset, end_data, current_pde_base) =
-        task::current_task().pcb.inner.exclusive(|inner| {
-            let base = inner.ldt.data_segment().base();
-            let pde_base = inner
-                .memory_space
-                .as_ref()
-                .map(|ms| ms.pde_base())
-                .unwrap_or(0);
-            (
-                inner.fs.executable_inode.clone(),
-                fault_addr.as_u32().wrapping_sub(base),
-                inner.mem_layout.end_data,
-                pde_base,
-            )
-        });
+    let (exe_inode, addr_offset, end_data, current_pde_base) = task::with_current(|inner| {
+        let base = inner.ldt.data_segment().base();
+        let pde_base = inner
+            .memory_space
+            .as_ref()
+            .map(|ms| ms.pde_base())
+            .unwrap_or(0);
+        (
+            inner.fs.executable_inode.clone(),
+            (address & !0xFFF).wrapping_sub(base),
+            inner.mem_layout.end_data,
+            pde_base,
+        )
+    });
 
     if let Some(ref inode) = exe_inode {
         if addr_offset < end_data {
@@ -68,7 +66,7 @@ pub fn handle_no_page(_error_code: u32, address: u32) {
         }
     }
 
-    let mapped = task::current_task().pcb.inner.exclusive(|inner| {
+    let mapped = task::with_current(|inner| {
         inner
             .memory_space
             .as_mut()
@@ -124,7 +122,7 @@ fn try_share_page(fault_page: LinPageNum, exe_inode: &Arc<Inode>, current_pde_ba
                 LinPageNum::from_indices(source_pde_base + local_pde_index, pte_index);
 
             let shared = task.pcb.inner.exclusive(|source_inner| {
-                task::current_task().pcb.inner.exclusive(|current_inner| {
+                task::with_current(|current_inner| {
                     let source_ms = match source_inner.memory_space.as_mut() {
                         Some(ms) => ms,
                         None => return false,
@@ -147,9 +145,8 @@ fn try_share_page(fault_page: LinPageNum, exe_inode: &Arc<Inode>, current_pde_ba
 
 /// Handle a write-protect page fault on a present page (`P=1, W=1`).
 pub fn handle_wp_page(address: u32) {
-    let fault_addr = LinAddr::from(address);
-    let fault_page = LinPageNum::from_indices(fault_addr.pde_index(), fault_addr.pte_index());
-    task::current_task().pcb.inner.exclusive(|inner| {
+    let fault_page = LinAddr::from(address).floor();
+    task::with_current(|inner| {
         inner
             .memory_space
             .as_mut()

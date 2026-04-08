@@ -19,7 +19,7 @@ use crate::{
         minix::{INODE_TABLE, Inode, InodeId, MinixFileSystem},
         mount::{MOUNT_TABLE, Mount},
     },
-    task::current_task,
+    task,
 };
 
 pub mod bitmap;
@@ -103,7 +103,7 @@ pub fn mount_root() {
         inode_number: ROOT_INODE_NUMBER,
     });
 
-    current_task().pcb.inner.exclusive(|inner| {
+    task::with_current(|inner| {
         inner.fs.root_directory = Some(Arc::clone(&root_inode));
         inner.fs.current_directory = Some(root_inode);
     });

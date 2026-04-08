@@ -149,13 +149,10 @@ define_syscall_handler!(
                 }
                 ScanResult::NeedWait if (options & WNOHANG) != 0 => return Ok(0),
                 ScanResult::NeedWait => {
-                    task::current_task()
-                        .pcb
-                        .inner
-                        .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
+                    task::with_current(|inner| inner.sched.state = TaskState::Interruptible);
                     task::schedule();
-                    if task::current_task().pcb.inner.exclusive(|inner| {
-                        inner.signal_info.signal &= !(1 << (SIGCHLD - 1));
+                    if task::with_current(|inner| {
+                        inner.signal_info.clear(SIGCHLD);
                         inner.signal_info.signal != 0
                     }) {
                         return Err(EINTR);
@@ -171,7 +168,7 @@ define_syscall_handler!(
     user_lib::NR_ALARM = 27,
     fn sys_alarm(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (seconds, _, _) = ctx.args();
-        let old_seconds = task::current_task().pcb.inner.exclusive(|inner| {
+        let old_seconds = task::with_current(|inner| {
             let j = task::jiffies();
             let alarm = inner.signal_info.alarm;
             let old = (alarm > 0 && alarm > j)
@@ -187,10 +184,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_PAUSE = 29,
     fn sys_pause(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.sched.state = TaskState::Interruptible);
+        task::with_current(|inner| inner.sched.state = TaskState::Interruptible);
         task::schedule();
         Ok(0)
     }
@@ -200,7 +194,7 @@ define_syscall_handler!(
     user_lib::NR_NICE = 34,
     fn sys_nice(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (increment, _, _) = ctx.args();
-        task::current_task().pcb.inner.exclusive(|inner| {
+        task::with_current(|inner| {
             if inner.sched.priority > increment {
                 inner.sched.priority -= increment;
             }
@@ -209,13 +203,16 @@ define_syscall_handler!(
     }
 );
 
+const MIN_STACK_GAP: u32 = 16384;
+
 define_syscall_handler!(
     user_lib::NR_BRK = 45,
     fn sys_brk(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (end_data_seg, _, _) = ctx.args();
-        Ok(task::current_task().pcb.inner.exclusive(|inner| {
+        Ok(task::with_current(|inner| {
             let layout = &mut inner.mem_layout;
-            if end_data_seg >= layout.end_code && end_data_seg < layout.start_stack - 16384 {
+            if end_data_seg >= layout.end_code && end_data_seg < layout.start_stack - MIN_STACK_GAP
+            {
                 layout.brk = end_data_seg;
             }
             layout.brk
@@ -227,7 +224,7 @@ define_syscall_handler!(
     user_lib::NR_UMASK = 60,
     fn sys_umask(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (mask, _, _) = ctx.args();
-        Ok(task::current_task().pcb.inner.exclusive(|inner| {
+        Ok(task::with_current(|inner| {
             let old = inner.fs.umask as u32;
             inner.fs.umask = (mask & 0o777) as u16;
             old
@@ -253,18 +250,16 @@ define_syscall_handler!(
 
         let current = task::current_task();
         let current_pid = current.pcb.pid;
-        let current_euid = current.pcb.inner.exclusive(|inner| inner.identity.euid);
+        let current_euid = task::with_current(|inner| inner.identity.euid);
 
         fn send_sig(sig: u32, task: &Task, priv_flag: bool, current_euid: u16) -> Result<(), u32> {
-            let idx = (sig - 1) as usize;
             let allowed = priv_flag
                 || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
                 || is_super();
             allowed.then_some(()).ok_or(EPERM)?;
             task.pcb.inner.exclusive(|inner| {
-                inner.signal_info.signal |= 1u32 << idx;
-                (inner.sched.state == TaskState::Interruptible)
-                    .then(|| inner.sched.state = TaskState::Running);
+                inner.signal_info.raise(sig);
+                inner.sched.wake_if_interruptible();
             });
             Ok(())
         }
@@ -304,7 +299,7 @@ define_syscall_handler!(
             .ok_or(EPERM)?;
 
         let idx = (signum - 1) as usize;
-        let old_handler = task::current_task().pcb.inner.exclusive(|inner| {
+        let old_handler = task::with_current(|inner| {
             let old = inner.signal_info.sigaction[idx].sa_handler;
             inner.signal_info.sigaction[idx] = SigAction {
                 sa_handler: handler,
@@ -321,10 +316,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_SGETMASK = 68,
     fn sys_sgetmask(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.signal_info.blocked))
+        Ok(task::with_current(|inner| inner.signal_info.blocked))
     }
 );
 
@@ -332,7 +324,7 @@ define_syscall_handler!(
     user_lib::NR_SSETMASK = 69,
     fn sys_ssetmask(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (newmask, _, _) = ctx.args();
-        let old = task::current_task().pcb.inner.exclusive(|inner| {
+        let old = task::with_current(|inner| {
             core::mem::replace(
                 &mut inner.signal_info.blocked,
                 newmask & !(1u32 << (SIGKILL - 1)),
@@ -373,7 +365,7 @@ define_syscall_handler!(
             }
         }
 
-        let old_sa = task::current_task().pcb.inner.exclusive(|inner| {
+        let old_sa = task::with_current(|inner| {
             let old = inner.signal_info.sigaction[idx].clone();
             (action_ptr != 0).then(|| {
                 inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
@@ -404,10 +396,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETUID = 24,
     fn sys_getuid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.identity.uid as u32))
+        Ok(task::with_current(|inner| inner.identity.uid as u32))
     }
 );
 
@@ -422,10 +411,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETGID = 47,
     fn sys_getgid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.identity.gid as u32))
+        Ok(task::with_current(|inner| inner.identity.gid as u32))
     }
 );
 
@@ -440,20 +426,14 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETEUID = 49,
     fn sys_geteuid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.identity.euid as u32))
+        Ok(task::with_current(|inner| inner.identity.euid as u32))
     }
 );
 
 define_syscall_handler!(
     user_lib::NR_GETEGID = 50,
     fn sys_getegid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.identity.egid as u32))
+        Ok(task::with_current(|inner| inner.identity.egid as u32))
     }
 );
 
@@ -473,7 +453,7 @@ define_syscall_handler!(
             pgid_arg
         };
 
-        let current_session = current.pcb.inner.exclusive(|inner| inner.relation.session);
+        let current_session = task::with_current(|inner| inner.relation.session);
 
         TASK_MANAGER.exclusive(|manager| {
             manager
@@ -506,10 +486,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETPGRP = 65,
     fn sys_getpgrp(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.relation.pgrp))
+        Ok(task::with_current(|inner| inner.relation.pgrp))
     }
 );
 
@@ -517,14 +494,12 @@ define_syscall_handler!(
     user_lib::NR_SETSID = 66,
     fn sys_setsid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         let current = task::current_task();
-        let (is_leader, pid) = current
-            .pcb
-            .inner
-            .exclusive(|inner| (inner.relation.leader != 0, current.pcb.pid));
+        let (is_leader, pid) =
+            task::with_current(|inner| (inner.relation.leader != 0, current.pcb.pid));
         if is_leader && !is_super() {
             return Err(EPERM);
         }
-        current.pcb.inner.exclusive(|inner| {
+        task::with_current(|inner| {
             inner.relation.leader = 1;
             inner.relation.session = pid;
             inner.relation.pgrp = pid;
@@ -537,10 +512,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETPPID = 64,
     fn sys_getppid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| inner.relation.father))
+        Ok(task::with_current(|inner| inner.relation.father))
     }
 );
 
@@ -603,15 +575,14 @@ define_syscall_handler!(
         //   0x0C    4     tms_cstime  Child system CPU time (waited children)
         let (tbuf, _, _) = ctx.args();
         if tbuf != 0 {
-            let (utime, stime, cutime, cstime) =
-                task::current_task().pcb.inner.exclusive(|inner| {
-                    (
-                        inner.acct.utime,
-                        inner.acct.stime,
-                        inner.acct.cutime,
-                        inner.acct.cstime,
-                    )
-                });
+            let (utime, stime, cutime, cstime) = task::with_current(|inner| {
+                (
+                    inner.acct.utime,
+                    inner.acct.stime,
+                    inner.acct.cutime,
+                    inner.acct.cstime,
+                )
+            });
             mm::ensure_user_area_writable(tbuf, 16);
             let base = tbuf as *mut u32;
             unsafe {
@@ -660,7 +631,7 @@ define_syscall_handler!(
 
 fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32, u32> {
     let superuser = is_super();
-    task::current_task().pcb.inner.exclusive(|inner| {
+    task::with_current(|inner| {
         let old_ruid = inner.identity.uid;
         if ruid > 0 {
             let allow = inner.identity.euid == ruid as u16 || old_ruid == ruid as u16 || superuser;
@@ -683,7 +654,7 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32, u32> {
 
 fn sys_setregid_impl(rgid: u32, egid: u32) -> Result<u32, u32> {
     let superuser = is_super();
-    task::current_task().pcb.inner.exclusive(|inner| {
+    task::with_current(|inner| {
         if rgid > 0 {
             let allow = inner.identity.gid == rgid as u16 || superuser;
             if !allow {

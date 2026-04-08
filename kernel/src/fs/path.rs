@@ -75,7 +75,7 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
             break;
         }
 
-        if current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+        if current_inode.file_type() != InodeType::Directory
             || !check_permission(&current_inode, AccessMask::MAY_EXEC)
         {
             return None;
@@ -98,7 +98,7 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
 
     // Verify the parent is a searchable directory before returning it.
     if !basename.is_empty()
-        && (current_inode.inner.lock().disk_inode.mode.file_type() != InodeType::Directory
+        && (current_inode.file_type() != InodeType::Directory
             || !check_permission(&current_inode, AccessMask::MAY_EXEC))
     {
         return None;

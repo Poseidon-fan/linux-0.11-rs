@@ -93,6 +93,14 @@ pub fn read_string(addr: *const u8, max_len: usize) -> String {
     s
 }
 
+/// Maximum length for user-space pathname strings.
+pub const MAX_PATH_LEN: usize = 256;
+
+/// Read a null-terminated pathname from user space at `addr`.
+pub fn read_pathname(addr: u32) -> String {
+    read_string(addr as *const u8, MAX_PATH_LEN)
+}
+
 /// Copies `buf.len()` bytes from user space at `addr` into `buf`.
 pub fn read_bytes(addr: *const u8, buf: &mut [u8]) {
     for (i, slot) in buf.iter_mut().enumerate() {
@@ -124,7 +132,7 @@ where F: FnOnce() -> R {
         );
         asm!(
             "movw {0:x}, %fs",
-            in(reg) 0x10u16,
+            in(reg) super::KERNEL_DS.as_u16(),
             options(att_syntax, nomem, nostack, preserves_flags),
         );
     }

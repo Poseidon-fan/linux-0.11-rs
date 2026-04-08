@@ -73,7 +73,7 @@ fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32, u32> {
             Tty::device(minor).ioctl(minor, cmd, arg)
         }
         5 => {
-            let tty_nr = task::current_task().pcb.inner.exclusive(|inner| inner.tty);
+            let tty_nr = task::with_current(|inner| inner.tty);
             if tty_nr < 0 {
                 return Err(EPERM);
             }
@@ -119,7 +119,7 @@ fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usi
 
 /// Major 5 — read/write the calling process's controlling terminal.
 fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize, u32> {
-    let tty_nr = task::current_task().pcb.inner.exclusive(|inner| inner.tty);
+    let tty_nr = task::with_current(|inner| inner.tty);
     if tty_nr < 0 {
         return Err(EPERM);
     }

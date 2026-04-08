@@ -30,13 +30,16 @@ use crate::{
     trap::{self, TrapHandler},
 };
 
+/// Execute `f` with exclusive access to the current task's PCB inner state.
+pub fn with_current<F, R>(f: F) -> R
+where F: FnOnce(&mut task_struct::TaskControlBlockInner) -> R {
+    current_task().pcb.inner.exclusive(f)
+}
+
 /// Returns true if the current process has superuser privileges (euid == 0).
 #[inline]
 pub fn is_super() -> bool {
-    current_task()
-        .pcb
-        .inner
-        .exclusive(|inner| inner.identity.euid == 0)
+    with_current(|inner| inner.identity.euid == 0)
 }
 
 pub const HZ: u32 = 100;
@@ -70,13 +73,14 @@ pub fn schedule() {
             .for_each(|task| {
                 task.pcb.inner.exclusive(|inner| {
                     (inner.signal_info.alarm > 0 && inner.signal_info.alarm < j).then(|| {
-                        inner.signal_info.signal |= 1 << (SIGALRM - 1);
+                        inner.signal_info.raise(SIGALRM);
                         inner.signal_info.alarm = 0;
                     });
                     let unblocked =
                         inner.signal_info.signal & !(BLOCKABLE & inner.signal_info.blocked);
-                    (unblocked != 0 && inner.sched.state == TaskState::Interruptible)
-                        .then(|| inner.sched.state = TaskState::Running);
+                    if unblocked != 0 {
+                        inner.sched.wake_if_interruptible();
+                    }
                 });
             });
         manager.select_next_task()
@@ -156,9 +160,8 @@ pub fn do_exit(code: i32) -> ! {
                 .for_each(|task| unsafe {
                     task.pcb.inner.exclusive_unchecked(|inner| {
                         (inner.relation.session == current_session).then(|| {
-                            inner.signal_info.signal |= 1 << (SIGHUP - 1);
-                            (inner.sched.state == TaskState::Interruptible)
-                                .then(|| inner.sched.state = TaskState::Running);
+                            inner.signal_info.raise(SIGHUP);
+                            inner.sched.wake_if_interruptible();
                         });
                     });
                 });
@@ -182,9 +185,8 @@ pub fn do_exit(code: i32) -> ! {
         {
             unsafe {
                 father_task.pcb.inner.exclusive_unchecked(|father_inner| {
-                    father_inner.signal_info.signal |= 1u32 << (SIGCHLD - 1);
-                    (father_inner.sched.state == TaskState::Interruptible)
-                        .then(|| father_inner.sched.state = TaskState::Running);
+                    father_inner.signal_info.raise(SIGCHLD);
+                    father_inner.sched.wake_if_interruptible();
                 });
             }
         }

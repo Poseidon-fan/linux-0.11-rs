@@ -31,6 +31,7 @@ bitflags! {
         const DIRTY         = 1 << 6;
         const HUGE_PAGE     = 1 << 7;
         const GLOBAL        = 1 << 8;
+        const USER_RW = Self::PRESENT.bits() | Self::WRITABLE.bits() | Self::USER.bits();
     }
 }
 
@@ -101,7 +102,7 @@ pub struct PageDirectoryEntry(u32);
 impl PageDirectoryEntry {
     /// Create a PDE pointing to a page table with User + Writable + Present flags.
     pub fn user_page_table(page_table_addr: PhysAddr) -> Self {
-        let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+        let flags = PageFlags::USER_RW;
         Self(page_table_addr.as_u32() | flags.bits())
     }
 

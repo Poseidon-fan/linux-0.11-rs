@@ -5,7 +5,7 @@
 
 use core::ptr::addr_of_mut;
 
-use crate::mm::frame::PAGE_SIZE;
+use crate::{mm::frame::PAGE_SIZE, segment::KERNEL_DS};
 
 /// Initial kernel stack used by head.s during boot.
 ///
@@ -25,5 +25,5 @@ struct StackStart {
 #[unsafe(export_name = "stack_start")]
 static mut STACK_START: StackStart = StackStart {
     sp: unsafe { addr_of_mut!(USER_STACK).cast::<u32>().add(BOOT_STACK_WORDS) },
-    ss: 0x10,
+    ss: KERNEL_DS.as_u16(),
 };

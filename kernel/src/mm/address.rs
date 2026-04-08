@@ -196,6 +196,11 @@ impl PhysAddr {
     pub fn as_mut_ptr<T>(self) -> *mut T {
         self.0 as *mut T
     }
+
+    /// Return a raw byte pointer offset from this physical address.
+    pub fn byte_add(self, offset: usize) -> *mut u8 {
+        (self.0 + offset as u32) as *mut u8
+    }
 }
 
 impl PhysPageNum {

@@ -15,8 +15,8 @@
 
 mod keyboard;
 mod vga;
-
 use vga::CONSOLE;
+pub(crate) use vga::{ORIG_X, ORIG_Y};
 
 use super::tty::Tty;
 use crate::{

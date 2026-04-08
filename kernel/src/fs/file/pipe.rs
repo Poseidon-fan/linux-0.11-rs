@@ -195,7 +195,7 @@ impl File for PipeFile {
                 task::current_task()
                     .pcb
                     .inner
-                    .exclusive(|inner| inner.signal_info.signal |= 1 << (SIGPIPE - 1));
+                    .exclusive(|inner| inner.signal_info.raise(SIGPIPE));
                 return if total > 0 { Ok(total) } else { Err(EPIPE) };
             }
             WaitQueue::sleep_on(&self.shared.wait);
