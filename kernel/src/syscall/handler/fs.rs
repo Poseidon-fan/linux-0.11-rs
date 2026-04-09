@@ -12,10 +12,9 @@ use crate::{
     define_syscall_handler,
     driver::{self, blk::hd},
     fs::{
-        self, buffer,
+        self, InodeMode, InodeType, ROOT_INODE_NUMBER, buffer,
         file::{BlockDeviceFile, CharDeviceFile, File, InodeFile, PipeFile},
         get_inode,
-        layout::{InodeMode, InodeType, ROOT_INODE_NUMBER},
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
         mount::{MOUNT_TABLE, Mount},
         path::{self, AccessMask},

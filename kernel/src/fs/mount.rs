@@ -7,12 +7,12 @@ use lazy_static::lazy_static;
 
 use crate::{
     driver::DevNum,
-    fs::minix::{Inode, InodeId, MinixFileSystem},
+    fs::minix::{INODE_TABLE, Inode, InodeId, MinixFileSystem},
     sync::Mutex,
 };
 
 /// Number of mounted filesystem slots kept in the global mount table.
-pub const MOUNT_TABLE_CAPACITY: usize = 8;
+const MOUNT_TABLE_CAPACITY: usize = 8;
 
 lazy_static! {
     /// Global mount table protected by a mutex; accessed through [`MountTable`] methods.
@@ -88,5 +88,36 @@ impl MountTable {
             .iter_mut()
             .find(|s| s.as_ref().is_some_and(|m| m.device == dev))?;
         slot.take()
+    }
+}
+
+/// Look up one inode and follow mount points until a backing inode is reached.
+///
+/// When the looked-up inode is a mount point, the returned inode becomes the
+/// root inode of the filesystem mounted on top of that point.
+///
+/// # Panics
+///
+/// Panics if `id.device` is zero.
+/// Panics if no mounted filesystem exists for `id.device`.
+pub fn get_inode(id: InodeId) -> Arc<Inode> {
+    assert_ne!(id.device.0, 0, "iget with dev==0");
+
+    let mut current_id = id;
+
+    loop {
+        let fs = MOUNT_TABLE
+            .lock()
+            .get_fs(current_id.device)
+            .unwrap_or_else(|| panic!("get_inode on unmounted device {:04x}", current_id.device.0));
+
+        let inode = INODE_TABLE.lock().get_inode_raw(current_id, &fs);
+
+        let mounted_root = MOUNT_TABLE.lock().get_mounted_root_by_mount_point(inode.id);
+        let Some(root_inode) = mounted_root else {
+            return inode;
+        };
+
+        current_id = root_inode.id;
     }
 }

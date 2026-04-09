@@ -28,10 +28,10 @@ use crate::{
 };
 
 /// Maximum number of bitmap blocks cached from one Minix super block.
-pub const MINIX_BITMAP_BLOCK_SLOTS: usize = 8;
+const MINIX_BITMAP_BLOCK_SLOTS: usize = 8;
 
 /// Number of runtime inode slots kept in the global inode table.
-pub const INODE_TABLE_CAPACITY: usize = 32;
+const INODE_TABLE_CAPACITY: usize = 32;
 
 /// Number of 16-bit zone pointers stored in one indirect block.
 const INDIRECT_ENTRY_COUNT: usize = BLOCK_SIZE / size_of::<u16>();
@@ -101,7 +101,7 @@ impl Inode {
     ///
     /// If the inode is not dirty or its backing filesystem is no longer
     /// available, this function returns without modifying on-disk state.
-    pub fn sync(&self) {
+    fn sync(&self) {
         let mut inner = self.inner.lock();
         if !inner.is_dirty {
             return;
@@ -200,7 +200,7 @@ impl Inode {
 
     /// Map one logical file block to its backing disk block.
     ///
-    /// The result mirrors the original Minix `_bmap` contract:
+    /// Contract:
     /// `Ok(0)` means the logical block is currently unmapped or allocation
     /// failed when `create` was requested.
     pub fn map_block_id(&self, logic_id: usize, create: bool) -> Result<u32, u32> {
@@ -238,49 +238,44 @@ impl Inode {
             Ok(zone)
         };
 
-        let block_id = match logic_id {
-            0..DIRECT_ZONE_COUNT => match (inner.disk_inode.direct_zones[logic_id], create) {
-                (0, true) => match fs.lock().alloc_zone() {
-                    Some(new_zone) => {
-                        inner.disk_inode.direct_zones[logic_id] = new_zone;
-                        inner.is_dirty = true;
-                        inner.change_time = time::current_time();
-                        new_zone
-                    }
-                    None => 0,
-                },
-                (zone, _) => zone,
-            },
-            _ if logic_id < DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT => {
-                let root_zone = match (inner.disk_inode.single_indirect_zone, create) {
-                    (0, true) => match fs.lock().alloc_zone() {
-                        Some(new_zone) => {
-                            inner.disk_inode.single_indirect_zone = new_zone;
-                            inner.is_dirty = true;
-                            inner.change_time = time::current_time();
-                            new_zone
-                        }
-                        None => 0,
-                    },
-                    (zone, _) => zone,
-                };
+        // Try to allocate a zone when the current slot is empty and `create` is set.
+        // Returns (zone_value, was_newly_allocated).
+        let try_alloc = |current: u16| -> (u16, bool) {
+            match (current, create) {
+                (0, true) => {
+                    let zone = fs.lock().alloc_zone().unwrap_or(0);
+                    (zone, zone != 0)
+                }
+                (z, _) => (z, false),
+            }
+        };
 
+        let block_id = match logic_id {
+            0..DIRECT_ZONE_COUNT => {
+                let (zone, allocated) = try_alloc(inner.disk_inode.direct_zones[logic_id]);
+                if allocated {
+                    inner.disk_inode.direct_zones[logic_id] = zone;
+                    inner.is_dirty = true;
+                    inner.change_time = time::current_time();
+                }
+                zone
+            }
+            _ if logic_id < DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT => {
+                let (root_zone, allocated) = try_alloc(inner.disk_inode.single_indirect_zone);
+                if allocated {
+                    inner.disk_inode.single_indirect_zone = root_zone;
+                    inner.is_dirty = true;
+                    inner.change_time = time::current_time();
+                }
                 resolve_indirect_entry(root_zone, logic_id - DIRECT_ZONE_COUNT)?
             }
             _ => {
-                let root_zone = match (inner.disk_inode.double_indirect_zone, create) {
-                    (0, true) => match fs.lock().alloc_zone() {
-                        Some(new_zone) => {
-                            inner.disk_inode.double_indirect_zone = new_zone;
-                            inner.is_dirty = true;
-                            inner.change_time = time::current_time();
-                            new_zone
-                        }
-                        None => 0,
-                    },
-                    (zone, _) => zone,
-                };
-
+                let (root_zone, allocated) = try_alloc(inner.disk_inode.double_indirect_zone);
+                if allocated {
+                    inner.disk_inode.double_indirect_zone = root_zone;
+                    inner.is_dirty = true;
+                    inner.change_time = time::current_time();
+                }
                 let block = logic_id - DIRECT_ZONE_COUNT - INDIRECT_ENTRY_COUNT;
                 let outer_index = block / INDIRECT_ENTRY_COUNT;
                 let inner_index = block % INDIRECT_ENTRY_COUNT;
@@ -379,16 +374,13 @@ impl Inode {
 
             pos += chunk_len;
             written += chunk_len;
-
-            let mut inner = self.inner.lock();
-            if pos > inner.disk_inode.size as usize {
-                inner.disk_inode.size = pos as u32;
-                inner.is_dirty = true;
-            }
         }
 
         let now = time::current_time();
         let mut inner = self.inner.lock();
+        if pos > inner.disk_inode.size as usize {
+            inner.disk_inode.size = pos as u32;
+        }
         inner.disk_inode.modification_time = now;
         inner.change_time = now;
         inner.is_dirty = true;
@@ -669,7 +661,7 @@ impl MinixFileSystem {
     /// # Panics
     ///
     /// Panics when the backing inode-table block cannot be read.
-    pub fn read_inode(&self, nr: InodeNumber) -> DiskInode {
+    fn read_inode(&self, nr: InodeNumber) -> DiskInode {
         let (block_nr, offset) = self.inode_block_position(nr);
         let buf = buffer::read_block(BufferKey {
             dev: self.device,
@@ -686,7 +678,7 @@ impl MinixFileSystem {
     /// # Panics
     ///
     /// Panics when the backing inode-table block cannot be read.
-    pub fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
+    fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
         let (block_nr, offset) = self.inode_block_position(nr);
         let buf = buffer::read_block(BufferKey {
             dev: self.device,
@@ -711,7 +703,7 @@ impl MinixFileSystem {
     /// on-disk inode to the inode table block.
     ///
     /// Returns `None` when the bitmap is full.
-    pub fn alloc_inode(&self) -> Option<InodeNumber> {
+    fn alloc_inode(&self) -> Option<InodeNumber> {
         let nr = InodeNumber(self.inode_bitmap.alloc()? as u16);
         self.write_inode(nr, &DiskInode::zeroed());
         Some(nr)
@@ -739,7 +731,7 @@ impl MinixFileSystem {
 
     /// Release an inode number back to the inode bitmap and zero the on-disk
     /// inode table entry.
-    pub fn free_inode(&self, inode_number: InodeNumber) {
+    fn free_inode(&self, inode_number: InodeNumber) {
         self.write_inode(inode_number, &DiskInode::zeroed());
         self.inode_bitmap.dealloc(u32::from(inode_number.0));
     }

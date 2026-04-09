@@ -106,7 +106,7 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
 
 /// Resolve one `..` step from `current_inode`.
 ///
-/// This follows the Linux 0.11 pathname rule: task root acts as a pseudo-root,
+/// Pathname rule: task root acts as a pseudo-root,
 /// and traversing `..` from a mounted filesystem root first moves back to the
 /// covered mount-point inode before reading that directory's `..` entry.
 fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
@@ -127,7 +127,7 @@ fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option
 }
 
 bitflags! {
-    /// Permission mask bits matching the original kernel's `MAY_*` constants.
+    /// Permission mask bits.
     pub struct AccessMask: u16 {
         const MAY_EXEC  = 1;
         const MAY_WRITE = 2;
@@ -142,7 +142,7 @@ bitflags! {
 /// override (euid == 0).
 ///
 /// A deleted file (link_count == 0) is inaccessible to everyone, including
-/// the superuser, matching the original kernel behaviour.
+/// the superuser.
 pub fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
     let (euid, egid) = task::with_current(|inner| (inner.identity.euid, inner.identity.egid));
     check_permission_as(inode, mask, euid, egid)

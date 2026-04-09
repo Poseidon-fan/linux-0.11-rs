@@ -2,8 +2,7 @@
 //!
 //! Block device files bypass the Minix block mapping and instead use the
 //! device number (from `direct_zones[0]`) plus a byte offset to address
-//! sectors directly. This mirrors the original `block_read` / `block_write`
-//! in `block_dev.c`.
+//! sectors directly.
 //!
 //! ```text
 //!            ┌─────────────────────────────┐
@@ -23,7 +22,6 @@
 //! ```
 
 use alloc::sync::Arc;
-use core::ptr;
 
 use user_lib::fs::{Stat, Whence};
 
@@ -116,10 +114,7 @@ fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize, u32
             };
         };
 
-        unsafe {
-            let src = handle.data.as_ptr().add(offset_in_block);
-            ptr::copy_nonoverlapping(src, buf.as_mut_ptr().add(buf_offset), chars);
-        }
+        handle.read_bytes(offset_in_block, &mut buf[buf_offset..buf_offset + chars]);
 
         *pos += chars;
         buf_offset += chars;
@@ -161,11 +156,7 @@ fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize, u32> {
             h
         };
 
-        unsafe {
-            let dst = handle.data.as_ptr().add(offset_in_block);
-            ptr::copy_nonoverlapping(buf.as_ptr().add(buf_offset), dst, chars);
-        }
-        handle.set_dirty(true);
+        handle.write_bytes(offset_in_block, &buf[buf_offset..buf_offset + chars]);
 
         *pos += chars;
         buf_offset += chars;

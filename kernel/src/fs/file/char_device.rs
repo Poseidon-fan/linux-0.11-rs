@@ -1,7 +1,6 @@
 //! Character device file — dispatches read/write by major number.
 //!
-//! The character device dispatch table mirrors the original `crw_table[]`
-//! in `char_dev.c`:
+//! The character device dispatch table is indexed by major number:
 //!
 //! ```text
 //! Major 0: (unused)

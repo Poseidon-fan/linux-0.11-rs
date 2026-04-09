@@ -36,9 +36,8 @@ const WRAP_MASK: usize = PIPE_BUF_SIZE - 1;
 
 /// Mutable pipe state protected by `KernelCell`.
 ///
-/// The buffer is a raw physical page obtained from the frame allocator,
-/// matching the original `get_free_page()` approach.  `PhysFrame`'s `Drop`
-/// returns the page when the pipe is destroyed.
+/// The buffer is a raw physical page obtained from the frame allocator.
+/// `PhysFrame`'s `Drop` returns the page when the pipe is destroyed.
 struct PipeState {
     frame: PhysFrame,
     head: usize,
@@ -86,8 +85,7 @@ pub struct PipeFile {
 impl PipeFile {
     /// Create a connected (reader, writer) pair ready to install into fds.
     ///
-    /// The buffer page is allocated from the physical frame allocator,
-    /// matching the original `get_free_page()` approach.
+    /// The buffer page is allocated from the physical frame allocator.
     pub fn create_pair() -> Result<(Arc<Self>, Arc<Self>), u32> {
         let page = frame::alloc().ok_or(ENOMEM)?;
         let shared = Arc::new(PipeShared {

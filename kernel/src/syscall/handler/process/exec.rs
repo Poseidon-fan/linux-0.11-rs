@@ -9,12 +9,7 @@ use linkme::distributed_slice;
 use crate::syscall::SYSCALL_TABLE;
 use crate::{
     define_syscall_handler,
-    fs::{
-        BLOCK_SIZE,
-        layout::{InodeModeFlags, InodeType},
-        minix::Inode,
-        path,
-    },
+    fs::{BLOCK_SIZE, InodeModeFlags, InodeType, minix::Inode, path},
     mm::{
         address::LinAddr,
         frame::{self, PAGE_SIZE, PhysFrame},

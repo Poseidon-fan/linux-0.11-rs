@@ -33,7 +33,7 @@ use crate::{
 
 lazy_static! {
     /// Global singleton manager for the buffer-cache metadata graph.
-    pub static ref BUFFER_MANAGER: Mutex<BufferManager> =
+    static ref BUFFER_MANAGER: Mutex<BufferManager> =
         Mutex::new(BufferManager::empty());
 }
 
@@ -112,7 +112,7 @@ struct BufferMeta {
 /// Metadata object for one block-sized cache entry.
 pub struct BufferHandle {
     /// Intrusive link node used by [`BufferList`].
-    pub buffers_link: LinkedListLink,
+    buffers_link: LinkedListLink,
     /// Start address of one `BLOCK_SIZE` data block.
     pub data: NonNull<u8>,
     /// Sleepable ownerless lock for in-flight buffer I/O.
@@ -123,28 +123,28 @@ pub struct BufferHandle {
 
 intrusive_adapter!(
     /// Adapter for storing `Arc<BufferHandle>` nodes in an intrusive linked list.
-    pub BufferAdapter = Arc<BufferHandle>: BufferHandle { buffers_link => LinkedListLink }
+    BufferAdapter = Arc<BufferHandle>: BufferHandle { buffers_link => LinkedListLink }
 );
 
 /// Intrusive list wrapper for all buffer handles.
 ///
 /// This wrapper intentionally hides raw cursor operations and keeps all
 /// list-related `unsafe` in one place.
-pub struct BufferList {
+struct BufferList {
     list: LinkedList<BufferAdapter>,
 }
 
 /// Global manager of buffer handles and key index.
-pub struct BufferManager {
+struct BufferManager {
     /// Replacement-order list that permanently keeps all handles.
-    pub buffers: BufferList,
+    buffers: BufferList,
     /// `(dev, block)` lookup index for bound handles.
-    pub buffer_index: HashMap<BufferKey, Arc<BufferHandle>>,
+    buffer_index: HashMap<BufferKey, Arc<BufferHandle>>,
 }
 
 impl BufferMeta {
     /// Construct an empty state for a newly created buffer handle.
-    pub const fn empty() -> Self {
+    const fn empty() -> Self {
         Self {
             key: None,
             ref_count: 0,
@@ -252,6 +252,27 @@ impl BufferHandle {
         result
     }
 
+    /// Copy bytes from block offset `off` into `dst`.
+    pub fn read_bytes(&self, off: usize, dst: &mut [u8]) {
+        assert!(off + dst.len() <= BLOCK_SIZE);
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                self.data.as_ptr().add(off),
+                dst.as_mut_ptr(),
+                dst.len(),
+            );
+        }
+    }
+
+    /// Copy `src` into this block at offset `off` and mark dirty.
+    pub fn write_bytes(&self, off: usize, src: &[u8]) {
+        assert!(off + src.len() <= BLOCK_SIZE);
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_ptr(), self.data.as_ptr().add(off), src.len());
+        }
+        self.set_dirty(true);
+    }
+
     /// Reset metadata for a newly rebound cache entry.
     fn reset_after_rebind(&self) {
         self.meta.exclusive(|meta| {
@@ -279,34 +300,34 @@ unsafe impl Sync for BufferHandle {}
 
 impl BufferList {
     /// Create an empty buffer list.
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             list: LinkedList::new(BufferAdapter::new()),
         }
     }
 
     /// Count current list nodes.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.list.iter().count()
     }
 
     /// Insert one handle at list tail.
-    pub fn push_back(&mut self, handle: Arc<BufferHandle>) {
+    fn push_back(&mut self, handle: Arc<BufferHandle>) {
         self.list.push_back(handle);
     }
 
     /// Remove and return list head.
-    pub fn pop_front(&mut self) -> Option<Arc<BufferHandle>> {
+    fn pop_front(&mut self) -> Option<Arc<BufferHandle>> {
         self.list.pop_front()
     }
 
     /// Remove all nodes from the list.
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         while self.pop_front().is_some() {}
     }
 
     /// Iterate over buffer handles in list order.
-    pub fn iter(&self) -> impl Iterator<Item = &BufferHandle> {
+    fn iter(&self) -> impl Iterator<Item = &BufferHandle> {
         self.list.iter()
     }
 
@@ -415,7 +436,7 @@ impl BufferManager {
     }
 
     /// Insert a key mapping and update handle state key.
-    pub fn index_insert(
+    fn index_insert(
         &mut self,
         key: BufferKey,
         handle: Arc<BufferHandle>,
@@ -431,7 +452,7 @@ impl BufferManager {
     }
 
     /// Remove a key mapping and clear matching handle state key.
-    pub fn index_remove(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
+    fn index_remove(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
         let removed = self.buffer_index.remove(&key);
         if let Some(handle) = removed.as_ref() {
             if handle.key_matches(key) {

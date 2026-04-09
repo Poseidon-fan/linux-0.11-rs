@@ -21,8 +21,7 @@ pub struct InodeFile {
 
 /// Mutable open-file state that is private to one opened inode file.
 ///
-/// This mirrors the role of Linux 0.11 `struct file` fields that belong to
-/// one open instance instead of the inode itself.
+/// Per-open-instance state distinct from the shared inode.
 struct InodeFileInner {
     inode: Arc<Inode>,
     offset: usize,

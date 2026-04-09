@@ -60,23 +60,30 @@ impl<const N: usize> Bitmap<N> {
 
     /// Allocate the first free logical identifier in ascending bitmap order.
     pub fn alloc(&self) -> Option<u32> {
-        for bit in 0..self.bit_count {
+        let mut bit = 0usize;
+        while bit < self.bit_count {
             let block_slot = bit / BLOCK_BITS;
             let word_index = (bit % BLOCK_BITS) / WORD_BITS;
-            let inner_bit = bit % WORD_BITS;
-            let mask = 1u64 << inner_bit;
             let buf = self.buffers[block_slot]
                 .as_ref()
                 .expect("bitmap buffers must be loaded before allocation");
 
-            if buf.read(|bitmap: &BitmapBlock| bitmap[word_index] & mask != 0) {
+            let word = buf.read(|bitmap: &BitmapBlock| bitmap[word_index]);
+            let free = !word;
+            if free == 0 {
+                bit = (bit / WORD_BITS + 1) * WORD_BITS;
                 continue;
             }
 
-            buf.write(|bitmap: &mut BitmapBlock| bitmap[word_index] |= mask);
-            return Some(self.bit0_id + bit as u32);
-        }
+            let offset = free.trailing_zeros() as usize;
+            let actual_bit = (bit / WORD_BITS) * WORD_BITS + offset;
+            if actual_bit >= self.bit_count {
+                break;
+            }
 
+            buf.write(|bitmap: &mut BitmapBlock| bitmap[word_index] |= 1u64 << offset);
+            return Some(self.bit0_id + actual_bit as u32);
+        }
         None
     }
 
