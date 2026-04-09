@@ -50,10 +50,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
 /// search (execute) permission for the current task.
 pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
     let parsed_path = ParsedPath::parse(path)?;
-    let fs_ctx = task::current_task()
-        .pcb
-        .inner
-        .exclusive(|inner| inner.fs.clone());
+    let fs_ctx = task::with_current(|inner| inner.fs.clone());
 
     let root_inode = fs_ctx.root_directory.clone()?;
 
@@ -147,10 +144,7 @@ bitflags! {
 /// A deleted file (link_count == 0) is inaccessible to everyone, including
 /// the superuser, matching the original kernel behaviour.
 pub fn check_permission(inode: &Inode, mask: AccessMask) -> bool {
-    let (euid, egid) = task::current_task()
-        .pcb
-        .inner
-        .exclusive(|inner| (inner.identity.euid, inner.identity.egid));
+    let (euid, egid) = task::with_current(|inner| (inner.identity.euid, inner.identity.egid));
     check_permission_as(inode, mask, euid, egid)
 }
 

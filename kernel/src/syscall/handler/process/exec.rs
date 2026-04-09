@@ -220,10 +220,7 @@ fn check_exec_permission(inode: &Inode) -> Result<(u16, u16), u32> {
     }
 
     let flags = disk.mode.flags();
-    let (euid, egid) = task::current_task()
-        .pcb
-        .inner
-        .exclusive(|t| (t.identity.euid, t.identity.egid));
+    let (euid, egid) = task::with_current(|t| (t.identity.euid, t.identity.egid));
 
     let e_uid = if flags.contains(InodeModeFlags::SET_USER_ID) {
         disk.user_id
@@ -243,7 +240,7 @@ fn check_exec_permission(inode: &Inode) -> Result<(u16, u16), u32> {
         mode >>= 3;
     }
 
-    if (mode & 1) == 0 && !((disk.mode.0 & 0o111) != 0 && task::is_super()) {
+    if (mode & 1) == 0 && !((disk.mode.0 & 0o111) != 0 && task::is_superuser()) {
         return Err(EACCES);
     }
 
@@ -416,10 +413,9 @@ define_syscall_handler!(
 
         // ===== POINT OF NO RETURN =====
 
-        let current = task::current_task();
-        let slot = current.pcb.slot;
+        let slot = task::current_slot();
 
-        let sp = current.pcb.inner.exclusive(|inner| {
+        let sp = task::with_current(|inner| {
             // Replace executable inode.
             inner.fs.executable_inode = Some(inode);
 

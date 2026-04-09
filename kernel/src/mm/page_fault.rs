@@ -92,10 +92,10 @@ pub fn handle_wp_page(address: u32) {
 /// Terminate the current process due to out-of-memory.
 ///
 /// Must NOT be called from inside a `with_current` or `TASK_MANAGER.exclusive`
-/// closure — `do_exit` acquires those locks internally.
+/// closure — `exit_process` acquires those locks internally.
 pub(super) fn oom() -> ! {
     println!("out of memory");
-    task::do_exit(SIGSEGV as i32)
+    task::exit_process(SIGSEGV as i32)
 }
 
 /// Determine what kind of page the fault requires.

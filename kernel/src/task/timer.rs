@@ -136,14 +136,14 @@ pub extern "C" fn timer_interrupt() {
             "pop %ds",
             "iret",
             saved_cs_off = const 32,
-            entry = sym timer_interrupt_rust_entry,
+            entry = sym handle_timer_tick,
             options(att_syntax),
         );
     }
 }
 
 /// Rust-side timer tick logic for IRQ0.
-extern "C" fn timer_interrupt_rust_entry(frame: *mut TimerInterruptFrame, cpl: u32) {
+extern "C" fn handle_timer_tick(frame: *mut TimerInterruptFrame, cpl: u32) {
     JIFFIES.fetch_add(1, Ordering::Relaxed);
 
     // Send End-Of-Interrupt to master 8259A PIC.

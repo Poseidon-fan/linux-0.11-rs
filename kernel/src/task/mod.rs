@@ -15,7 +15,10 @@ mod wait_queue;
 
 use core::{arch::asm, mem};
 
-pub use current::{cur_irq_state, current_slot, current_task, set_cur_irq_state, try_current_slot};
+pub use current::{
+    current_irq_state, current_pid, current_slot, current_task, set_current_irq_state,
+    try_current_slot,
+};
 pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 pub use task_struct::{TASK_OPEN_FILES_LIMIT, TaskState};
@@ -38,7 +41,7 @@ where F: FnOnce(&mut task_struct::TaskControlBlockInner) -> R {
 
 /// Returns true if the current process has superuser privileges (euid == 0).
 #[inline]
-pub fn is_super() -> bool {
+pub fn is_superuser() -> bool {
     with_current(|inner| inner.identity.euid == 0)
 }
 
@@ -50,7 +53,6 @@ unsafe extern "C" {
 /// Select and switch to the next runnable task.
 ///
 /// If no better task exists, this function returns without switching.
-#[inline]
 pub fn schedule() {
     /// 32-bit far pointer used by `ljmp m16:32`.
     #[repr(C, packed)]
@@ -105,71 +107,67 @@ pub fn schedule() {
 }
 
 /// Terminate the current task and switch to another runnable task.
-///
-/// Interrupt handling:
-/// - The critical section is wrapped by `KernelCell::exclusive`, preventing
-///   IRQ re-entry while task state is mutably borrowed.
-pub fn do_exit(code: i32) -> ! {
+pub fn exit_process(code: i32) -> ! {
     TASK_MANAGER.exclusive(|manager| {
-        let current = current_task();
-        let current_slot = current.pcb.slot;
-        assert_ne!(current_slot, 0, "task[0] cannot exit");
-        let current_pid = current.pcb.pid;
+        let slot = current_slot();
+        let pid = current_pid();
+        assert_ne!(slot, 0, "task[0] cannot exit");
 
-        // Read relation fields and tear down the current process in one access.
-        let (father_pid, is_leader, current_session) = unsafe {
-            current.pcb.inner.exclusive_unchecked(|inner| {
-                let rel = (
-                    inner.relation.father,
-                    inner.relation.leader,
-                    inner.relation.session,
-                );
-                // Release owned page tables and data frames.
-                inner.memory_space = None;
-                inner.sched.state = TaskState::Zombie;
-                inner.exit_code = code;
-                rel
-            })
+        let (father_pid, is_leader, session) = with_current(|inner| {
+            (
+                inner.relation.father,
+                inner.relation.leader,
+                inner.relation.session,
+            )
+        });
+
+        let others = || {
+            manager
+                .tasks
+                .iter()
+                .flatten()
+                .filter(|t| t.pcb.slot != slot)
         };
 
-        // Re-parent all direct children to task 1.
-        // If session leader, also send SIGHUP to tasks in same session.
-        manager
-            .tasks
-            .iter()
-            .enumerate()
-            .filter(|&(slot, _)| slot != current_slot)
-            .filter_map(|(_, task)| task.as_ref())
-            .for_each(|task| unsafe {
-                task.pcb.inner.exclusive_unchecked(|inner| {
-                    if inner.relation.father == current_pid {
-                        inner.relation.father = 1;
-                    }
-                    if is_leader && inner.relation.session == current_session {
+        // Session leader: send SIGHUP to all tasks in the same session.
+        if is_leader {
+            for task in others() {
+                task.pcb.inner.exclusive(|inner| {
+                    if inner.relation.session == session {
                         inner.signal_info.raise(SIGHUP);
                         inner.sched.wake_if_interruptible();
                     }
                 });
-            });
-
-        // Notify parent process with SIGCHLD so waiters can observe child exit.
-        if let Some(father_task) = manager
-            .tasks
-            .iter()
-            .filter_map(|task| task.as_ref())
-            .find(|task| task.pcb.pid == father_pid)
-        {
-            unsafe {
-                father_task.pcb.inner.exclusive_unchecked(|father_inner| {
-                    father_inner.signal_info.raise(SIGCHLD);
-                    father_inner.sched.wake_if_interruptible();
-                });
             }
+        }
+
+        // Re-parent direct children to init (pid 1).
+        for task in others() {
+            task.pcb.inner.exclusive(|inner| {
+                if inner.relation.father == pid {
+                    inner.relation.father = 1;
+                }
+            });
+        }
+
+        // Release address space and become a zombie.
+        with_current(|inner| {
+            inner.memory_space = None;
+            inner.sched.state = TaskState::Zombie;
+            inner.exit_code = code;
+        });
+
+        // Notify parent with SIGCHLD.
+        if let Some(father) = others().find(|t| t.pcb.pid == father_pid) {
+            father.pcb.inner.exclusive(|inner| {
+                inner.signal_info.raise(SIGCHLD);
+                inner.sched.wake_if_interruptible();
+            });
         }
     });
     schedule();
 
-    panic!("do_exit returned unexpectedly");
+    panic!("exit_process returned unexpectedly");
 }
 
 /// Initialize the scheduler and task system.

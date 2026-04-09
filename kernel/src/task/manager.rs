@@ -11,7 +11,7 @@ use core::{
 use lazy_static::lazy_static;
 
 use super::task_struct::{
-    I387Struct, LocalDescriptorTable, TASK_PAGE_SIZE, Task, TaskAcctInfo, TaskControlBlock,
+    FpuState, LocalDescriptorTable, TASK_PAGE_SIZE, Task, TaskAcctInfo, TaskControlBlock,
     TaskControlBlockInner, TaskFileSystemContext, TaskIdentityInfo, TaskMemoryLayout, TaskPage,
     TaskRelationInfo, TaskSchedInfo, TaskSignalInfo, TaskState, TaskStateSegment,
 };
@@ -105,7 +105,7 @@ impl TaskManager {
     ///
     /// Returns `(slot, pid)` on success.
     /// Returns `None` if no empty slot is available.
-    pub fn find_empty_process(&self) -> Option<(usize, u32)> {
+    pub fn alloc_process(&self) -> Option<(usize, u32)> {
         // Step 1: find a unique PID not used by any existing task.
         let pid = 'retry: loop {
             let previous = self
@@ -200,7 +200,7 @@ lazy_static! {
                     gs: USER_DS.as_u32(),
                     ldt: crate::segment::ldt_selector(0).as_u32(),
                     trace_bitmap: 0x8000_0000,
-                    i387: I387Struct::default(),
+                    fpu: FpuState::default(),
                 },
             },
         ));

@@ -32,13 +32,12 @@ pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
     let result = handler(ctx);
 
     // Schedule if needed.
-    task::current_task()
-        .pcb
-        .inner
-        .exclusive(|current| {
-            current.sched.state != TaskState::Running || current.sched.counter == 0
-        })
-        .then(task::schedule);
+    let needs_schedule = task::with_current(|inner| {
+        inner.sched.state != TaskState::Running || inner.sched.counter == 0
+    });
+    if needs_schedule {
+        task::schedule();
+    }
 
     let ret = match result {
         Ok(value) => value as i32,

@@ -60,6 +60,16 @@ pub fn current_slot() -> usize {
     unsafe { (*ptr).pcb.slot }
 }
 
+/// Return the current task's process ID.
+///
+/// Reads the raw pointer directly to avoid Arc refcount overhead.
+#[inline]
+pub fn current_pid() -> u32 {
+    let ptr = CURRENT_TASK.load(Ordering::Acquire);
+    assert!(!ptr.is_null(), "current_pid called before task::init");
+    unsafe { (*ptr).pcb.pid }
+}
+
 /// Return the current task's slot index when task tracking is initialized.
 #[inline]
 pub fn try_current_slot() -> Option<usize> {
@@ -85,7 +95,7 @@ pub fn set_current_task(task: &Arc<Task>) {
 }
 
 /// Return the packed IRQ state of the currently running task.
-pub fn cur_irq_state() -> (bool, u8) {
+pub fn current_irq_state() -> (bool, u8) {
     let ptr = CURRENT_TASK.load(Ordering::Acquire);
     let packed = unsafe {
         // SAFETY:
@@ -101,7 +111,7 @@ pub fn cur_irq_state() -> (bool, u8) {
 /// Update selected fields of the current task's packed IRQ state.
 ///
 /// Passing `None` keeps the previous value for that field.
-pub fn set_cur_irq_state(saved_if_enabled: Option<bool>, depth: Option<u8>) {
+pub fn set_current_irq_state(saved_if_enabled: Option<bool>, depth: Option<u8>) {
     let ptr = CURRENT_TASK.load(Ordering::Acquire);
     unsafe {
         // SAFETY:

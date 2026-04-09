@@ -15,14 +15,6 @@ pub const FIRST_LDT_ENTRY: u16 = 5;
 /// TSS structure size (104 bytes in Linux 0.11).
 const TSS_SIZE: u32 = 104;
 
-const fn tss_index(n: u16) -> usize {
-    (FIRST_TSS_ENTRY + n * 2) as usize
-}
-
-const fn ldt_index(n: u16) -> usize {
-    (FIRST_LDT_ENTRY + n * 2) as usize
-}
-
 /// Writes a TSS descriptor for task `n` into the GDT.
 #[inline]
 pub fn set_tss_desc(n: u16, tss_addr: u32) {
@@ -50,4 +42,12 @@ pub fn clear_task_descs(n: u16) {
         core::ptr::write_volatile(&mut gdt[tss_index(n)], null);
         core::ptr::write_volatile(&mut gdt[ldt_index(n)], null);
     }
+}
+
+const fn tss_index(n: u16) -> usize {
+    (FIRST_TSS_ENTRY + n * 2) as usize
+}
+
+const fn ldt_index(n: u16) -> usize {
+    (FIRST_LDT_ENTRY + n * 2) as usize
 }

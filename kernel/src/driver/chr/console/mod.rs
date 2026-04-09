@@ -80,5 +80,5 @@ pub fn flush_output(channel: usize) {
     }
 
     // Wake writers that may be blocked on a full tx queue.
-    crate::task::WaitQueue::wake_up(&Tty::device(channel).output_wait);
+    Tty::device(channel).output_wait.wake();
 }

@@ -149,7 +149,7 @@ pub struct LocalDescriptorTable {
 /// x87 FPU (Math Coprocessor) state structure.
 #[repr(C)]
 #[derive(Default)]
-pub struct I387Struct {
+pub struct FpuState {
     /// Control word
     pub cwd: u32,
     /// Status word
@@ -231,7 +231,7 @@ pub struct TaskStateSegment {
     pub trace_bitmap: u32,
 
     /// x87 FPU state (for hardware layout alignment)
-    pub i387: I387Struct,
+    pub fpu: FpuState,
 }
 
 #[repr(u8)]
@@ -255,6 +255,7 @@ pub struct TaskSchedInfo {
 }
 
 /// Process relationship fields.
+#[derive(Clone, Copy)]
 pub struct TaskRelationInfo {
     /// Parent process id. Use `u32::MAX` for no parent (e.g. task 0).
     pub father: u32,

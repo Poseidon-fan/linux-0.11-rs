@@ -103,7 +103,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
 
     match action {
         PendingSignalAction::None => {}
-        PendingSignalAction::Exit { signr } => task::do_exit(1 << (signr - 1)),
+        PendingSignalAction::Exit { signr } => task::exit_process(1 << (signr - 1)),
         PendingSignalAction::Deliver(deliver) => {
             if frame.deliver_signal(deliver) {
                 task::with_current(|inner| {

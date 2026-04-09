@@ -279,7 +279,7 @@ define_syscall_handler!(
     user_lib::NR_MKNOD = 14,
     fn sys_mknod(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, dev) = ctx.args();
-        if !task::is_super() {
+        if !task::is_superuser() {
             return Err(EPERM);
         }
 
@@ -456,7 +456,7 @@ define_syscall_handler!(
 
         let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
         let euid = task::with_current(|inner| inner.identity.euid);
-        if euid != inode.inner.lock().disk_inode.user_id && !task::is_super() {
+        if euid != inode.inner.lock().disk_inode.user_id && !task::is_superuser() {
             return Err(EACCES);
         }
 
@@ -476,7 +476,7 @@ define_syscall_handler!(
         let (path_ptr, uid, gid) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        if !task::is_super() {
+        if !task::is_superuser() {
             return Err(EACCES);
         }
 

@@ -12,14 +12,14 @@ use crate::{
     segment::uaccess,
     signal::{NSIG, SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
     syscall::{ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
-    task::{self, HZ, TASK_MANAGER, TaskState, is_super, task_struct::*},
+    task::{self, HZ, TASK_MANAGER, TaskState, is_superuser, task_struct::*},
     time,
 };
 
 define_syscall_handler!(
     user_lib::NR_EXIT = 1,
     fn sys_exit(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        task::do_exit(0)
+        task::exit_process(0)
     }
 );
 
@@ -72,12 +72,12 @@ define_syscall_handler!(
             }
         };
 
+        let current_slot = task::current_slot();
+        let current_pid = task::current_pid();
+
         loop {
             let scan_result = TASK_MANAGER.exclusive(|manager| {
-                let current = task::current_task();
-                let current_slot = current.pcb.slot;
-                let current_pid = current.pcb.pid;
-                let current_pgrp = current.pcb.inner.exclusive(|inner| inner.relation.pgrp);
+                let current_pgrp = task::with_current(|inner| inner.relation.pgrp);
 
                 let children = || {
                     manager
@@ -124,7 +124,7 @@ define_syscall_handler!(
                         slot, utime, stime, ..
                     } = result
                     {
-                        current.pcb.inner.exclusive(|inner| {
+                        task::with_current(|inner| {
                             inner.acct.cutime = inner.acct.cutime.wrapping_add(utime);
                             inner.acct.cstime = inner.acct.cstime.wrapping_add(stime);
                         });
@@ -248,14 +248,13 @@ define_syscall_handler!(
             .then_some(())
             .ok_or(EINVAL)?;
 
-        let current = task::current_task();
-        let current_pid = current.pcb.pid;
+        let current_pid = task::current_pid();
         let current_euid = task::with_current(|inner| inner.identity.euid);
 
         fn send_sig(sig: u32, task: &Task, priv_flag: bool, current_euid: u16) -> Result<(), u32> {
             let allowed = priv_flag
                 || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
-                || is_super();
+                || is_superuser();
             allowed.then_some(()).ok_or(EPERM)?;
             task.pcb.inner.exclusive(|inner| {
                 inner.signal_info.raise(sig);
@@ -389,7 +388,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_GETPID = 20,
     fn sys_getpid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        Ok(task::current_task().pcb.pid)
+        Ok(task::current_pid())
     }
 );
 
@@ -441,18 +440,9 @@ define_syscall_handler!(
     user_lib::NR_SETPGID = 57,
     fn sys_setpgid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (pid_arg, pgid_arg, _) = ctx.args();
-        let current = task::current_task();
-        let target_pid = if pid_arg == 0 {
-            current.pcb.pid
-        } else {
-            pid_arg
-        };
-        let target_pgid = if pgid_arg == 0 {
-            current.pcb.pid
-        } else {
-            pgid_arg
-        };
-
+        let pid = task::current_pid();
+        let target_pid = if pid_arg == 0 { pid } else { pid_arg };
+        let target_pgid = if pgid_arg == 0 { pid } else { pgid_arg };
         let current_session = task::with_current(|inner| inner.relation.session);
 
         TASK_MANAGER.exclusive(|manager| {
@@ -493,9 +483,9 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_SETSID = 66,
     fn sys_setsid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        let current = task::current_task();
-        let (is_leader, pid) = task::with_current(|inner| (inner.relation.leader, current.pcb.pid));
-        if is_leader && !is_super() {
+        let pid = task::current_pid();
+        let is_leader = task::with_current(|inner| inner.relation.leader);
+        if is_leader && !is_superuser() {
             return Err(EPERM);
         }
         task::with_current(|inner| {
@@ -551,7 +541,7 @@ define_syscall_handler!(
 define_syscall_handler!(
     user_lib::NR_STIME = 25,
     fn sys_stime(ctx: &mut SyscallContext) -> Result<u32, u32> {
-        if !is_super() {
+        if !is_superuser() {
             return Err(EPERM);
         }
         let (tptr, _, _) = ctx.args();
@@ -629,7 +619,7 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32, u32> {
-    let superuser = is_super();
+    let superuser = is_superuser();
     task::with_current(|inner| {
         let old_ruid = inner.identity.uid;
         if ruid > 0 {
@@ -652,7 +642,7 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32, u32> {
 }
 
 fn sys_setregid_impl(rgid: u32, egid: u32) -> Result<u32, u32> {
-    let superuser = is_super();
+    let superuser = is_superuser();
     task::with_current(|inner| {
         if rgid > 0 {
             let allow = inner.identity.gid == rgid as u16 || superuser;

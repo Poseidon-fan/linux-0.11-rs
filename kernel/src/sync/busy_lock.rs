@@ -29,7 +29,7 @@ impl BusyLock {
         let _irq = IrqSaveGuard::enter();
         unsafe {
             while self.locked.exclusive_unchecked(|l| *l) {
-                WaitQueue::sleep_on(&self.wait_queue);
+                self.wait_queue.sleep();
             }
         }
     }
@@ -40,7 +40,7 @@ impl BusyLock {
         let _irq = IrqSaveGuard::enter();
         unsafe {
             while self.locked.exclusive_unchecked(|l| *l) {
-                WaitQueue::sleep_on(&self.wait_queue);
+                self.wait_queue.sleep();
             }
             self.locked.exclusive_unchecked(|l| *l = true);
         }
@@ -52,7 +52,7 @@ impl BusyLock {
             assert!(*l, "BusyLock::release on unlocked lock");
             *l = false;
         });
-        WaitQueue::wake_up(&self.wait_queue);
+        self.wait_queue.wake();
     }
 
     /// Returns `true` if the lock is currently held.

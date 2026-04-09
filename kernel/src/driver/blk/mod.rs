@@ -79,7 +79,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
                 buffer_handle.io_lock.release();
                 return;
             }
-            None => WaitQueue::sleep_on(&DEVICE_WAIT_QUEUE),
+            None => DEVICE_WAIT_QUEUE.sleep(),
         }
     };
 
@@ -115,7 +115,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
             buffer_handle.set_uptodate(is_uptodate);
             buffer_handle.io_lock.release();
         }
-        RequestPayload::Paging(wait_queue) => WaitQueue::wake_up(&wait_queue),
+        RequestPayload::Paging(wait_queue) => wait_queue.wake(),
     }
 
     if !is_uptodate {
@@ -125,7 +125,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
         );
     }
 
-    WaitQueue::wake_up(&DEVICE_WAIT_QUEUE);
+    DEVICE_WAIT_QUEUE.wake();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

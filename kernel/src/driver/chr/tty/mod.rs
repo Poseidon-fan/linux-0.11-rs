@@ -106,7 +106,7 @@ impl Tty {
             .state
             .exclusive(line_discipline::LineDiscipline::process_raw_input);
 
-        WaitQueue::wake_up(&self.cooked_wait);
+        self.cooked_wait.wake();
 
         if has_echo {
             (self.flush_output)(channel);
@@ -147,10 +147,7 @@ impl Tty {
         let mut written = 0usize;
 
         loop {
-            let has_signal = task::current_task()
-                .pcb
-                .inner
-                .exclusive(|inner| inner.signal_info.signal != 0);
+            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
             if has_signal {
                 break;
             }
@@ -166,7 +163,7 @@ impl Tty {
             });
 
             if !data_available {
-                WaitQueue::interruptible_sleep_on(&self.cooked_wait);
+                self.cooked_wait.sleep_interruptible();
                 continue;
             }
 
@@ -198,10 +195,7 @@ impl Tty {
         }
 
         if written == 0 {
-            let has_signal = task::current_task()
-                .pcb
-                .inner
-                .exclusive(|inner| inner.signal_info.signal != 0);
+            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
             if has_signal {
                 return Err(EINTR);
             }
@@ -220,10 +214,7 @@ impl Tty {
         let mut sent = 0usize;
 
         while sent < count {
-            let has_signal = task::current_task()
-                .pcb
-                .inner
-                .exclusive(|inner| inner.signal_info.signal != 0);
+            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
             if has_signal {
                 break;
             }
@@ -235,7 +226,7 @@ impl Tty {
 
                 let still_full = self.state.exclusive(|state| state.tx.remaining() < 128);
                 if still_full {
-                    WaitQueue::interruptible_sleep_on(&self.output_wait);
+                    self.output_wait.sleep_interruptible();
                     continue;
                 }
             }

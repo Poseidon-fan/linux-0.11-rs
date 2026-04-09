@@ -23,7 +23,7 @@ define_syscall_handler!(
 
         // 1. Find a free slot and allocate a new task page.
         let (slot, pid) = TASK_MANAGER
-            .exclusive(|manager| manager.find_empty_process())
+            .exclusive(|manager| manager.alloc_process())
             .ok_or(EAGAIN)?;
         let mut new_task = Task::new().ok_or(EAGAIN)?;
 
@@ -138,6 +138,6 @@ fn child_tss(ctx: &SyscallContext, stack_top: u32, cr3: u32, slot: usize) -> Tas
         gs: ctx.gs & 0xffff,
         ldt: segment::ldt_selector(slot as u16).as_u32(),
         trace_bitmap: 0x8000_0000,
-        i387: I387Struct::default(),
+        fpu: FpuState::default(),
     }
 }

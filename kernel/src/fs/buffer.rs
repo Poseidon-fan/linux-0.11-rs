@@ -62,7 +62,7 @@ pub fn acquire_block(key: BufferKey) -> Arc<BufferHandle> {
 pub fn release_block(handle: Arc<BufferHandle>) {
     handle.io_lock.wait();
     handle.dec_ref();
-    WaitQueue::wake_up(&BUFFER_WAIT_QUEUE);
+    BUFFER_WAIT_QUEUE.wake();
 }
 
 /// Release multiple logical references obtained from [`acquire_block`].
@@ -465,7 +465,7 @@ fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
 
 fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
     let Some(handle) = BUFFER_MANAGER.lock().buffers.find_reclaim_candidate() else {
-        WaitQueue::sleep_on(&BUFFER_WAIT_QUEUE);
+        BUFFER_WAIT_QUEUE.sleep();
         return None;
     };
 

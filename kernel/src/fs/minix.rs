@@ -527,10 +527,8 @@ impl Inode {
             &fs,
         );
 
-        let (euid, egid, umask) = task::current_task()
-            .pcb
-            .inner
-            .exclusive(|inner| (inner.identity.euid, inner.identity.egid, inner.fs.umask));
+        let (euid, egid, umask) =
+            task::with_current(|inner| (inner.identity.euid, inner.identity.egid, inner.fs.umask));
 
         let now = time::current_time();
         {

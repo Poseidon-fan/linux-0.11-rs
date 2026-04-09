@@ -146,14 +146,14 @@ impl File for PipeFile {
             }
 
             // Buffer is empty.
-            WaitQueue::wake_up(&self.shared.wait);
+            self.shared.wait.wake();
             if no_writers {
                 return Ok(total);
             }
-            WaitQueue::sleep_on(&self.shared.wait);
+            self.shared.wait.sleep();
         }
 
-        WaitQueue::wake_up(&self.shared.wait);
+        self.shared.wait.wake();
         Ok(total)
     }
 
@@ -190,18 +190,15 @@ impl File for PipeFile {
             }
 
             // Buffer is full.
-            WaitQueue::wake_up(&self.shared.wait);
+            self.shared.wait.wake();
             if no_readers {
-                task::current_task()
-                    .pcb
-                    .inner
-                    .exclusive(|inner| inner.signal_info.raise(SIGPIPE));
+                task::with_current(|inner| inner.signal_info.raise(SIGPIPE));
                 return if total > 0 { Ok(total) } else { Err(EPIPE) };
             }
-            WaitQueue::sleep_on(&self.shared.wait);
+            self.shared.wait.sleep();
         }
 
-        WaitQueue::wake_up(&self.shared.wait);
+        self.shared.wait.wake();
         Ok(total)
     }
 
@@ -232,6 +229,6 @@ impl Drop for PipeFile {
                 s.readers -= 1;
             }
         });
-        WaitQueue::wake_up(&self.shared.wait);
+        self.shared.wait.wake();
     }
 }
