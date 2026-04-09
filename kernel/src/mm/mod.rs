@@ -39,29 +39,35 @@ pub fn init(start_mem: u32, end_mem: u32) {
 /// Ensure user address range [addr, addr+size) is writable.
 ///
 /// Touches each present, write-protected (COW) page in the range to trigger
-/// copy-on-write before the kernel writes to user memory.  Matches the
-/// semantics of Linux 0.11's `verify_area`.
+/// copy-on-write before the kernel writes to user memory.
 ///
 /// `addr` is a raw user-space virtual address passed from syscall context.
 pub fn ensure_user_area_writable(addr: u32, size: usize) {
-    task::with_current(|inner| {
+    let failed = task::with_current(|inner| {
         let base = inner.ldt.data_segment().base();
-        if let Some(ms) = inner.memory_space.as_mut() {
-            let user_addr = address::LinAddr(addr);
-            let first_page_offset = user_addr.page_offset();
-            let mut size = (size as u32).saturating_add(first_page_offset);
-            let mut linear_addr = user_addr.align_down().0.wrapping_add(base);
+        let Some(ms) = inner.memory_space.as_mut() else {
+            return false;
+        };
 
-            while size > 0 {
-                let lin_page = address::LinAddr(linear_addr).floor();
-                if let Some(pte) = ms.find_pte(lin_page) {
-                    if pte.is_present() && !pte.flags().contains(PageFlags::WRITABLE) {
-                        let _ = ms.ensure_page_writable(lin_page);
-                    }
-                }
-                size = size.saturating_sub(frame::PAGE_SIZE as u32);
-                linear_addr = linear_addr.wrapping_add(frame::PAGE_SIZE as u32);
+        let user_addr = address::LinAddr(addr);
+        let mut remaining = (size as u32).saturating_add(user_addr.page_offset());
+        let mut linear_addr = user_addr.align_down().0.wrapping_add(base);
+
+        while remaining > 0 {
+            let lin_page = address::LinAddr(linear_addr).floor();
+            let needs_cow = ms
+                .get_pte(lin_page)
+                .is_some_and(|pte| pte.is_present() && !pte.flags().contains(PageFlags::WRITABLE));
+            if needs_cow && ms.ensure_page_writable(lin_page).is_err() {
+                return true;
             }
+            remaining = remaining.saturating_sub(frame::PAGE_SIZE as u32);
+            linear_addr = linear_addr.wrapping_add(frame::PAGE_SIZE as u32);
         }
+        false
     });
+
+    if failed {
+        page_fault::oom();
+    }
 }
