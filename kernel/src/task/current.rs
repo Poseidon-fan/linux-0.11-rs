@@ -51,9 +51,13 @@ pub fn try_current_task() -> Option<Arc<Task>> {
 }
 
 /// Return the current task's slot index.
+///
+/// Reads the raw pointer directly to avoid Arc refcount overhead.
 #[inline]
 pub fn current_slot() -> usize {
-    current_task().pcb.slot
+    let ptr = CURRENT_TASK.load(Ordering::Acquire);
+    assert!(!ptr.is_null(), "current_slot called before task::init");
+    unsafe { (*ptr).pcb.slot }
 }
 
 /// Return the current task's slot index when task tracking is initialized.
@@ -72,13 +76,9 @@ pub fn try_current_slot() -> Option<usize> {
     })
 }
 
-/// Initialize current-task tracking with task 0 during boot.
-pub fn init_current_task(task: &Arc<Task>) {
-    let ptr = Arc::as_ptr(task).cast_mut();
-    CURRENT_TASK.store(ptr, Ordering::Release);
-}
-
-/// Update current-task pointer before hardware task switch.
+/// Store `task` as the current-task pointer.
+///
+/// Used both at boot (task 0 init) and before each hardware task switch.
 pub fn set_current_task(task: &Arc<Task>) {
     let ptr = Arc::as_ptr(task).cast_mut();
     CURRENT_TASK.store(ptr, Ordering::Release);

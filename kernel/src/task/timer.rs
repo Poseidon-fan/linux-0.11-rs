@@ -1,6 +1,10 @@
 //! PIT timer interrupt entry and tick handling.
 
-use core::{arch::naked_asm, ptr};
+use core::{
+    arch::naked_asm,
+    ptr,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use crate::{
     pmio::outb,
@@ -9,13 +13,22 @@ use crate::{
     task,
 };
 
+/// Timer ticks per second.
+pub const HZ: u32 = 100;
+
+/// PIT oscillator frequency (Hz).
+const PIT_FREQUENCY: u32 = 1_193_180;
+
+/// PIT reload value for the configured HZ.
+pub const LATCH: u16 = (PIT_FREQUENCY / HZ) as u16;
+
 /// Number of timer ticks since boot.
-static mut JIFFIES: u32 = 0;
+static JIFFIES: AtomicU32 = AtomicU32::new(0);
 
 /// Returns current jiffies value.
 #[inline]
 pub fn jiffies() -> u32 {
-    unsafe { ptr::read_volatile(ptr::addr_of!(JIFFIES)) }
+    JIFFIES.load(Ordering::Relaxed)
 }
 
 /// Return frame layout at IRQ0 return site before `iret`.
@@ -131,12 +144,7 @@ pub extern "C" fn timer_interrupt() {
 
 /// Rust-side timer tick logic for IRQ0.
 extern "C" fn timer_interrupt_rust_entry(frame: *mut TimerInterruptFrame, cpl: u32) {
-    // Safety: single-core kernel; IRQ0 handler runs with interrupts masked by gate semantics.
-    unsafe {
-        let jiffies_ptr = ptr::addr_of_mut!(JIFFIES);
-        let next = ptr::read_volatile(jiffies_ptr).wrapping_add(1);
-        ptr::write_volatile(jiffies_ptr, next);
-    }
+    JIFFIES.fetch_add(1, Ordering::Relaxed);
 
     // Send End-Of-Interrupt to master 8259A PIC.
     outb(0x20, 0x20);

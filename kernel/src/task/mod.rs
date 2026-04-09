@@ -19,7 +19,7 @@ pub use current::{cur_irq_state, current_slot, current_task, set_cur_irq_state, 
 pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 pub use task_struct::{TASK_OPEN_FILES_LIMIT, TaskState};
-pub use timer::jiffies;
+pub use timer::{HZ, jiffies};
 pub use wait_queue::WaitQueue;
 
 use crate::{
@@ -41,9 +41,6 @@ where F: FnOnce(&mut task_struct::TaskControlBlockInner) -> R {
 pub fn is_super() -> bool {
     with_current(|inner| inner.identity.euid == 0)
 }
-
-pub const HZ: u32 = 100;
-const LATCH: u16 = (1193180 / HZ) as u16;
 
 unsafe extern "C" {
     /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
@@ -72,10 +69,10 @@ pub fn schedule() {
             .filter_map(|t| t.as_ref())
             .for_each(|task| {
                 task.pcb.inner.exclusive(|inner| {
-                    (inner.signal_info.alarm > 0 && inner.signal_info.alarm < j).then(|| {
+                    if inner.signal_info.alarm > 0 && inner.signal_info.alarm < j {
                         inner.signal_info.raise(SIGALRM);
                         inner.signal_info.alarm = 0;
-                    });
+                    }
                     let unblocked =
                         inner.signal_info.signal & !(BLOCKABLE & inner.signal_info.blocked);
                     if unblocked != 0 {
@@ -118,63 +115,42 @@ pub fn do_exit(code: i32) -> ! {
         let current_slot = current.pcb.slot;
         assert_ne!(current_slot, 0, "task[0] cannot exit");
         let current_pid = current.pcb.pid;
-        let father_pid = unsafe {
-            current
-                .pcb
-                .inner
-                .exclusive_unchecked(|inner| inner.relation.father)
+
+        // Read relation fields and tear down the current process in one access.
+        let (father_pid, is_leader, current_session) = unsafe {
+            current.pcb.inner.exclusive_unchecked(|inner| {
+                let rel = (
+                    inner.relation.father,
+                    inner.relation.leader,
+                    inner.relation.session,
+                );
+                // Release owned page tables and data frames.
+                inner.memory_space = None;
+                inner.sched.state = TaskState::Zombie;
+                inner.exit_code = code;
+                rel
+            })
         };
 
         // Re-parent all direct children to task 1.
+        // If session leader, also send SIGHUP to tasks in same session.
         manager
             .tasks
             .iter()
             .enumerate()
-            .filter(|(slot, _)| *slot != current_slot)
+            .filter(|&(slot, _)| slot != current_slot)
             .filter_map(|(_, task)| task.as_ref())
             .for_each(|task| unsafe {
                 task.pcb.inner.exclusive_unchecked(|inner| {
-                    (inner.relation.father == current_pid).then(|| inner.relation.father = 1);
+                    if inner.relation.father == current_pid {
+                        inner.relation.father = 1;
+                    }
+                    if is_leader && inner.relation.session == current_session {
+                        inner.signal_info.raise(SIGHUP);
+                        inner.sched.wake_if_interruptible();
+                    }
                 });
             });
-
-        // If session leader, send SIGHUP to all tasks in same session.
-        let session = unsafe {
-            current
-                .pcb
-                .inner
-                .exclusive_unchecked(|inner| inner.relation.leader != 0)
-        };
-        if session {
-            let current_session = unsafe {
-                current
-                    .pcb
-                    .inner
-                    .exclusive_unchecked(|inner| inner.relation.session)
-            };
-            manager
-                .tasks
-                .iter()
-                .filter_map(|t| t.as_ref())
-                .filter(|task| task.pcb.slot != current_slot)
-                .for_each(|task| unsafe {
-                    task.pcb.inner.exclusive_unchecked(|inner| {
-                        (inner.relation.session == current_session).then(|| {
-                            inner.signal_info.raise(SIGHUP);
-                            inner.sched.wake_if_interruptible();
-                        });
-                    });
-                });
-        }
-
-        unsafe {
-            current.pcb.inner.exclusive_unchecked(|current_inner| {
-                // Setting `memory_space` to `None` releases owned page tables and data frames.
-                current_inner.memory_space = None;
-                current_inner.sched.state = TaskState::Zombie;
-                current_inner.exit_code = code;
-            });
-        }
 
         // Notify parent process with SIGCHLD so waiters can observe child exit.
         if let Some(father_task) = manager
@@ -215,7 +191,7 @@ pub fn init() {
             (task0, tss_addr, ldt_addr)
         })
     };
-    current::init_current_task(&task0);
+    current::set_current_task(&task0);
 
     // Set TSS and LDT descriptors for task 0 in GDT
     gdt::set_tss_desc(0, tss_addr);
@@ -242,9 +218,12 @@ pub fn init() {
     // Load LDT Register with task 0's LDT selector
     segment::lldt(segment::ldt_selector(0));
 
-    outb_p(0x36, 0x43);
-    outb_p((LATCH & 0xff) as u8, 0x40);
-    outb_p((LATCH >> 8) as u8, 0x40);
+    const PIT_CMD: u16 = 0x43;
+    const PIT_CH0: u16 = 0x40;
+    // Channel 0, lobyte/hibyte, mode 3 (square wave generator).
+    outb_p(0x36, PIT_CMD);
+    outb_p((timer::LATCH & 0xff) as u8, PIT_CH0);
+    outb_p((timer::LATCH >> 8) as u8, PIT_CH0);
     trap::set_intr_gate(0x20, timer::timer_interrupt);
     outb(inb_p(0x21) & !0x01, 0x21);
 

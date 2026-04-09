@@ -74,7 +74,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
         }
         inner.signal_info.clear(bit as u32 + 1);
         let signr = (bit + 1) as u32;
-        let sa = inner.signal_info.sigaction[bit].clone();
+        let sa = inner.signal_info.sigaction[bit];
 
         match sa.sa_handler {
             SIG_IGN => PendingSignalAction::None,

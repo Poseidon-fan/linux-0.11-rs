@@ -366,11 +366,11 @@ define_syscall_handler!(
         }
 
         let old_sa = task::with_current(|inner| {
-            let old = inner.signal_info.sigaction[idx].clone();
+            let old = inner.signal_info.sigaction[idx];
             (action_ptr != 0).then(|| {
                 inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
             });
-            let current = inner.signal_info.sigaction[idx].clone();
+            let current = inner.signal_info.sigaction[idx];
             inner.signal_info.sigaction[idx].sa_mask = ((current.sa_flags & SA_NOMASK) == 0)
                 .then(|| current.sa_mask | (1u32 << idx))
                 .unwrap_or(0);
@@ -468,7 +468,7 @@ define_syscall_handler!(
                     let (is_leader, task_session) = task
                         .pcb
                         .inner
-                        .exclusive(|inner| (inner.relation.leader != 0, inner.relation.session));
+                        .exclusive(|inner| (inner.relation.leader, inner.relation.session));
                     if is_leader || task_session != current_session {
                         Err(EPERM)
                     } else {
@@ -494,13 +494,12 @@ define_syscall_handler!(
     user_lib::NR_SETSID = 66,
     fn sys_setsid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         let current = task::current_task();
-        let (is_leader, pid) =
-            task::with_current(|inner| (inner.relation.leader != 0, current.pcb.pid));
+        let (is_leader, pid) = task::with_current(|inner| (inner.relation.leader, current.pcb.pid));
         if is_leader && !is_super() {
             return Err(EPERM);
         }
         task::with_current(|inner| {
-            inner.relation.leader = 1;
+            inner.relation.leader = true;
             inner.relation.session = pid;
             inner.relation.pgrp = pid;
             inner.tty = -1;

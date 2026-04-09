@@ -67,7 +67,7 @@ define_syscall_handler!(
                     father: parent.pcb.pid,
                     pgrp: p.relation.pgrp,
                     session: p.relation.session,
-                    leader: 0,
+                    leader: false,
                 },
                 identity: p.identity,
                 acct: TaskAcctInfo::default(),
@@ -81,7 +81,7 @@ define_syscall_handler!(
                 signal_info: TaskSignalInfo {
                     signal: 0,
                     blocked: p.signal_info.blocked,
-                    sigaction: p.signal_info.sigaction.clone(),
+                    sigaction: p.signal_info.sigaction,
                     alarm: 0,
                 },
             })
@@ -138,6 +138,6 @@ fn child_tss(ctx: &SyscallContext, stack_top: u32, cr3: u32, slot: usize) -> Tas
         gs: ctx.gs & 0xffff,
         ldt: segment::ldt_selector(slot as u16).as_u32(),
         trace_bitmap: 0x8000_0000,
-        i387: I387Struct::empty(),
+        i387: I387Struct::default(),
     }
 }

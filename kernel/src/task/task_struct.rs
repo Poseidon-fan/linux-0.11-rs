@@ -148,6 +148,7 @@ pub struct LocalDescriptorTable {
 
 /// x87 FPU (Math Coprocessor) state structure.
 #[repr(C)]
+#[derive(Default)]
 pub struct I387Struct {
     /// Control word
     pub cwd: u32,
@@ -243,6 +244,7 @@ pub enum TaskState {
     Stopped = 4,
 }
 
+#[derive(Clone, Copy)]
 pub struct TaskSchedInfo {
     /// Scheduling state (runnable/sleeping/etc.).
     pub state: TaskState,
@@ -260,12 +262,12 @@ pub struct TaskRelationInfo {
     pub pgrp: u32,
     /// Session id.
     pub session: u32,
-    /// Session leader flag (0 or 1).
-    pub leader: u8,
+    /// Session leader flag.
+    pub leader: bool,
 }
 
 /// User/group identity for permission checks.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct TaskIdentityInfo {
     pub uid: u16,
     pub euid: u16,
@@ -292,7 +294,7 @@ pub struct TaskAcctInfo {
 ///
 /// `sa_handler` and `sa_restorer` are user-space virtual addresses.
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Copy, Default)]
 pub struct SigAction {
     /// Handler address; 0 = default, 1 = ignore.
     pub sa_handler: u32,
@@ -305,7 +307,7 @@ pub struct SigAction {
 }
 
 /// Signal-related state for a task.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct TaskSignalInfo {
     /// Pending signals bitmap (bit 0 = signal 1, bit 1 = signal 2, ...).
     pub signal: u32,
@@ -416,21 +418,6 @@ impl Task {
     pub fn new() -> Option<Self> {
         let frame_range = frame::alloc_contiguous(TASK_PAGE_FRAMES)?;
         Some(Self(frame_range))
-    }
-}
-
-impl I387Struct {
-    pub const fn empty() -> Self {
-        Self {
-            cwd: 0,
-            swd: 0,
-            twd: 0,
-            fip: 0,
-            fcs: 0,
-            foo: 0,
-            fos: 0,
-            st_space: [0; 20],
-        }
     }
 }
 

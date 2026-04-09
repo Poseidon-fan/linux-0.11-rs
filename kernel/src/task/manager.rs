@@ -10,7 +10,11 @@ use core::{
 
 use lazy_static::lazy_static;
 
-use super::task_struct::*;
+use super::task_struct::{
+    I387Struct, LocalDescriptorTable, TASK_PAGE_SIZE, Task, TaskAcctInfo, TaskControlBlock,
+    TaskControlBlockInner, TaskFileSystemContext, TaskIdentityInfo, TaskMemoryLayout, TaskPage,
+    TaskRelationInfo, TaskSchedInfo, TaskSignalInfo, TaskState, TaskStateSegment,
+};
 use crate::{
     mm::space::MemorySpace,
     segment::{KERNEL_DS, USER_CS, USER_DS},
@@ -31,7 +35,7 @@ static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
 
 pub struct TaskManager {
     pub tasks: [Option<Arc<Task>>; TASK_NUM],
-    pub last_pid: AtomicU32,
+    last_pid: AtomicU32,
 }
 
 impl TaskManager {
@@ -151,22 +155,10 @@ lazy_static! {
                     father: u32::MAX,
                     pgrp: 0,
                     session: 0,
-                    leader: 0,
+                    leader: false,
                 },
-                identity: TaskIdentityInfo {
-                    uid: 0,
-                    euid: 0,
-                    suid: 0,
-                    gid: 0,
-                    egid: 0,
-                    sgid: 0,
-                },
-                acct: TaskAcctInfo {
-                    utime: 0,
-                    stime: 0,
-                    cutime: 0,
-                    cstime: 0,
-                },
+                identity: TaskIdentityInfo::default(),
+                acct: TaskAcctInfo::default(),
                 memory_space: Some(MemorySpace::new(0)), // task 0
                 mem_layout: TaskMemoryLayout::default(),
                 exit_code: 0,
@@ -180,17 +172,7 @@ lazy_static! {
                     open_files: array::from_fn(|_| None),
                 },
                 ldt: LocalDescriptorTable::new(0, 0x9f),
-                signal_info: TaskSignalInfo {
-                    signal: 0,
-                    blocked: 0,
-                    sigaction: array::from_fn(|_| SigAction {
-                        sa_handler: 0,
-                        sa_mask: 0,
-                        sa_flags: 0,
-                        sa_restorer: 0,
-                    }),
-                    alarm: 0,
-                },
+                signal_info: TaskSignalInfo::default(),
                 tss: TaskStateSegment {
                     back_link: 0,
                     esp0: init_task_addr + task_page_size_u32,
@@ -218,7 +200,7 @@ lazy_static! {
                     gs: USER_DS.as_u32(),
                     ldt: crate::segment::ldt_selector(0).as_u32(),
                     trace_bitmap: 0x8000_0000,
-                    i387: I387Struct::empty(),
+                    i387: I387Struct::default(),
                 },
             },
         ));

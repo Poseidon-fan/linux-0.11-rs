@@ -111,12 +111,6 @@ impl WaitQueue {
         }
     }
 
-    /// Return whether the queue currently has a live waiter.
-    pub fn has_waiter(&self) -> bool {
-        self.slot
-            .exclusive(|slot| slot.as_ref().and_then(Weak::upgrade).is_some())
-    }
-
     /// Wake one task by weak reference.
     fn wake_task(task: Weak<Task>) {
         if let Some(task) = task.upgrade() {
