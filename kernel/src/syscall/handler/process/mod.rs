@@ -18,8 +18,9 @@ use crate::{
 
 define_syscall_handler!(
     user_lib::NR_EXIT = 1,
-    fn sys_exit(_ctx: &mut SyscallContext) -> Result<u32, u32> {
-        task::exit_process(0)
+    fn sys_exit(ctx: &mut SyscallContext) -> Result<u32, u32> {
+        let (status, _, _) = ctx.args();
+        task::exit_process(((status & 0xff) << 8) as i32)
     }
 );
 

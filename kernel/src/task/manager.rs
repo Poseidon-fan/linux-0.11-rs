@@ -164,7 +164,7 @@ lazy_static! {
                 exit_code: 0,
                 tty: -1,
                 fs: TaskFileSystemContext {
-                    umask: 0,
+                    umask: 0o022,
                     root_directory: None,
                     current_directory: None,
                     executable_inode: None,

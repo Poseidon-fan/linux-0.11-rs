@@ -232,6 +232,18 @@ pub fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32
     }
 }
 
+/// Terminate the current process with the given 8-bit exit status.
+///
+/// The kernel never returns from this syscall. If control does come back for
+/// any reason, spin forever to preserve the `!` contract.
+#[inline(always)]
+pub fn exit(status: u32) -> ! {
+    let _ = raw_syscall1(NR_EXIT, status);
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 // Syntax:  use_syscall!(NR_XXX => fn_name(arg: Type, ...) -> RetType)
 //
 // A single macro with four match arms (0–3 arguments). Each arm generates
@@ -292,7 +304,6 @@ macro_rules! use_syscall {
 }
 
 use_syscall!(NR_SETUP => setup(drive_info_addr: *const u8) -> u32);
-use_syscall!(NR_EXIT => exit() -> u32);
 use_syscall!(NR_FORK => fork() -> u32);
 use_syscall!(NR_PAUSE => pause() -> u32);
 

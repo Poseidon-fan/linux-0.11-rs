@@ -109,18 +109,19 @@ fn user_init() -> ! {
         )
         .is_err()
         {
-            user_lib::exit().unwrap();
+            user_lib::exit(1);
         }
         let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
         let envp_rc: [*const u8; 2] = [c"HOME=/".as_ptr().cast(), core::ptr::null()];
-        let _ = process::execve(
+        let status = match process::execve(
             c"/bin/sh".as_ptr().cast(),
             argv_rc.as_ptr(),
             envp_rc.as_ptr(),
-        );
-        user_lib::exit().unwrap();
-        #[allow(clippy::empty_loop)]
-        loop {}
+        ) {
+            Ok(code) => code,
+            Err(errno) => errno,
+        };
+        user_lib::exit(status);
     }
 
     // Wait for the rc-shell to finish.
@@ -161,10 +162,12 @@ fn user_init() -> ! {
 
             let argv: [*const u8; 2] = [c"-/bin/sh".as_ptr().cast(), core::ptr::null()];
             let envp: [*const u8; 2] = [c"HOME=/usr/root".as_ptr().cast(), core::ptr::null()];
-            let _ = process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr());
-            user_lib::exit().unwrap();
-            #[allow(clippy::empty_loop)]
-            loop {}
+            let status =
+                match process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr()) {
+                    Ok(code) => code,
+                    Err(errno) => errno,
+                };
+            user_lib::exit(status);
         }
 
         // Parent: wait for the shell to exit, then report and restart.

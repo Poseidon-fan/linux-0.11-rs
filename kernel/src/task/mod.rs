@@ -26,6 +26,7 @@ pub use timer::{HZ, jiffies};
 pub use wait_queue::WaitQueue;
 
 use crate::{
+    driver::chr::tty::Tty,
     pmio::{inb_p, outb, outb_p},
     segment,
     signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
@@ -112,12 +113,19 @@ pub fn exit_process(code: i32) -> ! {
         let slot = current_slot();
         let pid = current_pid();
         assert_ne!(slot, 0, "task[0] cannot exit");
+        let init_task = manager
+            .tasks
+            .iter()
+            .flatten()
+            .find(|t| t.pcb.pid == 1)
+            .cloned();
 
-        let (father_pid, is_leader, session) = with_current(|inner| {
+        let (father_pid, is_leader, session, tty) = with_current(|inner| {
             (
                 inner.relation.father,
                 inner.relation.leader,
                 inner.relation.session,
+                inner.tty,
             )
         });
 
@@ -128,6 +136,16 @@ pub fn exit_process(code: i32) -> ! {
                 .flatten()
                 .filter(|t| t.pcb.slot != slot)
         };
+
+        // Session leaders release their controlling terminal's foreground group.
+        if is_leader && tty >= 0 {
+            let tty_channel = tty as usize;
+            if tty_channel < Tty::DEVICE_COUNT {
+                Tty::device(tty_channel)
+                    .state
+                    .exclusive(|state| state.foreground_group = 0);
+            }
+        }
 
         // Session leader: send SIGHUP to all tasks in the same session.
         if is_leader {
@@ -142,17 +160,38 @@ pub fn exit_process(code: i32) -> ! {
         }
 
         // Re-parent direct children to init (pid 1).
+        let mut notify_init = false;
         for task in others() {
             task.pcb.inner.exclusive(|inner| {
                 if inner.relation.father == pid {
                     inner.relation.father = 1;
+                    if inner.sched.state == TaskState::Zombie {
+                        notify_init = true;
+                    }
                 }
             });
         }
+        if notify_init {
+            if let Some(init) = init_task.as_ref() {
+                init.pcb.inner.exclusive(|inner| {
+                    inner.signal_info.raise(SIGCHLD);
+                    inner.sched.wake_if_interruptible();
+                });
+            }
+        }
 
-        // Release address space and become a zombie.
+        // Drop externally visible resources before becoming a zombie so they
+        // are released as soon as the task exits, not only after waitpid().
         with_current(|inner| {
+            for file in &mut inner.fs.open_files {
+                *file = None;
+            }
+            inner.fs.root_directory = None;
+            inner.fs.current_directory = None;
+            inner.fs.executable_inode = None;
+            inner.fs.close_on_exec = 0;
             inner.memory_space = None;
+            inner.tty = -1;
             inner.sched.state = TaskState::Zombie;
             inner.exit_code = code;
         });
