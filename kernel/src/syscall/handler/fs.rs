@@ -45,11 +45,18 @@ define_syscall_handler!(
         let pathname = uaccess::read_pathname(path_ptr);
         let flags = OpenFlags::from_raw(raw_flags);
         let (access_mode, open_options) = flags.into_parts().ok_or(EINVAL)?;
+        let effective_access_mode = if access_mode == AccessMode::ReadOnly
+            && open_options.contains(OpenOptions::TRUNCATE)
+        {
+            AccessMode::WriteOnly
+        } else {
+            access_mode
+        };
 
         let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
 
         let inode = if basename.is_empty() {
-            if access_mode != AccessMode::ReadOnly
+            if effective_access_mode != AccessMode::ReadOnly
                 || open_options.intersects(OpenOptions::CREATE | OpenOptions::TRUNCATE)
             {
                 return Err(EISDIR);
@@ -73,10 +80,12 @@ define_syscall_handler!(
                         inode_number: inum,
                     });
                     let file_type = inode.file_type();
-                    if file_type == InodeType::Directory && access_mode != AccessMode::ReadOnly {
+                    if file_type == InodeType::Directory
+                        && effective_access_mode != AccessMode::ReadOnly
+                    {
                         return Err(EPERM);
                     }
-                    let required = match access_mode {
+                    let required = match effective_access_mode {
                         AccessMode::ReadOnly => AccessMask::MAY_READ,
                         AccessMode::WriteOnly => AccessMask::MAY_WRITE,
                         AccessMode::ReadWrite => AccessMask::MAY_READ | AccessMask::MAY_WRITE,
@@ -96,7 +105,7 @@ define_syscall_handler!(
         let file_type = inode.file_type();
         let file: Arc<dyn File> = match file_type {
             InodeType::Regular | InodeType::Directory => {
-                Arc::new(InodeFile::new(inode, access_mode, open_options))
+                Arc::new(InodeFile::new(inode, effective_access_mode, open_options))
             }
             InodeType::CharacterDevice => Arc::new(CharDeviceFile::new(inode)),
             InodeType::BlockDevice => Arc::new(BlockDeviceFile::new(inode)),
