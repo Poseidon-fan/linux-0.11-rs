@@ -18,9 +18,9 @@ use ring_buffer::RingBuffer;
 use user_lib::syscall::termios::*;
 
 use crate::{
+    error::{EINTR, EINVAL, Result},
     segment::uaccess,
     sync::KernelCell,
-    syscall::*,
     task::{self, WaitQueue},
 };
 
@@ -134,12 +134,7 @@ impl Tty {
     ///
     /// In canonical mode, blocks until a complete line is available.
     /// In non-canonical mode, honours VMIN / VTIME semantics.
-    pub fn read(
-        &'static self,
-        _channel: usize,
-        user_buf: *mut u8,
-        count: usize,
-    ) -> Result<u32, u32> {
+    pub fn read(&'static self, _channel: usize, user_buf: *mut u8, count: usize) -> Result<u32> {
         if count == 0 {
             return Ok(0);
         }
@@ -205,12 +200,7 @@ impl Tty {
     }
 
     /// Write user data through output processing to `tx`, then flush.
-    pub fn write(
-        &'static self,
-        channel: usize,
-        user_buf: *const u8,
-        count: usize,
-    ) -> Result<u32, u32> {
+    pub fn write(&'static self, channel: usize, user_buf: *const u8, count: usize) -> Result<u32> {
         let mut sent = 0usize;
 
         while sent < count {
@@ -282,7 +272,7 @@ impl Tty {
     /// `arg` is a user-space pointer whose meaning depends on `cmd`:
     /// - TCGETS / TCSETS*: pointer to a `Termios` struct
     /// - TIOCGPGRP / TIOCSPGRP: pointer to a `u32` process group ID
-    pub fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32, u32> {
+    pub fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
         match cmd {
             TCGETS => {
                 let termios = self.state.exclusive(|state| state.termios);
@@ -324,7 +314,7 @@ impl Tty {
         }
     }
 
-    fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32, u32> {
+    fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32> {
         let mut buf = [0u8; core::mem::size_of::<Termios>()];
         uaccess::read_bytes(user_ptr as *const u8, &mut buf);
         let termios = unsafe { core::ptr::read(buf.as_ptr() as *const Termios) };

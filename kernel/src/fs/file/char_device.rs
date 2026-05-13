@@ -20,9 +20,9 @@ use user_lib::syscall::fs::Stat;
 use super::File;
 use crate::{
     driver::{DevNum, chr::tty::Tty},
+    error::{EIO, ENODEV, ENOTTY, EPERM, Result},
     fs::minix::Inode,
     segment::uaccess,
-    syscall::*,
     task,
 };
 
@@ -43,26 +43,26 @@ impl CharDeviceFile {
 }
 
 impl File for CharDeviceFile {
-    fn read(&self, buffer: &mut [u8]) -> Result<usize, u32> {
+    fn read(&self, buffer: &mut [u8]) -> Result<usize> {
         rw_char(RwDir::Read, self.dev, buffer.as_mut_ptr(), buffer.len())
     }
 
-    fn write(&self, buffer: &[u8]) -> Result<usize, u32> {
+    fn write(&self, buffer: &[u8]) -> Result<usize> {
         rw_char(RwDir::Write, self.dev, buffer.as_ptr(), buffer.len())
     }
 
-    fn stat(&self) -> Result<Stat, u32> {
+    fn stat(&self) -> Result<Stat> {
         Ok(self.inode.stat())
     }
 
-    fn ioctl(&self, cmd: u32, arg: u32) -> Result<u32, u32> {
+    fn ioctl(&self, cmd: u32, arg: u32) -> Result<u32> {
         ioctl_char(self.dev, cmd, arg)
     }
 }
 
 /// Character device ioctl dispatcher — equivalent of `sys_ioctl`'s
 /// `ioctl_table[MAJOR(dev)]` lookup.
-fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32, u32> {
+fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32> {
     let minor = dev.minor() as usize;
     match dev.major() {
         4 => {
@@ -90,7 +90,7 @@ enum RwDir {
 }
 
 /// Top-level character device dispatcher — equivalent of `rw_char()`.
-fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usize, u32> {
+fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usize> {
     match dev.major() {
         1 => rw_memory(dir, dev.minor(), buf, count),
         4 => rw_ttyx(dir, dev.minor() as usize, buf, count),
@@ -105,7 +105,7 @@ fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usiz
 /// `Tty::read/write` use `uaccess::read_u8/write_u8` (which go through
 /// `%fs`). We set `%fs` to the kernel data segment so those accessors
 /// operate on our kernel buffer.
-fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usize, u32> {
+fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usize> {
     if minor >= Tty::DEVICE_COUNT {
         return Err(ENODEV);
     }
@@ -117,7 +117,7 @@ fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usi
 }
 
 /// Major 5 — read/write the calling process's controlling terminal.
-fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize, u32> {
+fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize> {
     let tty_nr = task::with_current(|inner| inner.tty);
     if tty_nr < 0 {
         return Err(EPERM);
@@ -126,7 +126,7 @@ fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize, u32> {
 }
 
 /// Major 1 — memory pseudo-devices dispatched by minor number.
-fn rw_memory(dir: RwDir, minor: u8, _buf: *const u8, count: usize) -> Result<usize, u32> {
+fn rw_memory(dir: RwDir, minor: u8, _buf: *const u8, count: usize) -> Result<usize> {
     match minor {
         // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub EIO
         0..=2 => Err(EIO),

@@ -5,18 +5,19 @@ use alloc::sync::Arc;
 use crate::{
     define_syscall_handler,
     driver::{self, blk::hd},
+    error::{EBUSY, ENOENT, ENOTBLK, EPERM, Result},
     fs::{
         self, InodeType, ROOT_INODE_NUMBER, buffer,
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
         mount::{MOUNT_TABLE, Mount},
         path,
     },
-    syscall::{EBUSY, ENOENT, ENOTBLK, EPERM, context::SyscallContext},
+    syscall::context::SyscallContext,
 };
 
 define_syscall_handler!(
     user_lib::syscall::NR_SETUP = 0,
-    fn sys_setup(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_setup(ctx: &mut SyscallContext) -> Result<u32> {
         let (drive_info_addr, _, _) = ctx.args();
         hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| EPERM)?;
         fs::mount_root();
@@ -26,7 +27,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_SYNC = 36,
-    fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32> {
         fs::sync();
         Ok(0)
     }
@@ -34,7 +35,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_MOUNT = 21,
-    fn sys_mount(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_mount(ctx: &mut SyscallContext) -> Result<u32> {
         use crate::segment::uaccess;
 
         let (dev_name_ptr, dir_name_ptr, _rw_flag) = ctx.args();
@@ -87,7 +88,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_UMOUNT = 22,
-    fn sys_umount(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_umount(ctx: &mut SyscallContext) -> Result<u32> {
         use crate::segment::uaccess;
 
         let (dev_name_ptr, _, _) = ctx.args();

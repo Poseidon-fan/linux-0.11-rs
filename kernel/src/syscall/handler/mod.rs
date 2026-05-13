@@ -11,10 +11,10 @@ mod fs;
 mod nosys;
 mod process;
 
-use crate::{define_syscall_handler, syscall::SyscallContext};
+use crate::{define_syscall_handler, error::Result, syscall::SyscallContext};
 
 #[::linkme::distributed_slice]
-pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32, u32>];
+pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32>];
 
 // linkme requires an integer literal in `distributed_slice(..., N)`, so the
 // syscall number must be written as a literal at the call site. A compile-time
@@ -35,7 +35,7 @@ macro_rules! define_syscall_handler {
 
 define_syscall_handler!(
     user_lib::syscall::NR_TEST = 72,
-    fn sys_test(_ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_test(_ctx: &mut SyscallContext) -> Result<u32> {
         crate::println!("hello linux");
         Ok(0)
     }

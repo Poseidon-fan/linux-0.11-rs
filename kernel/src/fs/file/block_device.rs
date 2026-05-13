@@ -28,13 +28,13 @@ use user_lib::syscall::fs::{Stat, Whence};
 use super::File;
 use crate::{
     driver::DevNum,
+    error::{EINVAL, EIO, Result},
     fs::{
         BLOCK_SIZE,
         buffer::{self, BufferKey},
         minix::Inode,
     },
     sync::Mutex,
-    syscall::*,
 };
 
 /// Opened block device file.
@@ -60,23 +60,23 @@ impl BlockDeviceFile {
 }
 
 impl File for BlockDeviceFile {
-    fn read(&self, buf: &mut [u8]) -> Result<usize, u32> {
+    fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let mut inner = self.inner.lock();
         let bytes_read = block_read(self.dev, &mut inner.offset, buf)?;
         Ok(bytes_read)
     }
 
-    fn write(&self, buf: &[u8]) -> Result<usize, u32> {
+    fn write(&self, buf: &[u8]) -> Result<usize> {
         let mut inner = self.inner.lock();
         let bytes_written = block_write(self.dev, &mut inner.offset, buf)?;
         Ok(bytes_written)
     }
 
-    fn stat(&self) -> Result<Stat, u32> {
+    fn stat(&self) -> Result<Stat> {
         Ok(self.inode.stat())
     }
 
-    fn seek(&self, offset: i32, whence: Whence) -> Result<usize, u32> {
+    fn seek(&self, offset: i32, whence: Whence) -> Result<usize> {
         let mut inner = self.inner.lock();
         let new_offset = match whence {
             Whence::Set => offset as isize,
@@ -92,7 +92,7 @@ impl File for BlockDeviceFile {
 }
 
 /// Read raw bytes from a block device through the buffer cache.
-fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize, u32> {
+fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize> {
     let mut count = buf.len();
     let mut buf_offset = 0;
     let mut total_read = 0;
@@ -126,7 +126,7 @@ fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize, u32
 }
 
 /// Write raw bytes to a block device through the buffer cache.
-fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize, u32> {
+fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize> {
     let mut count = buf.len();
     let mut buf_offset = 0;
     let mut total_written = 0;

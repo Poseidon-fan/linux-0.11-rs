@@ -7,6 +7,7 @@ use user_lib::syscall::process::NSIG;
 
 use crate::{
     define_syscall_handler,
+    error::{EACCES, ENOENT, ENOEXEC, ENOMEM, Result},
     fs::{BLOCK_SIZE, InodeModeFlags, InodeType, minix::Inode, path},
     mm::{
         address::LinAddr,
@@ -14,7 +15,7 @@ use crate::{
         space::{MemorySpace, TASK_LINEAR_SIZE},
     },
     segment::uaccess,
-    syscall::{EACCES, ENOENT, ENOEXEC, ENOMEM, context::SyscallContext},
+    syscall::context::SyscallContext,
     task::{self, TASK_OPEN_FILES_LIMIT},
 };
 
@@ -45,7 +46,7 @@ impl AoutHeader {
         Some(unsafe { core::ptr::read_unaligned(block.as_ptr() as *const Self) })
     }
 
-    fn validate(&self, file_size: u32) -> Result<(), u32> {
+    fn validate(&self, file_size: u32) -> Result<()> {
         if self.a_magic != ZMAGIC {
             return Err(ENOEXEC);
         }
@@ -90,7 +91,7 @@ impl ArgumentPages {
 
     /// Ensure the page for byte offset `off` is allocated; returns a raw
     /// pointer into the page at that offset.
-    fn ensure_page(&mut self, off: usize) -> Result<*mut u8, u32> {
+    fn ensure_page(&mut self, off: usize) -> Result<*mut u8> {
         let page_idx = off / PAGE_SIZE;
         if self.pages[page_idx].is_none() {
             self.pages[page_idx] = Some(frame::alloc().ok_or(ENOMEM)?);
@@ -102,7 +103,7 @@ impl ArgumentPages {
     }
 
     /// Write one byte at the current cursor and advance downward.
-    fn push_byte(&mut self, byte: u8) -> Result<(), u32> {
+    fn push_byte(&mut self, byte: u8) -> Result<()> {
         if self.p == 0 {
             return Err(ENOMEM);
         }
@@ -114,7 +115,7 @@ impl ArgumentPages {
 
     /// Copy one NUL-terminated string (including the terminator) from user
     /// space into the argument pages.
-    fn copy_one_user_string(&mut self, user_ptr: u32) -> Result<(), u32> {
+    fn copy_one_user_string(&mut self, user_ptr: u32) -> Result<()> {
         let len = user_strlen(user_ptr);
         self.push_byte(0)?;
         for i in (0..len).rev() {
@@ -127,7 +128,7 @@ impl ArgumentPages {
     /// Copy `argc` user-space strings whose pointers live at `argv_ptr`.
     /// Strings are copied in reverse order so that argv[0] ends up at the
     /// lowest address (matching the original semantics).
-    fn copy_user_strings(&mut self, argv_ptr: *const u32, argc: usize) -> Result<(), u32> {
+    fn copy_user_strings(&mut self, argv_ptr: *const u32, argc: usize) -> Result<()> {
         for i in (0..argc).rev() {
             let str_ptr = uaccess::read_u32(unsafe { argv_ptr.add(i) });
             if str_ptr == 0 {
@@ -140,7 +141,7 @@ impl ArgumentPages {
 
     /// Copy one kernel-space byte slice (with appended NUL) into the argument
     /// pages. Used for #! interpreter name / argument.
-    fn copy_kernel_string(&mut self, s: &[u8]) -> Result<(), u32> {
+    fn copy_kernel_string(&mut self, s: &[u8]) -> Result<()> {
         self.push_byte(0)?;
         for &b in s.iter().rev() {
             self.push_byte(b)?;
@@ -203,7 +204,7 @@ fn user_strlen(addr: u32) -> usize {
 /// Check that `inode` is a regular file with execute permission for the
 /// current task. Returns `(effective_uid, effective_gid)` that the new
 /// process image should run with (accounting for set-uid / set-gid bits).
-fn check_exec_permission(inode: &Inode) -> Result<(u16, u16), u32> {
+fn check_exec_permission(inode: &Inode) -> Result<(u16, u16)> {
     let inner = inode.inner.lock();
     let disk = &inner.disk_inode;
 
@@ -242,7 +243,7 @@ fn check_exec_permission(inode: &Inode) -> Result<(u16, u16), u32> {
 /// Parse a `#!` shebang line from the first block of a script file.
 ///
 /// Returns `(interpreter_path, interpreter_basename, optional_argument)`.
-fn parse_shebang(block: &[u8]) -> Result<(String, String, Option<String>), u32> {
+fn parse_shebang(block: &[u8]) -> Result<(String, String, Option<String>)> {
     let end = block
         .iter()
         .position(|&b| b == b'\n' || b == 0)
@@ -336,7 +337,7 @@ fn reload_fs_segment() {
 
 define_syscall_handler!(
     user_lib::syscall::NR_EXECVE = 11,
-    fn sys_execve(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_execve(ctx: &mut SyscallContext) -> Result<u32> {
         let (filename_ptr, argv_ptr, envp_ptr) = ctx.args();
         let filename = uaccess::read_pathname(filename_ptr);
 

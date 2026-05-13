@@ -24,9 +24,9 @@ use user_lib::syscall::{fs::Stat, process::SIGPIPE};
 
 use super::File;
 use crate::{
+    error::{ENOMEM, EPIPE, Result},
     mm::frame::{self, PAGE_SIZE, PhysFrame},
     sync::KernelCell,
-    syscall::{ENOMEM, EPIPE},
     task::{self, WaitQueue},
 };
 
@@ -85,7 +85,7 @@ impl PipeFile {
     /// Create a connected (reader, writer) pair ready to install into fds.
     ///
     /// The buffer page is allocated from the physical frame allocator.
-    pub fn create_pair() -> Result<(Arc<Self>, Arc<Self>), u32> {
+    pub fn create_pair() -> Result<(Arc<Self>, Arc<Self>)> {
         let page = frame::alloc().ok_or(ENOMEM)?;
         let shared = Arc::new(PipeShared {
             state: KernelCell::new(PipeState {
@@ -115,7 +115,7 @@ impl File for PipeFile {
     /// Blocks (uninterruptible) while the buffer is empty and at least one
     /// write end is still open.  Returns 0 (EOF) when all writers are gone
     /// and the buffer is drained.
-    fn read(&self, output: &mut [u8]) -> Result<usize, u32> {
+    fn read(&self, output: &mut [u8]) -> Result<usize> {
         let count = output.len();
         let mut total = 0usize;
 
@@ -159,7 +159,7 @@ impl File for PipeFile {
     /// Blocks (uninterruptible) while the buffer is full and at least one
     /// read end is still open.  Delivers `SIGPIPE` and returns `EPIPE` when
     /// all readers are gone.
-    fn write(&self, input: &[u8]) -> Result<usize, u32> {
+    fn write(&self, input: &[u8]) -> Result<usize> {
         let count = input.len();
         let mut total = 0usize;
 
@@ -199,7 +199,7 @@ impl File for PipeFile {
         Ok(total)
     }
 
-    fn stat(&self) -> Result<Stat, u32> {
+    fn stat(&self) -> Result<Stat> {
         let size = self.shared.state.exclusive(|s| s.size());
         Ok(Stat {
             st_dev: 0,

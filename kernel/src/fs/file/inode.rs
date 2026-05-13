@@ -5,7 +5,11 @@ use alloc::sync::Arc;
 use user_lib::syscall::fs::{AccessMode, OpenOptions, Stat, Whence};
 
 use super::File;
-use crate::{fs::minix::Inode, sync::Mutex, syscall::EINVAL};
+use crate::{
+    error::{EBADF, EINVAL, Result},
+    fs::minix::Inode,
+    sync::Mutex,
+};
 
 /// Open file object backed by one inode data area.
 ///
@@ -38,9 +42,9 @@ impl InodeFile {
 }
 
 impl File for InodeFile {
-    fn read(&self, buffer: &mut [u8]) -> Result<usize, u32> {
+    fn read(&self, buffer: &mut [u8]) -> Result<usize> {
         if self.access_mode == AccessMode::WriteOnly {
-            return Err(crate::syscall::EBADF);
+            return Err(EBADF);
         }
         let mut inner = self.inner.lock();
         let bytes_read = inner.inode.read_at(inner.offset, buffer)?;
@@ -48,13 +52,13 @@ impl File for InodeFile {
         Ok(bytes_read)
     }
 
-    fn stat(&self) -> Result<Stat, u32> {
+    fn stat(&self) -> Result<Stat> {
         Ok(self.inner.lock().inode.stat())
     }
 
-    fn write(&self, buffer: &[u8]) -> Result<usize, u32> {
+    fn write(&self, buffer: &[u8]) -> Result<usize> {
         if self.access_mode == AccessMode::ReadOnly {
-            return Err(crate::syscall::EBADF);
+            return Err(EBADF);
         }
         let mut inner = self.inner.lock();
         let offset = if self.open_options.contains(OpenOptions::APPEND) {
@@ -67,7 +71,7 @@ impl File for InodeFile {
         Ok(bytes_written)
     }
 
-    fn seek(&self, offset: i32, whence: Whence) -> Result<usize, u32> {
+    fn seek(&self, offset: i32, whence: Whence) -> Result<usize> {
         let mut inner = self.inner.lock();
         let new_offset = match whence {
             Whence::Set => offset as isize,

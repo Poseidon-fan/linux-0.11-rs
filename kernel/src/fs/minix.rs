@@ -12,6 +12,7 @@ use user_lib::syscall::fs::Stat;
 
 use crate::{
     driver::DevNum,
+    error::{EFBIG, EIO, ENOENT, ENOSPC, ERROR, Result},
     fs::{
         BLOCK_SIZE,
         bitmap::Bitmap,
@@ -23,7 +24,6 @@ use crate::{
         },
     },
     sync::Mutex,
-    syscall::{EFBIG, EIO, ENOENT, ENOSPC, ERROR},
     task, time,
 };
 
@@ -203,7 +203,7 @@ impl Inode {
     /// Contract:
     /// `Ok(0)` means the logical block is currently unmapped or allocation
     /// failed when `create` was requested.
-    pub fn map_block_id(&self, logic_id: usize, create: bool) -> Result<u32, u32> {
+    pub fn map_block_id(&self, logic_id: usize, create: bool) -> Result<u32> {
         if logic_id >= MAX_LOGICAL_BLOCKS {
             return Err(EFBIG);
         }
@@ -213,7 +213,7 @@ impl Inode {
         };
 
         let mut inner = self.inner.lock();
-        let resolve_indirect_entry = |block_nr: u16, index: usize| -> Result<u16, u32> {
+        let resolve_indirect_entry = |block_nr: u16, index: usize| -> Result<u16> {
             if block_nr == 0 {
                 return Ok(0);
             }
@@ -287,7 +287,7 @@ impl Inode {
         Ok(u32::from(block_id))
     }
 
-    pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize, u32> {
+    pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -333,7 +333,7 @@ impl Inode {
         Ok(read)
     }
 
-    pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize, u32> {
+    pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -414,7 +414,7 @@ impl Inode {
 
 // Directory operations
 impl Inode {
-    pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>, u32> {
+    pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>> {
         assert!(self.file_type() == InodeType::Directory);
         let file_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
@@ -435,7 +435,7 @@ impl Inode {
     ///
     /// Reuses the first empty slot (inode_number == 0) if one exists; otherwise
     /// appends at the end, allocating a new data block when needed.
-    pub fn add_entry(&self, name: &str, inode_number: InodeNumber) -> Result<(), u32> {
+    pub fn add_entry(&self, name: &str, inode_number: InodeNumber) -> Result<()> {
         assert!(self.file_type() == InodeType::Directory);
 
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
@@ -462,7 +462,7 @@ impl Inode {
 
     /// Create a new regular file inside this directory.
     /// The caller is responsible for permission checks.
-    pub fn create_file(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+    pub fn create_file(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>> {
         self.alloc_and_link(name, 0o100000, mode, 1)
     }
 
@@ -474,7 +474,7 @@ impl Inode {
         type_bits: u16,
         mode: u16,
         dev: u16,
-    ) -> Result<Arc<Inode>, u32> {
+    ) -> Result<Arc<Inode>> {
         let inode = self.alloc_and_link(name, type_bits, mode, 1)?;
         let mut inner = inode.inner.lock();
         inner.disk_inode.direct_zones[0] = dev;
@@ -485,7 +485,7 @@ impl Inode {
 
     /// Create a new directory inside this directory.
     /// The caller is responsible for permission checks.
-    pub fn create_directory(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>, u32> {
+    pub fn create_directory(self: &Arc<Self>, name: &str, mode: u16) -> Result<Arc<Inode>> {
         let inode = self.alloc_and_link(name, 0o040000, mode, 2)?;
 
         let inode_number = inode.id.inode_number;
@@ -507,7 +507,7 @@ impl Inode {
         type_bits: u16,
         mode: u16,
         link_count: u8,
-    ) -> Result<Arc<Inode>, u32> {
+    ) -> Result<Arc<Inode>> {
         let fs = self.file_system.upgrade().ok_or(EIO)?;
         let inode_number = fs.lock().alloc_inode().ok_or(ENOSPC)?;
 
@@ -546,7 +546,7 @@ impl Inode {
     }
 
     /// Check whether this directory contains only `.` and `..` entries.
-    pub fn is_empty_directory(&self) -> Result<bool, u32> {
+    pub fn is_empty_directory(&self) -> Result<bool> {
         assert!(self.file_type() == InodeType::Directory);
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();
@@ -564,7 +564,7 @@ impl Inode {
     }
 
     /// Remove the directory entry matching `name` and return its inode number.
-    pub fn remove_entry(&self, name: &str) -> Result<InodeNumber, u32> {
+    pub fn remove_entry(&self, name: &str) -> Result<InodeNumber> {
         assert!(self.file_type() == InodeType::Directory);
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
         let mut dirent = DiskDirectoryEntry::empty();

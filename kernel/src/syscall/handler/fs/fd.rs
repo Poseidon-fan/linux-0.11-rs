@@ -13,6 +13,7 @@ use user_lib::syscall::{
 
 use crate::{
     define_syscall_handler,
+    error::{EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, EPERM, Result},
     fs::{
         InodeType,
         file::{BlockDeviceFile, CharDeviceFile, File, InodeFile, PipeFile},
@@ -21,17 +22,14 @@ use crate::{
         path::{self, AccessMask},
     },
     segment::uaccess,
-    syscall::{
-        EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, EPERM, SYSCALL_TABLE,
-        context::SyscallContext,
-    },
+    syscall::{SYSCALL_TABLE, context::SyscallContext},
     task::{self, TASK_OPEN_FILES_LIMIT},
     time,
 };
 
 define_syscall_handler!(
     user_lib::syscall::NR_OPEN = 5,
-    fn sys_open(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_open(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
         let flags = OpenFlags::from_raw(raw_flags);
@@ -111,7 +109,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_CREAT = 8,
-    fn sys_creat(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_creat(ctx: &mut SyscallContext) -> Result<u32> {
         // creat(path, mode) == open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)
         // path_ptr is already in ctx.ebx, just rewrite flags and mode args.
         let (_, mode, _) = ctx.args();
@@ -125,7 +123,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_READ = 3,
-    fn sys_read(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_read(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
 
@@ -139,7 +137,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_WRITE = 4,
-    fn sys_write(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_write(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
 
@@ -153,7 +151,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_CLOSE = 6,
-    fn sys_close(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_close(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         task::with_current(|inner| {
             let slot = inner.fs.open_files.get_mut(fd as usize).ok_or(EBADF)?;
@@ -168,7 +166,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_LSEEK = 19,
-    fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, offset, whence) = ctx.args();
         let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
         let file = get_file(fd)?;
@@ -178,7 +176,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_DUP = 41,
-    fn sys_dup(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_dup(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
         let new_fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(EMFILE)?;
@@ -188,7 +186,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_DUP2 = 63,
-    fn sys_dup2(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_dup2(ctx: &mut SyscallContext) -> Result<u32> {
         let (oldfd, newfd, _) = ctx.args();
         if oldfd == newfd {
             // Verify oldfd is valid, then return it unchanged.
@@ -206,7 +204,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_FSTAT = 28,
-    fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, _) = ctx.args();
         let file = get_file(fd)?;
         let stat = file.stat()?;
@@ -220,7 +218,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_IOCTL = 54,
-    fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
         file.ioctl(cmd, arg)
@@ -229,7 +227,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_FCNTL = 55,
-    fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
 
@@ -268,7 +266,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_PIPE = 42,
-    fn sys_pipe(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_pipe(ctx: &mut SyscallContext) -> Result<u32> {
         let (fildes_ptr, _, _) = ctx.args();
         let (reader, writer) = PipeFile::create_pair()?;
 
@@ -290,6 +288,6 @@ define_syscall_handler!(
 );
 
 /// Retrieve the file object for a given fd, or `Err(EBADF)`.
-fn get_file(fd: u32) -> Result<Arc<dyn File>, u32> {
+fn get_file(fd: u32) -> crate::error::Result<Arc<dyn File>> {
     task::with_current(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten()).ok_or(EBADF)
 }

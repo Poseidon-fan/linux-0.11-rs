@@ -3,15 +3,17 @@
 use user_lib::syscall::process::SIGCHLD;
 
 use crate::{
-    define_syscall_handler, mm,
+    define_syscall_handler,
+    error::{ECHILD, EINTR, Result},
+    mm,
     segment::uaccess,
-    syscall::{ECHILD, EINTR, context::SyscallContext},
+    syscall::context::SyscallContext,
     task::{self, TASK_MANAGER, TaskState},
 };
 
 define_syscall_handler!(
     user_lib::syscall::NR_WAITPID = 7,
-    fn sys_waitpid(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_waitpid(ctx: &mut SyscallContext) -> Result<u32> {
         const WNOHANG: u32 = 1;
         const WUNTRACED: u32 = 2;
 

@@ -4,15 +4,16 @@ use alloc::sync::Arc;
 
 use crate::{
     define_syscall_handler,
+    error::{EAGAIN, Result},
     mm::space::TASK_LINEAR_SIZE,
     segment::{self, KERNEL_DS},
-    syscall::{EAGAIN, context::SyscallContext},
+    syscall::context::SyscallContext,
     task::{self, TASK_MANAGER, task_struct::*},
 };
 
 define_syscall_handler!(
     user_lib::syscall::NR_FORK = 2,
-    fn sys_fork(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_fork(ctx: &mut SyscallContext) -> Result<u32> {
         unsafe extern "C" {
             static pg_dir: u8;
         }
@@ -53,7 +54,7 @@ define_syscall_handler!(
             let mut child_ldt = p.ldt.clone();
             child_ldt.set_base(new_base);
 
-            Ok::<_, u32>(TaskControlBlockInner {
+            Ok::<_, crate::error::Errno>(TaskControlBlockInner {
                 sched: TaskSchedInfo {
                     state: TaskState::Running,
                     counter: p.sched.priority,

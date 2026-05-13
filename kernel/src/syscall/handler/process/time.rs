@@ -1,16 +1,18 @@
 //! Time and system-info syscall handlers (time, stime, times, uname).
 
 use crate::{
-    define_syscall_handler, mm,
+    define_syscall_handler,
+    error::{EINVAL, EPERM, Result},
+    mm,
     segment::uaccess,
-    syscall::{EINVAL, EPERM, context::SyscallContext},
+    syscall::context::SyscallContext,
     task::{self, HZ, is_superuser},
     time,
 };
 
 define_syscall_handler!(
     user_lib::syscall::NR_TIME = 13,
-    fn sys_time(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_time(ctx: &mut SyscallContext) -> Result<u32> {
         let (tloc, _, _) = ctx.args();
         let t = time::current_time();
         if tloc != 0 {
@@ -23,7 +25,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_STIME = 25,
-    fn sys_stime(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_stime(ctx: &mut SyscallContext) -> Result<u32> {
         if !is_superuser() {
             return Err(EPERM);
         }
@@ -36,7 +38,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_TIMES = 43,
-    fn sys_times(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_times(ctx: &mut SyscallContext) -> Result<u32> {
         // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
         //
         //   offset  size  field       description
@@ -70,7 +72,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_UNAME = 59,
-    fn sys_uname(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_uname(ctx: &mut SyscallContext) -> Result<u32> {
         // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
         //
         //   offset  size  field      description

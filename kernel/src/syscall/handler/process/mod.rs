@@ -19,11 +19,11 @@ mod signal;
 mod time;
 mod waitpid;
 
-use crate::{define_syscall_handler, syscall::context::SyscallContext, task};
+use crate::{define_syscall_handler, error::Result, syscall::context::SyscallContext, task};
 
 define_syscall_handler!(
     user_lib::syscall::NR_EXIT = 1,
-    fn sys_exit(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_exit(ctx: &mut SyscallContext) -> Result<u32> {
         let (status, _, _) = ctx.args();
         task::exit_process(((status & 0xff) << 8) as i32)
     }
@@ -31,7 +31,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_NICE = 34,
-    fn sys_nice(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_nice(ctx: &mut SyscallContext) -> Result<u32> {
         let (increment, _, _) = ctx.args();
         task::with_current(|inner| {
             if inner.sched.priority > increment {
@@ -46,7 +46,7 @@ const MIN_STACK_GAP: u32 = 16384;
 
 define_syscall_handler!(
     user_lib::syscall::NR_BRK = 45,
-    fn sys_brk(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_brk(ctx: &mut SyscallContext) -> Result<u32> {
         let (end_data_seg, _, _) = ctx.args();
         Ok(task::with_current(|inner| {
             let layout = &mut inner.mem_layout;
@@ -61,7 +61,7 @@ define_syscall_handler!(
 
 define_syscall_handler!(
     user_lib::syscall::NR_UMASK = 60,
-    fn sys_umask(ctx: &mut SyscallContext) -> Result<u32, u32> {
+    fn sys_umask(ctx: &mut SyscallContext) -> Result<u32> {
         let (mask, _, _) = ctx.args();
         Ok(task::with_current(|inner| {
             let old = inner.fs.umask as u32;

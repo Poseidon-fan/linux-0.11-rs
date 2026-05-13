@@ -13,6 +13,7 @@ extern crate alloc;
 
 mod boot;
 mod driver;
+mod error;
 mod fs;
 mod logging;
 mod mm;
@@ -119,7 +120,7 @@ fn user_init() -> ! {
             envp_rc.as_ptr(),
         ) {
             Ok(code) => code,
-            Err(errno) => errno,
+            Err(e) => e.code(),
         };
         user_lib::syscall::exit(status);
     }
@@ -165,7 +166,7 @@ fn user_init() -> ! {
             let status =
                 match process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr()) {
                     Ok(code) => code,
-                    Err(errno) => errno,
+                    Err(e) => e.code(),
                 };
             user_lib::syscall::exit(status);
         }

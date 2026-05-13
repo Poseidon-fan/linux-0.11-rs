@@ -34,11 +34,14 @@
 //! A negative return value indicates an error; its absolute value is the
 //! `errno` code.
 
+pub mod errno;
 pub mod fs;
 pub mod process;
 pub mod termios;
 
 use core::arch::asm;
+
+use errno::Errno;
 
 /// Convert one typed syscall wrapper argument into the raw 32-bit ABI word.
 ///
@@ -156,7 +159,7 @@ pub const NR_TEST: u32 = 72;
 ///
 /// Returns `Ok(retval)` on success or `Err(errno)` on failure.
 #[inline(always)]
-pub fn raw_syscall0(nr: u32) -> Result<u32, u32> {
+pub fn raw_syscall0(nr: u32) -> Result<u32, Errno> {
     let ret: i32;
     unsafe {
         asm!(
@@ -168,13 +171,13 @@ pub fn raw_syscall0(nr: u32) -> Result<u32, u32> {
     if ret >= 0 {
         Ok(ret as u32)
     } else {
-        Err((-ret) as u32)
+        Err(Errno((-ret) as u32))
     }
 }
 
 /// Issue a system call with **one argument** (in `EBX`).
 #[inline(always)]
-pub fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
+pub fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, Errno> {
     let ret: i32;
     unsafe {
         asm!(
@@ -187,13 +190,13 @@ pub fn raw_syscall1(nr: u32, arg1: u32) -> Result<u32, u32> {
     if ret >= 0 {
         Ok(ret as u32)
     } else {
-        Err((-ret) as u32)
+        Err(Errno((-ret) as u32))
     }
 }
 
 /// Issue a system call with **two arguments** (in `EBX`, `ECX`).
 #[inline(always)]
-pub fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
+pub fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, Errno> {
     let ret: i32;
     unsafe {
         asm!(
@@ -207,13 +210,13 @@ pub fn raw_syscall2(nr: u32, arg1: u32, arg2: u32) -> Result<u32, u32> {
     if ret >= 0 {
         Ok(ret as u32)
     } else {
-        Err((-ret) as u32)
+        Err(Errno((-ret) as u32))
     }
 }
 
 /// Issue a system call with **three arguments** (in `EBX`, `ECX`, `EDX`).
 #[inline(always)]
-pub fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32> {
+pub fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, Errno> {
     let ret: i32;
     unsafe {
         asm!(
@@ -228,7 +231,7 @@ pub fn raw_syscall3(nr: u32, arg1: u32, arg2: u32, arg3: u32) -> Result<u32, u32
     if ret >= 0 {
         Ok(ret as u32)
     } else {
-        Err((-ret) as u32)
+        Err(Errno((-ret) as u32))
     }
 }
 
@@ -254,7 +257,7 @@ macro_rules! use_syscall {
     // 0 arguments
     ($nr:expr => $name:ident() -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name() -> Result<$ret, u32> {
+        pub fn $name() -> Result<$ret, $crate::syscall::errno::Errno> {
             $crate::syscall::raw_syscall0($nr).map(|v| v as $ret)
         }
     };
@@ -262,7 +265,7 @@ macro_rules! use_syscall {
     // 1 argument
     ($nr:expr => $name:ident($a:ident : $atype:ty) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype) -> Result<$ret, u32> {
+        pub fn $name($a: $atype) -> Result<$ret, $crate::syscall::errno::Errno> {
             $crate::syscall::raw_syscall1($nr, $crate::syscall::SyscallArg::into_syscall_arg($a))
                 .map(|v| v as $ret)
         }
@@ -274,7 +277,7 @@ macro_rules! use_syscall {
         $b:ident : $btype:ty
     ) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype, $b: $btype) -> Result<$ret, u32> {
+        pub fn $name($a: $atype, $b: $btype) -> Result<$ret, $crate::syscall::errno::Errno> {
             $crate::syscall::raw_syscall2(
                 $nr,
                 $crate::syscall::SyscallArg::into_syscall_arg($a),
@@ -291,7 +294,11 @@ macro_rules! use_syscall {
         $c:ident : $ctype:ty
     ) -> $ret:ty) => {
         #[inline(always)]
-        pub fn $name($a: $atype, $b: $btype, $c: $ctype) -> Result<$ret, u32> {
+        pub fn $name(
+            $a: $atype,
+            $b: $btype,
+            $c: $ctype,
+        ) -> Result<$ret, $crate::syscall::errno::Errno> {
             $crate::syscall::raw_syscall3(
                 $nr,
                 $crate::syscall::SyscallArg::into_syscall_arg($a),

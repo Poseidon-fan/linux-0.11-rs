@@ -22,7 +22,7 @@ use super::{
     address::{LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
 };
-use crate::syscall::ENOMEM;
+use crate::error::{ENOMEM, Result};
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
 const PDES_PER_PROCESS: usize = 16;
@@ -88,7 +88,7 @@ impl MemorySpace {
     ///
     /// Ownership of `frame` is transferred into this memory space.  On
     /// failure the frame is dropped (freed) and `ENOMEM` is returned.
-    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<(), u32> {
+    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<()> {
         self.ensure_page_table(lin_page.pde_index())?;
         self.set_pte(lin_page, PageTableEntry::new(frame.ppn, PageFlags::USER_RW));
         self.data_frames.insert(lin_page, frame);
@@ -102,7 +102,7 @@ impl MemorySpace {
     /// - Allocate a page table when the PDE is missing.
     /// - Allocate a zeroed data frame.
     /// - Install a user/writable/present PTE.
-    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<(), u32> {
+    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<()> {
         self.ensure_page_table(fault_page.pde_index())?;
         if self.get_pte(fault_page).is_some_and(|pte| pte.is_present()) {
             return Ok(());
@@ -121,7 +121,7 @@ impl MemorySpace {
     ///
     /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
     /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
-    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) -> Result<(), u32> {
+    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) -> Result<()> {
         let pte = self
             .get_pte(fault_page)
             .expect("ensure_page_writable: PTE not found");
@@ -162,7 +162,7 @@ impl MemorySpace {
         source_space: &mut MemorySpace,
         local_pde_offset: usize,
         pte_index: usize,
-    ) -> Result<bool, u32> {
+    ) -> Result<bool> {
         let source_page =
             LinPageNum::from_indices(source_space.pde_base + local_pde_offset, pte_index);
         let target_page = LinPageNum::from_indices(self.pde_base + local_pde_offset, pte_index);
@@ -226,7 +226,7 @@ impl MemorySpace {
     /// page table frame could not be allocated.  On failure, any partially
     /// built state is cleaned up automatically when the returned
     /// `MemorySpace` is dropped.
-    pub fn cow_copy(&mut self, child_nr: usize, data_limit: u32) -> Result<MemorySpace, u32> {
+    pub fn cow_copy(&mut self, child_nr: usize, data_limit: u32) -> Result<MemorySpace> {
         let parent_pde_start = self.pde_base;
         let child_pde_start = child_nr * PDES_PER_PROCESS;
         let is_task0 = parent_pde_start == 0;
@@ -339,7 +339,7 @@ impl MemorySpace {
     }
 
     /// Allocate a page table for `pde_index` if one does not already exist.
-    fn ensure_page_table(&mut self, pde_index: usize) -> Result<(), u32> {
+    fn ensure_page_table(&mut self, pde_index: usize) -> Result<()> {
         if super::read_pde(pde_index).is_present() {
             return Ok(());
         }
