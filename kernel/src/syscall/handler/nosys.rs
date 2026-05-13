@@ -1,10 +1,8 @@
 //! Placeholder handlers for unimplemented syscall numbers.
 
-use linkme::distributed_slice;
-
 use crate::{
     define_syscall_handler,
-    syscall::{ENOSYS, SYSCALL_TABLE, context::SyscallContext},
+    syscall::{ENOSYS, context::SyscallContext},
 };
 
 define_syscall_handler!(

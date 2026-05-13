@@ -11,11 +11,9 @@ mod fs;
 mod nosys;
 mod process;
 
-use linkme::distributed_slice;
-
 use crate::{define_syscall_handler, syscall::SyscallContext};
 
-#[distributed_slice]
+#[::linkme::distributed_slice]
 pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32, u32>];
 
 // linkme requires an integer literal in `distributed_slice(..., N)`, so the
@@ -30,7 +28,7 @@ macro_rules! define_syscall_handler {
     ) => {
         const _: () = assert!($nr_path == $nr, "syscall number mismatch with user_lib");
 
-        #[distributed_slice(SYSCALL_TABLE, $nr)]
+        #[::linkme::distributed_slice($crate::syscall::SYSCALL_TABLE, $nr)]
         fn $fn_name($ctx: &mut SyscallContext) -> $ret $body
     };
 }

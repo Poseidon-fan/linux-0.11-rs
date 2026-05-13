@@ -3,11 +3,8 @@
 use alloc::string::String;
 use core::{arch::asm, mem};
 
-use linkme::distributed_slice;
 use user_lib::syscall::process::NSIG;
 
-#[allow(unused_imports)]
-use crate::syscall::SYSCALL_TABLE;
 use crate::{
     define_syscall_handler,
     fs::{BLOCK_SIZE, InodeModeFlags, InodeType, minix::Inode, path},
