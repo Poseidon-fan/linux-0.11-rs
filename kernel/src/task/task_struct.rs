@@ -7,6 +7,8 @@ use core::{
     sync::atomic::AtomicU8,
 };
 
+use user_lib::syscall::process::NSIG;
+
 use crate::{
     fs::{file::File, minix::Inode},
     mm::{
@@ -14,7 +16,6 @@ use crate::{
         space::MemorySpace,
     },
     segment::Descriptor,
-    signal::NSIG,
     sync::KernelCell,
 };
 

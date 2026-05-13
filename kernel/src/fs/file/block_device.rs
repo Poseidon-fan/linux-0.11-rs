@@ -23,7 +23,7 @@
 
 use alloc::sync::Arc;
 
-use user_lib::fs::{Stat, Whence};
+use user_lib::syscall::fs::{Stat, Whence};
 
 use super::File;
 use crate::{

@@ -11,7 +11,7 @@
 //!   restorer | signr | [blocked] | eax | ecx | edx | eflags | old_eip
 //! ```
 
-pub use user_lib::process::*;
+use user_lib::syscall::process::{NSIG, SA_NOMASK, SA_ONESHOT, SIG_DFL, SIG_IGN, SIGCHLD};
 
 use crate::{mm, segment::uaccess, task};
 

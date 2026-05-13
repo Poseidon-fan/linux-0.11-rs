@@ -8,7 +8,7 @@ use core::{array, mem::size_of};
 
 use lazy_static::lazy_static;
 use log::error;
-use user_lib::fs::Stat;
+use user_lib::syscall::fs::Stat;
 
 use crate::{
     driver::DevNum,

@@ -4,6 +4,7 @@ use alloc::string::String;
 use core::{arch::asm, mem};
 
 use linkme::distributed_slice;
+use user_lib::syscall::process::NSIG;
 
 #[allow(unused_imports)]
 use crate::syscall::SYSCALL_TABLE;
@@ -16,7 +17,6 @@ use crate::{
         space::{MemorySpace, TASK_LINEAR_SIZE},
     },
     segment::uaccess,
-    signal::NSIG,
     syscall::{EACCES, ENOENT, ENOEXEC, ENOMEM, context::SyscallContext},
     task::{self, TASK_OPEN_FILES_LIMIT},
 };
@@ -338,7 +338,7 @@ fn reload_fs_segment() {
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    user_lib::NR_EXECVE = 11,
+    user_lib::syscall::NR_EXECVE = 11,
     fn sys_execve(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (filename_ptr, argv_ptr, envp_ptr) = ctx.args();
         let filename = uaccess::read_pathname(filename_ptr);

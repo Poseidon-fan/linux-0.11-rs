@@ -15,7 +15,7 @@
 
 use alloc::sync::Arc;
 
-use user_lib::fs::Stat;
+use user_lib::syscall::fs::Stat;
 
 use super::File;
 use crate::{

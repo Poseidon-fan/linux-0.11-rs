@@ -6,6 +6,8 @@
 use alloc::sync::Arc;
 use core::ptr;
 
+use user_lib::syscall::process::SIGSEGV;
+
 use crate::{
     fs::{
         BLOCK_SIZE,
@@ -18,7 +20,6 @@ use crate::{
         frame::{self, PAGE_SIZE, PhysFrame},
     },
     println,
-    signal::SIGSEGV,
     task::{self, TASK_MANAGER},
 };
 

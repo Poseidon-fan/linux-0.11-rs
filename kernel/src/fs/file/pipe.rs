@@ -20,12 +20,11 @@
 
 use alloc::sync::Arc;
 
-use user_lib::fs::Stat;
+use user_lib::syscall::{fs::Stat, process::SIGPIPE};
 
 use super::File;
 use crate::{
     mm::frame::{self, PAGE_SIZE, PhysFrame},
-    signal::SIGPIPE,
     sync::KernelCell,
     syscall::{ENOMEM, EPIPE},
     task::{self, WaitQueue},

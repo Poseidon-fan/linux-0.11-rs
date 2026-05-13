@@ -4,20 +4,20 @@ mod exec;
 mod fork;
 
 use linkme::distributed_slice;
+use user_lib::syscall::process::{NSIG, SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL};
 
 #[allow(unused_imports)]
 use crate::syscall::SYSCALL_TABLE;
 use crate::{
     define_syscall_handler, mm,
     segment::uaccess,
-    signal::{NSIG, SA_NOMASK, SA_ONESHOT, SIGCHLD, SIGKILL},
     syscall::{ECHILD, EINTR, EINVAL, EPERM, ESRCH, context::SyscallContext},
     task::{self, HZ, TASK_MANAGER, TaskState, is_superuser, task_struct::*},
     time,
 };
 
 define_syscall_handler!(
-    user_lib::NR_EXIT = 1,
+    user_lib::syscall::NR_EXIT = 1,
     fn sys_exit(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (status, _, _) = ctx.args();
         task::exit_process(((status & 0xff) << 8) as i32)
@@ -25,7 +25,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_WAITPID = 7,
+    user_lib::syscall::NR_WAITPID = 7,
     fn sys_waitpid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         const WNOHANG: u32 = 1;
         const WUNTRACED: u32 = 2;
@@ -166,7 +166,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_ALARM = 27,
+    user_lib::syscall::NR_ALARM = 27,
     fn sys_alarm(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (seconds, _, _) = ctx.args();
         let old_seconds = task::with_current(|inner| {
@@ -183,7 +183,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_PAUSE = 29,
+    user_lib::syscall::NR_PAUSE = 29,
     fn sys_pause(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         task::with_current(|inner| inner.sched.state = TaskState::Interruptible);
         task::schedule();
@@ -192,7 +192,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_NICE = 34,
+    user_lib::syscall::NR_NICE = 34,
     fn sys_nice(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (increment, _, _) = ctx.args();
         task::with_current(|inner| {
@@ -207,7 +207,7 @@ define_syscall_handler!(
 const MIN_STACK_GAP: u32 = 16384;
 
 define_syscall_handler!(
-    user_lib::NR_BRK = 45,
+    user_lib::syscall::NR_BRK = 45,
     fn sys_brk(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (end_data_seg, _, _) = ctx.args();
         Ok(task::with_current(|inner| {
@@ -222,7 +222,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_UMASK = 60,
+    user_lib::syscall::NR_UMASK = 60,
     fn sys_umask(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (mask, _, _) = ctx.args();
         Ok(task::with_current(|inner| {
@@ -238,7 +238,7 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    user_lib::NR_KILL = 37,
+    user_lib::syscall::NR_KILL = 37,
     fn sys_kill(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (pid_arg, sig_arg, _) = ctx.args();
         let pid = pid_arg as i32;
@@ -288,7 +288,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_SIGNAL = 48,
+    user_lib::syscall::NR_SIGNAL = 48,
     fn sys_signal(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (signum, handler, restorer) = ctx.args();
 
@@ -314,14 +314,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_SGETMASK = 68,
+    user_lib::syscall::NR_SGETMASK = 68,
     fn sys_sgetmask(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.signal_info.blocked))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SSETMASK = 69,
+    user_lib::syscall::NR_SSETMASK = 69,
     fn sys_ssetmask(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (newmask, _, _) = ctx.args();
         let old = task::with_current(|inner| {
@@ -335,7 +335,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_SIGACTION = 67,
+    user_lib::syscall::NR_SIGACTION = 67,
     fn sys_sigaction(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (signum, action_ptr, oldaction_ptr) = ctx.args();
 
@@ -387,21 +387,21 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    user_lib::NR_GETPID = 20,
+    user_lib::syscall::NR_GETPID = 20,
     fn sys_getpid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::current_pid())
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETUID = 24,
+    user_lib::syscall::NR_GETUID = 24,
     fn sys_getuid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.identity.uid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETUID = 23,
+    user_lib::syscall::NR_SETUID = 23,
     fn sys_setuid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (uid, _, _) = ctx.args();
         sys_setreuid_impl(uid, uid)
@@ -409,14 +409,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETGID = 47,
+    user_lib::syscall::NR_GETGID = 47,
     fn sys_getgid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.identity.gid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETGID = 46,
+    user_lib::syscall::NR_SETGID = 46,
     fn sys_setgid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (gid, _, _) = ctx.args();
         sys_setregid_impl(gid, gid)
@@ -424,21 +424,21 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETEUID = 49,
+    user_lib::syscall::NR_GETEUID = 49,
     fn sys_geteuid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.identity.euid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETEGID = 50,
+    user_lib::syscall::NR_GETEGID = 50,
     fn sys_getegid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.identity.egid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETPGID = 57,
+    user_lib::syscall::NR_SETPGID = 57,
     fn sys_setpgid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (pid_arg, pgid_arg, _) = ctx.args();
         let pid = task::current_pid();
@@ -475,14 +475,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETPGRP = 65,
+    user_lib::syscall::NR_GETPGRP = 65,
     fn sys_getpgrp(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.relation.pgrp))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETSID = 66,
+    user_lib::syscall::NR_SETSID = 66,
     fn sys_setsid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         let pid = task::current_pid();
         let is_leader = task::with_current(|inner| inner.relation.leader);
@@ -500,14 +500,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_GETPPID = 64,
+    user_lib::syscall::NR_GETPPID = 64,
     fn sys_getppid(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         Ok(task::with_current(|inner| inner.relation.father))
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETREUID = 70,
+    user_lib::syscall::NR_SETREUID = 70,
     fn sys_setreuid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (ruid, euid, _) = ctx.args();
         sys_setreuid_impl(ruid, euid)
@@ -515,7 +515,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_SETREGID = 71,
+    user_lib::syscall::NR_SETREGID = 71,
     fn sys_setregid(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (rgid, egid, _) = ctx.args();
         sys_setregid_impl(rgid, egid)
@@ -527,7 +527,7 @@ define_syscall_handler!(
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    user_lib::NR_TIME = 13,
+    user_lib::syscall::NR_TIME = 13,
     fn sys_time(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (tloc, _, _) = ctx.args();
         let t = time::current_time();
@@ -540,7 +540,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_STIME = 25,
+    user_lib::syscall::NR_STIME = 25,
     fn sys_stime(ctx: &mut SyscallContext) -> Result<u32, u32> {
         if !is_superuser() {
             return Err(EPERM);
@@ -553,7 +553,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_TIMES = 43,
+    user_lib::syscall::NR_TIMES = 43,
     fn sys_times(ctx: &mut SyscallContext) -> Result<u32, u32> {
         // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
         //
@@ -587,7 +587,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_UNAME = 59,
+    user_lib::syscall::NR_UNAME = 59,
     fn sys_uname(ctx: &mut SyscallContext) -> Result<u32, u32> {
         // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
         //

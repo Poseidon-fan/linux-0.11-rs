@@ -25,7 +25,10 @@
 //!  Echo + enqueue to cooked_rx
 //! ```
 
-use user_lib::termios::*;
+use user_lib::syscall::{
+    process::{SIGINT, SIGQUIT},
+    termios::*,
+};
 
 use super::{Tty, TtyState};
 
@@ -120,19 +123,13 @@ impl LineDiscipline {
     fn check_signal(state: &TtyState, c: u8) -> bool {
         let intr_char = state.termios.control_char(VINTR);
         if c == intr_char {
-            Tty::signal_foreground_group(
-                state.foreground_group,
-                1u32 << (user_lib::process::SIGINT - 1),
-            );
+            Tty::signal_foreground_group(state.foreground_group, 1u32 << (SIGINT - 1));
             return true;
         }
 
         let quit_char = state.termios.control_char(VQUIT);
         if c == quit_char {
-            Tty::signal_foreground_group(
-                state.foreground_group,
-                1u32 << (user_lib::process::SIGQUIT - 1),
-            );
+            Tty::signal_foreground_group(state.foreground_group, 1u32 << (SIGQUIT - 1));
             return true;
         }
 

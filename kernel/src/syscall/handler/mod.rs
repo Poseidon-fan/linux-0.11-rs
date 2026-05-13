@@ -36,7 +36,7 @@ macro_rules! define_syscall_handler {
 }
 
 define_syscall_handler!(
-    user_lib::NR_TEST = 72,
+    user_lib::syscall::NR_TEST = 72,
     fn sys_test(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         crate::println!("hello linux");
         Ok(0)

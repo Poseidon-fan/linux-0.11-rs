@@ -23,13 +23,13 @@ pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 pub use task_struct::{TASK_OPEN_FILES_LIMIT, TaskState};
 pub use timer::{HZ, jiffies};
+use user_lib::syscall::process::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP};
 pub use wait_queue::WaitQueue;
 
 use crate::{
     driver::chr::tty::Tty,
     pmio::{inb_p, outb, outb_p},
     segment,
-    signal::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP},
     sync::assert_can_schedule,
     trap::{self, TrapHandler},
 };

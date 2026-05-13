@@ -16,7 +16,7 @@ pub use block_device::BlockDeviceFile;
 pub use char_device::CharDeviceFile;
 pub use inode::InodeFile;
 pub use pipe::PipeFile;
-use user_lib::fs::{Stat, Whence};
+use user_lib::syscall::fs::{Stat, Whence};
 
 /// Generic opened file object in kernel.
 pub trait File: Send + Sync {

@@ -4,8 +4,12 @@ use alloc::{sync::Arc, vec};
 use core::mem;
 
 use linkme::distributed_slice;
-use user_lib::fs::{
-    AccessMode, F_DUPFD, F_GETFD, F_GETFL, F_SETFD, F_SETFL, OpenFlags, OpenOptions, Stat, Whence,
+use user_lib::syscall::{
+    NR_OPEN,
+    fs::{
+        AccessMode, F_DUPFD, F_GETFD, F_GETFL, F_SETFD, F_SETFL, OpenFlags, OpenOptions, Stat,
+        Whence,
+    },
 };
 
 use crate::{
@@ -29,7 +33,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_SETUP = 0,
+    user_lib::syscall::NR_SETUP = 0,
     fn sys_setup(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (drive_info_addr, _, _) = ctx.args();
         hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| EPERM)?;
@@ -39,7 +43,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_OPEN = 5,
+    user_lib::syscall::NR_OPEN = 5,
     fn sys_open(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -119,7 +123,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_READ = 3,
+    user_lib::syscall::NR_READ = 3,
     fn sys_read(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
@@ -133,7 +137,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_WRITE = 4,
+    user_lib::syscall::NR_WRITE = 4,
     fn sys_write(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
@@ -147,7 +151,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_CLOSE = 6,
+    user_lib::syscall::NR_CLOSE = 6,
     fn sys_close(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
         task::with_current(|inner| {
@@ -162,7 +166,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_LINK = 9,
+    user_lib::syscall::NR_LINK = 9,
     fn sys_link(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (oldname_ptr, newname_ptr, _) = ctx.args();
         let oldname = uaccess::read_pathname(oldname_ptr);
@@ -209,7 +213,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_UNLINK = 10,
+    user_lib::syscall::NR_UNLINK = 10,
     fn sys_unlink(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -243,7 +247,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_CHDIR = 12,
+    user_lib::syscall::NR_CHDIR = 12,
     fn sys_chdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -262,7 +266,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_MKDIR = 39,
+    user_lib::syscall::NR_MKDIR = 39,
     fn sys_mkdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -284,7 +288,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_MKNOD = 14,
+    user_lib::syscall::NR_MKNOD = 14,
     fn sys_mknod(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, dev) = ctx.args();
         if !task::is_superuser() {
@@ -314,7 +318,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_RMDIR = 40,
+    user_lib::syscall::NR_RMDIR = 40,
     fn sys_rmdir(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -360,7 +364,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_STAT = 18,
+    user_lib::syscall::NR_STAT = 18,
     fn sys_stat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -375,7 +379,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_FSTAT = 28,
+    user_lib::syscall::NR_FSTAT = 28,
     fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, buf_ptr, _) = ctx.args();
         let file = get_file(fd)?;
@@ -389,7 +393,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_LSEEK = 19,
+    user_lib::syscall::NR_LSEEK = 19,
     fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, offset, whence) = ctx.args();
         let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
@@ -399,7 +403,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_DUP = 41,
+    user_lib::syscall::NR_DUP = 41,
     fn sys_dup(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
@@ -409,7 +413,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_DUP2 = 63,
+    user_lib::syscall::NR_DUP2 = 63,
     fn sys_dup2(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (oldfd, newfd, _) = ctx.args();
         if oldfd == newfd {
@@ -427,21 +431,21 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_CREAT = 8,
+    user_lib::syscall::NR_CREAT = 8,
     fn sys_creat(ctx: &mut SyscallContext) -> Result<u32, u32> {
         // creat(path, mode) == open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)
         // path_ptr is already in ctx.ebx, just rewrite flags and mode args.
         let (_, mode, _) = ctx.args();
-        ctx.ecx = user_lib::fs::AccessMode::WriteOnly as u32
-            | user_lib::fs::OpenOptions::CREATE.bits()
-            | user_lib::fs::OpenOptions::TRUNCATE.bits();
+        ctx.ecx = AccessMode::WriteOnly as u32
+            | OpenOptions::CREATE.bits()
+            | OpenOptions::TRUNCATE.bits();
         ctx.edx = mode;
-        SYSCALL_TABLE[user_lib::NR_OPEN as usize](ctx)
+        SYSCALL_TABLE[NR_OPEN as usize](ctx)
     }
 );
 
 define_syscall_handler!(
-    user_lib::NR_CHROOT = 61,
+    user_lib::syscall::NR_CHROOT = 61,
     fn sys_chroot(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -457,7 +461,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_CHMOD = 15,
+    user_lib::syscall::NR_CHMOD = 15,
     fn sys_chmod(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -479,7 +483,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_CHOWN = 16,
+    user_lib::syscall::NR_CHOWN = 16,
     fn sys_chown(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, uid, gid) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -498,7 +502,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_SYNC = 36,
+    user_lib::syscall::NR_SYNC = 36,
     fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32, u32> {
         fs::sync();
         Ok(0)
@@ -506,7 +510,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_ACCESS = 33,
+    user_lib::syscall::NR_ACCESS = 33,
     fn sys_access(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -525,7 +529,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_UTIME = 30,
+    user_lib::syscall::NR_UTIME = 30,
     fn sys_utime(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (path_ptr, times_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -551,7 +555,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_MOUNT = 21,
+    user_lib::syscall::NR_MOUNT = 21,
     fn sys_mount(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (dev_name_ptr, dir_name_ptr, _rw_flag) = ctx.args();
         let dev_name = uaccess::read_pathname(dev_name_ptr);
@@ -605,7 +609,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_UMOUNT = 22,
+    user_lib::syscall::NR_UMOUNT = 22,
     fn sys_umount(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (dev_name_ptr, _, _) = ctx.args();
         let dev_name = uaccess::read_pathname(dev_name_ptr);
@@ -639,7 +643,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_IOCTL = 54,
+    user_lib::syscall::NR_IOCTL = 54,
     fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
@@ -648,7 +652,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_FCNTL = 55,
+    user_lib::syscall::NR_FCNTL = 55,
     fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
@@ -687,7 +691,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::NR_PIPE = 42,
+    user_lib::syscall::NR_PIPE = 42,
     fn sys_pipe(ctx: &mut SyscallContext) -> Result<u32, u32> {
         let (fildes_ptr, _, _) = ctx.args();
         let (reader, writer) = PipeFile::create_pair()?;

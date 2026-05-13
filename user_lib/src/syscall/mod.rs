@@ -255,7 +255,7 @@ macro_rules! use_syscall {
     ($nr:expr => $name:ident() -> $ret:ty) => {
         #[inline(always)]
         pub fn $name() -> Result<$ret, u32> {
-            $crate::raw_syscall0($nr).map(|v| v as $ret)
+            $crate::syscall::raw_syscall0($nr).map(|v| v as $ret)
         }
     };
 
@@ -263,7 +263,7 @@ macro_rules! use_syscall {
     ($nr:expr => $name:ident($a:ident : $atype:ty) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype) -> Result<$ret, u32> {
-            $crate::raw_syscall1($nr, $crate::syscall::SyscallArg::into_syscall_arg($a))
+            $crate::syscall::raw_syscall1($nr, $crate::syscall::SyscallArg::into_syscall_arg($a))
                 .map(|v| v as $ret)
         }
     };
@@ -275,7 +275,7 @@ macro_rules! use_syscall {
     ) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype, $b: $btype) -> Result<$ret, u32> {
-            $crate::raw_syscall2(
+            $crate::syscall::raw_syscall2(
                 $nr,
                 $crate::syscall::SyscallArg::into_syscall_arg($a),
                 $crate::syscall::SyscallArg::into_syscall_arg($b),
@@ -292,7 +292,7 @@ macro_rules! use_syscall {
     ) -> $ret:ty) => {
         #[inline(always)]
         pub fn $name($a: $atype, $b: $btype, $c: $ctype) -> Result<$ret, u32> {
-            $crate::raw_syscall3(
+            $crate::syscall::raw_syscall3(
                 $nr,
                 $crate::syscall::SyscallArg::into_syscall_arg($a),
                 $crate::syscall::SyscallArg::into_syscall_arg($b),

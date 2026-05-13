@@ -5,13 +5,13 @@
 
 use core::fmt::{self, Write};
 
-use crate::fs;
+use crate::syscall;
 
 struct Stdout;
 
 impl Write for Stdout {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let _ = fs::write(1, s.as_ptr(), s.len() as u32);
+        let _ = syscall::fs::write(1, s.as_ptr(), s.len() as u32);
         Ok(())
     }
 }

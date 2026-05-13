@@ -15,7 +15,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::NR_FORK = 2,
+    user_lib::syscall::NR_FORK = 2,
     fn sys_fork(ctx: &mut SyscallContext) -> Result<u32, u32> {
         unsafe extern "C" {
             static pg_dir: u8;

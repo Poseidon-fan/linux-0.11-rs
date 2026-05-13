@@ -15,7 +15,7 @@ mod line_discipline;
 mod ring_buffer;
 
 use ring_buffer::RingBuffer;
-use user_lib::termios::*;
+use user_lib::syscall::termios::*;
 
 use crate::{
     segment::uaccess,

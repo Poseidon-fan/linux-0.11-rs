@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 
-use user_lib::fs::{AccessMode, OpenOptions, Stat, Whence};
+use user_lib::syscall::fs::{AccessMode, OpenOptions, Stat, Whence};
 
 use super::File;
 use crate::{fs::minix::Inode, sync::Mutex, syscall::EINVAL};
