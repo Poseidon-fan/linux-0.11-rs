@@ -20,7 +20,7 @@
 
 use alloc::sync::Arc;
 
-use user_lib::syscall::{fs::Stat, process::SIGPIPE};
+use user_lib::syscall::{fs::Stat, signal::Signal};
 
 use super::File;
 use crate::{
@@ -189,7 +189,7 @@ impl File for PipeFile {
             // Buffer is full.
             self.shared.wait.wake();
             if no_readers {
-                task::with_current(|inner| inner.signal_info.raise(SIGPIPE));
+                task::with_current(|inner| inner.signal_info.raise(Signal::Pipe as u32));
                 return if total > 0 { Ok(total) } else { Err(EPIPE) };
             }
             self.shared.wait.sleep();

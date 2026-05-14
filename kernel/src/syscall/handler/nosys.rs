@@ -1,5 +1,7 @@
 //! Placeholder handlers for unimplemented syscall numbers.
 
+use user_lib::syscall::nr::Syscall;
+
 use crate::{
     define_syscall_handler,
     error::{ENOSYS, Result},
@@ -7,79 +9,79 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_BREAK = 17,
+    Syscall::Break = 17,
     fn sys_break(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_STTY = 31,
+    Syscall::Stty = 31,
     fn sys_stty(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_GTTY = 32,
+    Syscall::Gtty = 32,
     fn sys_gtty(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_FTIME = 35,
+    Syscall::Ftime = 35,
     fn sys_ftime(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_PROF = 44,
+    Syscall::Prof = 44,
     fn sys_prof(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_ACCT = 51,
+    Syscall::Acct = 51,
     fn sys_acct(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_PHYS = 52,
+    Syscall::Phys = 52,
     fn sys_phys(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_LOCK = 53,
+    Syscall::Lock = 53,
     fn sys_lock(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_MPX = 56,
+    Syscall::Mpx = 56,
     fn sys_mpx(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_ULIMIT = 58,
+    Syscall::Ulimit = 58,
     fn sys_ulimit(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_PTRACE = 26,
+    Syscall::Ptrace = 26,
     fn sys_ptrace(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_USTAT = 62,
+    Syscall::Ustat = 62,
     fn sys_ustat(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }
 );
 define_syscall_handler!(
-    user_lib::syscall::NR_RENAME = 38,
+    Syscall::Rename = 38,
     fn sys_rename(_ctx: &mut SyscallContext) -> Result<u32> {
         Err(ENOSYS)
     }

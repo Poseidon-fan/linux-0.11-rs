@@ -15,7 +15,7 @@ mod line_discipline;
 mod ring_buffer;
 
 use ring_buffer::RingBuffer;
-use user_lib::syscall::termios::*;
+use user_lib::syscall::tty::{ControlChar, LocalMode, OutputMode, Termios, TtyRequest};
 
 use crate::{
     error::{EINTR, EINVAL, Result},
@@ -165,7 +165,7 @@ impl Tty {
             // Drain cooked_rx into user buffer.
             self.state.exclusive(|state| {
                 let canonical = state.termios.local_mode.contains(LocalMode::ICANON);
-                let eof_char = state.termios.control_char(VEOF);
+                let eof_char = state.termios.control_char(ControlChar::Eof);
 
                 while written < count {
                     let Some(c) = state.cooked_rx.pop() else {
@@ -274,7 +274,7 @@ impl Tty {
     /// - TIOCGPGRP / TIOCSPGRP: pointer to a `u32` process group ID
     pub fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
         match cmd {
-            TCGETS => {
+            x if x == TtyRequest::GetTermios as u32 => {
                 let termios = self.state.exclusive(|state| state.termios);
                 let bytes = unsafe {
                     core::slice::from_raw_parts(
@@ -285,7 +285,7 @@ impl Tty {
                 uaccess::write_bytes(bytes, arg as *mut u8);
                 Ok(0)
             }
-            TCSETSF => {
+            x if x == TtyRequest::SetTermiosFlush as u32 => {
                 self.state.exclusive(|state| {
                     state.raw_rx.flush();
                     state.cooked_rx.flush();
@@ -294,17 +294,17 @@ impl Tty {
                 (self.flush_output)(channel);
                 self.set_termios_from_user(arg)
             }
-            TCSETSW => {
+            x if x == TtyRequest::SetTermiosWait as u32 => {
                 (self.flush_output)(channel);
                 self.set_termios_from_user(arg)
             }
-            TCSETS => self.set_termios_from_user(arg),
-            TIOCGPGRP => {
+            x if x == TtyRequest::SetTermios as u32 => self.set_termios_from_user(arg),
+            x if x == TtyRequest::GetPgrp as u32 => {
                 let pgrp = self.state.exclusive(|state| state.foreground_group);
                 uaccess::write_u32(pgrp as u32, arg as *mut u32);
                 Ok(0)
             }
-            TIOCSPGRP => {
+            x if x == TtyRequest::SetPgrp as u32 => {
                 let pgrp = uaccess::read_u32(arg as *const u32);
                 self.state
                     .exclusive(|state| state.foreground_group = pgrp as i32);

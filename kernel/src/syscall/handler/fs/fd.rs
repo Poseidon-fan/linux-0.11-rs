@@ -4,11 +4,8 @@ use alloc::{sync::Arc, vec};
 use core::mem;
 
 use user_lib::syscall::{
-    NR_OPEN,
-    fs::{
-        AccessMode, F_DUPFD, F_GETFD, F_GETFL, F_SETFD, F_SETFL, OpenFlags, OpenOptions, Stat,
-        Whence,
-    },
+    fs::{AccessMode, FcntlCmd, OpenFlags, OpenOptions, Stat, Whence},
+    nr::Syscall,
 };
 
 use crate::{
@@ -28,7 +25,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_OPEN = 5,
+    Syscall::Open = 5,
     fn sys_open(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, raw_flags, mode) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -108,7 +105,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CREAT = 8,
+    Syscall::Creat = 8,
     fn sys_creat(ctx: &mut SyscallContext) -> Result<u32> {
         // creat(path, mode) == open(path, O_WRONLY | O_CREAT | O_TRUNC, mode)
         // path_ptr is already in ctx.ebx, just rewrite flags and mode args.
@@ -117,12 +114,12 @@ define_syscall_handler!(
             | OpenOptions::CREATE.bits()
             | OpenOptions::TRUNCATE.bits();
         ctx.edx = mode;
-        SYSCALL_TABLE[NR_OPEN as usize](ctx)
+        SYSCALL_TABLE[Syscall::Open as usize](ctx)
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_READ = 3,
+    Syscall::Read = 3,
     fn sys_read(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
@@ -136,7 +133,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_WRITE = 4,
+    Syscall::Write = 4,
     fn sys_write(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
         let file = get_file(fd)?;
@@ -150,7 +147,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CLOSE = 6,
+    Syscall::Close = 6,
     fn sys_close(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         task::with_current(|inner| {
@@ -165,7 +162,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_LSEEK = 19,
+    Syscall::Lseek = 19,
     fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, offset, whence) = ctx.args();
         let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
@@ -175,7 +172,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_DUP = 41,
+    Syscall::Dup = 41,
     fn sys_dup(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
@@ -185,7 +182,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_DUP2 = 63,
+    Syscall::Dup2 = 63,
     fn sys_dup2(ctx: &mut SyscallContext) -> Result<u32> {
         let (oldfd, newfd, _) = ctx.args();
         if oldfd == newfd {
@@ -203,7 +200,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_FSTAT = 28,
+    Syscall::Fstat = 28,
     fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, _) = ctx.args();
         let file = get_file(fd)?;
@@ -217,7 +214,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_IOCTL = 54,
+    Syscall::Ioctl = 54,
     fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
@@ -226,13 +223,13 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_FCNTL = 55,
+    Syscall::Fcntl = 55,
     fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
         let file = get_file(fd)?;
 
         match cmd {
-            F_DUPFD => task::with_current(|inner| {
+            x if x == FcntlCmd::DupFd as u32 => task::with_current(|inner| {
                 let new_fd = (arg as usize..TASK_OPEN_FILES_LIMIT)
                     .find(|&i| inner.fs.open_files[i].is_none())
                     .ok_or(EMFILE)?;
@@ -241,12 +238,12 @@ define_syscall_handler!(
                 Ok(new_fd as u32)
             }),
 
-            F_GETFD => {
+            x if x == FcntlCmd::GetFd as u32 => {
                 let cloexec = task::with_current(|inner| (inner.fs.close_on_exec >> fd) & 1);
                 Ok(cloexec)
             }
 
-            F_SETFD => {
+            x if x == FcntlCmd::SetFd as u32 => {
                 task::with_current(|inner| {
                     if arg & 1 != 0 {
                         inner.fs.close_on_exec |= 1 << fd;
@@ -257,7 +254,7 @@ define_syscall_handler!(
                 Ok(0)
             }
 
-            F_GETFL | F_SETFL => Ok(0),
+            x if x == FcntlCmd::GetFlags as u32 || x == FcntlCmd::SetFlags as u32 => Ok(0),
 
             _ => Err(EINVAL),
         }
@@ -265,7 +262,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_PIPE = 42,
+    Syscall::Pipe = 42,
     fn sys_pipe(ctx: &mut SyscallContext) -> Result<u32> {
         let (fildes_ptr, _, _) = ctx.args();
         let (reader, writer) = PipeFile::create_pair()?;

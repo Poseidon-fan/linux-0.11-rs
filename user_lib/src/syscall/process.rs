@@ -1,38 +1,40 @@
-use crate::use_syscall;
+//! Process-management syscall wrappers.
 
-use_syscall!(crate::syscall::NR_WAITPID => waitpid(
+use crate::{syscall::nr::Syscall, use_syscall};
+
+use_syscall!(Syscall::Setup => setup(drive_info_addr: *const u8) -> u32);
+use_syscall!(Syscall::Exit => exit(status: u32) -> u32);
+use_syscall!(Syscall::Fork  => fork() -> u32);
+use_syscall!(Syscall::Waitpid => waitpid(
     pid: i32,
     stat_addr: *mut u32,
     options: u32
 ) -> u32);
 
-use_syscall!(crate::syscall::NR_EXECVE => execve(
+use_syscall!(Syscall::Execve => execve(
     filename: *const u8,
     argv: *const *const u8,
     envp: *const *const u8
 ) -> u32);
 
-use_syscall!(crate::syscall::NR_SETSID => setsid() -> u32);
-
-/// Number of signals supported (signals 1–32).
-pub const NSIG: usize = 32;
-
-// Signal numbers (POSIX subset).
-pub const SIGHUP: u32 = 1;
-pub const SIGINT: u32 = 2;
-pub const SIGQUIT: u32 = 3;
-pub const SIGKILL: u32 = 9;
-pub const SIGSEGV: u32 = 11;
-pub const SIGPIPE: u32 = 13;
-pub const SIGALRM: u32 = 14;
-pub const SIGCHLD: u32 = 17;
-pub const SIGSTOP: u32 = 19;
-pub const SIGTSTP: u32 = 20;
-
-// Signal handler sentinels.
-pub const SIG_DFL: u32 = 0;
-pub const SIG_IGN: u32 = 1;
-
-// Sigaction flags.
-pub const SA_NOMASK: u32 = 0x4000_0000;
-pub const SA_ONESHOT: u32 = 0x8000_0000;
+use_syscall!(Syscall::Time => time(tloc: *mut u32) -> u32);
+use_syscall!(Syscall::Stime => stime(tptr: *const u32) -> u32);
+use_syscall!(Syscall::Alarm => alarm(seconds: u32) -> u32);
+use_syscall!(Syscall::Pause => pause() -> u32);
+use_syscall!(Syscall::Times => times(tbuf: *mut u8) -> u32);
+use_syscall!(Syscall::Brk => brk(end_data_segment: u32) -> u32);
+use_syscall!(Syscall::Getpid => getpid() -> u32);
+use_syscall!(Syscall::Setuid => setuid(uid: u32) -> u32);
+use_syscall!(Syscall::Getuid => getuid() -> u32);
+use_syscall!(Syscall::Nice => nice(increment: u32) -> u32);
+use_syscall!(Syscall::Setgid => setgid(gid: u32) -> u32);
+use_syscall!(Syscall::Getgid => getgid() -> u32);
+use_syscall!(Syscall::Geteuid => geteuid() -> u32);
+use_syscall!(Syscall::Getegid => getegid() -> u32);
+use_syscall!(Syscall::Setpgid => setpgid(pid: u32, pgid: u32) -> u32);
+use_syscall!(Syscall::Uname => uname(buf: *mut u8) -> u32);
+use_syscall!(Syscall::Setreuid => setreuid(ruid: u32, euid: u32) -> u32);
+use_syscall!(Syscall::Setregid => setregid(rgid: u32, egid: u32) -> u32);
+use_syscall!(Syscall::Getppid => getppid() -> u32);
+use_syscall!(Syscall::Getpgrp => getpgrp() -> u32);
+use_syscall!(Syscall::Setsid => setsid() -> u32);

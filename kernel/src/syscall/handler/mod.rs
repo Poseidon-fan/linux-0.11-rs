@@ -18,15 +18,14 @@ pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32>];
 
 // linkme requires an integer literal in `distributed_slice(..., N)`, so the
 // syscall number must be written as a literal at the call site. A compile-time
-// assertion then verifies it matches the corresponding NR_* constant exported
-// by user_lib, catching any accidental mismatch.
+// assertion then verifies it matches the corresponding `Syscall` variant.
 #[macro_export]
 macro_rules! define_syscall_handler {
     (
         $nr_path:path = $nr:literal,
         fn $fn_name:ident($ctx:ident : &mut SyscallContext) -> $ret:ty $body:block
     ) => {
-        const _: () = assert!($nr_path == $nr, "syscall number mismatch with user_lib");
+        const _: () = assert!($nr_path as u32 == $nr, "syscall number mismatch with user_lib");
 
         #[::linkme::distributed_slice($crate::syscall::SYSCALL_TABLE, $nr)]
         fn $fn_name($ctx: &mut SyscallContext) -> $ret $body
@@ -34,7 +33,7 @@ macro_rules! define_syscall_handler {
 }
 
 define_syscall_handler!(
-    user_lib::syscall::NR_TEST = 72,
+    user_lib::syscall::Syscall::Test = 72,
     fn sys_test(_ctx: &mut SyscallContext) -> Result<u32> {
         crate::println!("hello linux");
         Ok(0)

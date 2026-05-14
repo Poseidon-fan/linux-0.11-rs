@@ -6,3 +6,16 @@
 
 pub mod console;
 pub mod syscall;
+
+/// Terminate the current process with the given 8-bit exit status.
+///
+/// The underlying syscall is exposed as [`syscall::process::exit`] and follows
+/// the uniform syscall wrapper convention by returning `Result<u32, Errno>`.
+/// This convenience wrapper provides the process-level diverging contract.
+#[inline(always)]
+pub fn exit(status: u32) -> ! {
+    let _ = syscall::process::exit(status);
+    loop {
+        core::hint::spin_loop();
+    }
+}

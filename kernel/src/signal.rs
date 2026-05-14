@@ -11,7 +11,7 @@
 //!   restorer | signr | [blocked] | eax | ecx | edx | eflags | old_eip
 //! ```
 
-use user_lib::syscall::process::{NSIG, SA_NOMASK, SA_ONESHOT, SIG_DFL, SIG_IGN, SIGCHLD};
+use user_lib::syscall::signal::{NSIG, SigFlags, SigHandler, Signal};
 
 use crate::{mm, segment::uaccess, task};
 
@@ -77,16 +77,16 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
         let sa = inner.signal_info.sigaction[bit];
 
         match sa.sa_handler {
-            SIG_IGN => PendingSignalAction::None,
-            SIG_DFL => {
-                if signr == SIGCHLD {
+            x if x == SigHandler::Ignore as u32 => PendingSignalAction::None,
+            x if x == SigHandler::Default as u32 => {
+                if signr == Signal::Chld as u32 {
                     PendingSignalAction::None
                 } else {
                     PendingSignalAction::Exit { signr }
                 }
             }
             handler => {
-                if (sa.sa_flags & SA_ONESHOT) != 0 {
+                if (sa.sa_flags & SigFlags::ONE_SHOT.bits()) != 0 {
                     inner.signal_info.sigaction[bit].sa_handler = 0;
                 }
                 PendingSignalAction::Deliver(DeliverAction {
@@ -132,7 +132,7 @@ pub fn push_user_signal_frame(
     sa_flags: u32,
     regs: SignalSavedRegisters,
 ) -> u32 {
-    let has_nomask = (sa_flags & SA_NOMASK) != 0;
+    let has_nomask = (sa_flags & SigFlags::NO_MASK.bits()) != 0;
     let frame_words = if has_nomask { 7u32 } else { 8u32 };
     let new_esp = user_esp.wrapping_sub(frame_words * 4);
 

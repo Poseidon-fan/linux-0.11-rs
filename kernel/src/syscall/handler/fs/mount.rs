@@ -2,6 +2,8 @@
 
 use alloc::sync::Arc;
 
+use user_lib::syscall::nr::Syscall;
+
 use crate::{
     define_syscall_handler,
     driver::{self, blk::hd},
@@ -16,7 +18,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETUP = 0,
+    Syscall::Setup = 0,
     fn sys_setup(ctx: &mut SyscallContext) -> Result<u32> {
         let (drive_info_addr, _, _) = ctx.args();
         hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| EPERM)?;
@@ -26,7 +28,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SYNC = 36,
+    Syscall::Sync = 36,
     fn sys_sync(_ctx: &mut SyscallContext) -> Result<u32> {
         fs::sync();
         Ok(0)
@@ -34,7 +36,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_MOUNT = 21,
+    Syscall::Mount = 21,
     fn sys_mount(ctx: &mut SyscallContext) -> Result<u32> {
         use crate::segment::uaccess;
 
@@ -87,7 +89,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_UMOUNT = 22,
+    Syscall::Umount = 22,
     fn sys_umount(ctx: &mut SyscallContext) -> Result<u32> {
         use crate::segment::uaccess;
 

@@ -6,7 +6,7 @@
 use alloc::sync::Arc;
 use core::ptr;
 
-use user_lib::syscall::process::SIGSEGV;
+use user_lib::syscall::signal::Signal;
 
 use crate::{
     fs::{
@@ -96,7 +96,7 @@ pub fn handle_wp_page(address: u32) {
 /// closure — `exit_process` acquires those locks internally.
 pub(super) fn oom() -> ! {
     println!("out of memory");
-    task::exit_process(SIGSEGV as i32)
+    task::exit_process(Signal::Segv as i32)
 }
 
 /// Determine what kind of page the fault requires.

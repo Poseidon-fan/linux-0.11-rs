@@ -1,6 +1,6 @@
 //! `waitpid` syscall — reap child processes.
 
-use user_lib::syscall::process::SIGCHLD;
+use user_lib::syscall::{nr::Syscall, signal::Signal};
 
 use crate::{
     define_syscall_handler,
@@ -12,7 +12,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_WAITPID = 7,
+    Syscall::Waitpid = 7,
     fn sys_waitpid(ctx: &mut SyscallContext) -> Result<u32> {
         const WNOHANG: u32 = 1;
         const WUNTRACED: u32 = 2;
@@ -140,7 +140,7 @@ define_syscall_handler!(
                     task::with_current(|inner| inner.sched.state = TaskState::Interruptible);
                     task::schedule();
                     if task::with_current(|inner| {
-                        inner.signal_info.clear(SIGCHLD);
+                        inner.signal_info.clear(Signal::Chld as u32);
                         inner.signal_info.signal != 0
                     }) {
                         return Err(EINTR);

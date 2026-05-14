@@ -2,7 +2,7 @@
 
 use core::mem;
 
-use user_lib::syscall::fs::Stat;
+use user_lib::syscall::{fs::Stat, nr::Syscall};
 
 use crate::{
     define_syscall_handler,
@@ -18,7 +18,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_STAT = 18,
+    Syscall::Stat = 18,
     fn sys_stat(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -33,7 +33,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_LINK = 9,
+    Syscall::Link = 9,
     fn sys_link(ctx: &mut SyscallContext) -> Result<u32> {
         let (oldname_ptr, newname_ptr, _) = ctx.args();
         let oldname = uaccess::read_pathname(oldname_ptr);
@@ -73,7 +73,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_UNLINK = 10,
+    Syscall::Unlink = 10,
     fn sys_unlink(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -107,7 +107,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CHDIR = 12,
+    Syscall::Chdir = 12,
     fn sys_chdir(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -126,7 +126,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CHROOT = 61,
+    Syscall::Chroot = 61,
     fn sys_chroot(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -142,7 +142,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_MKDIR = 39,
+    Syscall::Mkdir = 39,
     fn sys_mkdir(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -164,7 +164,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_MKNOD = 14,
+    Syscall::Mknod = 14,
     fn sys_mknod(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, mode, dev) = ctx.args();
         if !task::is_superuser() {
@@ -195,7 +195,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_RMDIR = 40,
+    Syscall::Rmdir = 40,
     fn sys_rmdir(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -241,7 +241,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CHMOD = 15,
+    Syscall::Chmod = 15,
     fn sys_chmod(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -263,7 +263,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_CHOWN = 16,
+    Syscall::Chown = 16,
     fn sys_chown(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, uid, gid) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -282,7 +282,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_ACCESS = 33,
+    Syscall::Access = 33,
     fn sys_access(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
@@ -301,7 +301,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_UTIME = 30,
+    Syscall::Utime = 30,
     fn sys_utime(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, times_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);

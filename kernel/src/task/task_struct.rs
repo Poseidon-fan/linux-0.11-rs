@@ -7,7 +7,7 @@ use core::{
     sync::atomic::AtomicU8,
 };
 
-use user_lib::syscall::process::NSIG;
+use user_lib::syscall::signal::NSIG;
 
 use crate::{
     fs::{file::File, minix::Inode},

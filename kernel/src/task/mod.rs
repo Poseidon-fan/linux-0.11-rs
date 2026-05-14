@@ -23,7 +23,7 @@ pub use gdt::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY, set_ldt_desc, set_tss_desc};
 pub use manager::{TASK_MANAGER, TASK_NUM};
 pub use task_struct::{TASK_OPEN_FILES_LIMIT, TaskState};
 pub use timer::{HZ, jiffies};
-use user_lib::syscall::process::{SIGALRM, SIGCHLD, SIGHUP, SIGKILL, SIGSTOP};
+use user_lib::syscall::signal::Signal;
 pub use wait_queue::WaitQueue;
 
 use crate::{
@@ -64,7 +64,8 @@ pub fn schedule() {
     assert_can_schedule("schedule");
 
     let Some(next) = TASK_MANAGER.exclusive(|manager| {
-        const BLOCKABLE: u32 = !((1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1)));
+        const BLOCKABLE: u32 =
+            !((1 << (Signal::Kill as u32 - 1)) | (1 << (Signal::Stop as u32 - 1)));
         let j = timer::jiffies();
         manager
             .tasks
@@ -73,7 +74,7 @@ pub fn schedule() {
             .for_each(|task| {
                 task.pcb.inner.exclusive(|inner| {
                     if inner.signal_info.alarm > 0 && inner.signal_info.alarm < j {
-                        inner.signal_info.raise(SIGALRM);
+                        inner.signal_info.raise(Signal::Alrm as u32);
                         inner.signal_info.alarm = 0;
                     }
                     let unblocked =
@@ -152,7 +153,7 @@ pub fn exit_process(code: i32) -> ! {
             for task in others() {
                 task.pcb.inner.exclusive(|inner| {
                     if inner.relation.session == session {
-                        inner.signal_info.raise(SIGHUP);
+                        inner.signal_info.raise(Signal::Hup as u32);
                         inner.sched.wake_if_interruptible();
                     }
                 });
@@ -174,7 +175,7 @@ pub fn exit_process(code: i32) -> ! {
         if notify_init {
             if let Some(init) = init_task.as_ref() {
                 init.pcb.inner.exclusive(|inner| {
-                    inner.signal_info.raise(SIGCHLD);
+                    inner.signal_info.raise(Signal::Chld as u32);
                     inner.sched.wake_if_interruptible();
                 });
             }
@@ -199,7 +200,7 @@ pub fn exit_process(code: i32) -> ! {
         // Notify parent with SIGCHLD.
         if let Some(father) = others().find(|t| t.pcb.pid == father_pid) {
             father.pcb.inner.exclusive(|inner| {
-                inner.signal_info.raise(SIGCHLD);
+                inner.signal_info.raise(Signal::Chld as u32);
                 inner.sched.wake_if_interruptible();
             });
         }

@@ -1,8 +1,14 @@
+//! File-system types and syscall wrappers.
+
 use bitflags::bitflags;
 
-use crate::{syscall::SyscallArg, use_syscall};
+use crate::{
+    syscall::{SyscallArg, nr::Syscall},
+    use_syscall,
+};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// The access-mode portion of open flags (bits 0–1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u32)]
 pub enum AccessMode {
     ReadOnly = 0,
@@ -23,18 +29,21 @@ impl AccessMode {
 }
 
 bitflags! {
+    /// Additional open-mode option bits (bits 2 and above).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct OpenOptions: u32 {
-        const CREATE = 0o0100;
-        const EXCLUSIVE = 0o0200;
+        const CREATE             = 0o0100;
+        const EXCLUSIVE          = 0o0200;
         const NO_CONTROLLING_TTY = 0o0400;
-        const TRUNCATE = 0o1000;
-        const APPEND = 0o2000;
-        const NONBLOCK = 0o4000;
-        const NDELAY = Self::NONBLOCK.bits();
+        const TRUNCATE           = 0o1000;
+        const APPEND             = 0o2000;
+        const NONBLOCK           = 0o4000;
+        const NDELAY             = Self::NONBLOCK.bits();
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Combined open flags: access mode (bits 0–1) OR-ed with option bits.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct OpenFlags(u32);
 
@@ -63,12 +72,15 @@ impl SyscallArg for OpenFlags {
     }
 }
 
-/// File seek origin, matching POSIX `SEEK_SET` / `SEEK_CUR` / `SEEK_END`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// File seek origin.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u32)]
 pub enum Whence {
+    /// Seek from the beginning of the file.
     Set = 0,
+    /// Seek from the current position.
     Current = 1,
+    /// Seek from the end of the file.
     End = 2,
 }
 
@@ -89,20 +101,29 @@ impl SyscallArg for Whence {
     }
 }
 
-// ---- fcntl command numbers ----
+/// `fcntl` command codes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum FcntlCmd {
+    /// Duplicate file descriptor (find first free fd ≥ arg).
+    DupFd = 0,
+    /// Get close-on-exec flag.
+    GetFd = 1,
+    /// Set close-on-exec flag.
+    SetFd = 2,
+    /// Get file status flags.
+    GetFlags = 3,
+    /// Set file status flags.
+    SetFlags = 4,
+}
 
-/// Duplicate file descriptor (find first free fd >= arg).
-pub const F_DUPFD: u32 = 0;
-/// Get close-on-exec flag.
-pub const F_GETFD: u32 = 1;
-/// Set close-on-exec flag.
-pub const F_SETFD: u32 = 2;
-/// Get file status flags.
-pub const F_GETFL: u32 = 3;
-/// Set file status flags.
-pub const F_SETFL: u32 = 4;
+impl SyscallArg for FcntlCmd {
+    fn into_syscall_arg(self) -> u32 {
+        self as u32
+    }
+}
 
-/// File metadata structure matching the Linux 0.11 `struct stat` ABI.
+/// File metadata, matching the Linux 0.11 `struct stat` ABI.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Stat {
@@ -119,7 +140,7 @@ pub struct Stat {
     pub st_ctime: u32,
 }
 
-/// Time values for [`utime`], matching the POSIX `struct utimbuf` ABI.
+/// Time values for `utime`, matching the POSIX `struct utimbuf` ABI.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TimeUpdate {
@@ -127,16 +148,37 @@ pub struct TimeUpdate {
     pub modification_time: u32,
 }
 
-use_syscall!(crate::syscall::NR_OPEN => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
-use_syscall!(crate::syscall::NR_READ => read(fd: u32, buf: *mut u8, count: u32) -> u32);
-use_syscall!(crate::syscall::NR_WRITE => write(fd: u32, buf: *const u8, count: u32) -> u32);
-use_syscall!(crate::syscall::NR_CLOSE => close(fd: u32) -> u32);
-use_syscall!(crate::syscall::NR_LSEEK => lseek(fd: u32, offset: i32, whence: Whence) -> u32);
-use_syscall!(crate::syscall::NR_UNLINK => unlink(path: *const u8) -> u32);
-use_syscall!(crate::syscall::NR_STAT => stat(path: *const u8, buf: *mut Stat) -> u32);
-use_syscall!(crate::syscall::NR_FSTAT => fstat(fd: u32, buf: *mut Stat) -> u32);
-use_syscall!(crate::syscall::NR_DUP => dup(fd: u32) -> u32);
-use_syscall!(crate::syscall::NR_DUP2 => dup2(oldfd: u32, newfd: u32) -> u32);
-use_syscall!(crate::syscall::NR_MKDIR => mkdir(path: *const u8, mode: u32) -> u32);
-use_syscall!(crate::syscall::NR_RMDIR => rmdir(path: *const u8) -> u32);
-use_syscall!(crate::syscall::NR_SYNC => sync() -> u32);
+use_syscall!(Syscall::Open   => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
+use_syscall!(Syscall::Read   => read(fd: u32, buf: *mut u8, count: u32) -> u32);
+use_syscall!(Syscall::Write  => write(fd: u32, buf: *const u8, count: u32) -> u32);
+use_syscall!(Syscall::Close  => close(fd: u32) -> u32);
+use_syscall!(Syscall::Creat  => creat(path: *const u8, mode: u32) -> u32);
+use_syscall!(Syscall::Link   => link(old_path: *const u8, new_path: *const u8) -> u32);
+use_syscall!(Syscall::Lseek  => lseek(fd: u32, offset: i32, whence: Whence) -> u32);
+use_syscall!(Syscall::Chdir  => chdir(path: *const u8) -> u32);
+use_syscall!(Syscall::Mknod  => mknod(path: *const u8, mode: u32, dev: u32) -> u32);
+use_syscall!(Syscall::Chmod  => chmod(path: *const u8, mode: u32) -> u32);
+use_syscall!(Syscall::Chown  => chown(path: *const u8, uid: u32, gid: u32) -> u32);
+use_syscall!(Syscall::Unlink => unlink(path: *const u8) -> u32);
+use_syscall!(Syscall::Stat   => stat(path: *const u8, buf: *mut Stat) -> u32);
+use_syscall!(Syscall::Mount  => mount(
+    dev_name: *const u8,
+    dir_name: *const u8,
+    rw_flag: u32
+) -> u32);
+use_syscall!(Syscall::Umount => umount(dev_name: *const u8) -> u32);
+use_syscall!(Syscall::Fstat  => fstat(fd: u32, buf: *mut Stat) -> u32);
+use_syscall!(Syscall::Utime  => utime(path: *const u8, times: *const TimeUpdate) -> u32);
+use_syscall!(Syscall::Access => access(path: *const u8, mode: u32) -> u32);
+use_syscall!(Syscall::Dup    => dup(fd: u32) -> u32);
+use_syscall!(Syscall::Pipe   => pipe(fds: *mut u32) -> u32);
+use_syscall!(Syscall::Ioctl  => ioctl(fd: u32, request: u32, arg: u32) -> u32);
+use_syscall!(Syscall::Fcntl  => fcntl(fd: u32, command: FcntlCmd, arg: u32) -> u32);
+use_syscall!(Syscall::Umask  => umask(mask: u32) -> u32);
+use_syscall!(Syscall::Chroot => chroot(path: *const u8) -> u32);
+use_syscall!(Syscall::Ustat  => ustat(dev: u32, ubuf: *mut u8) -> u32);
+use_syscall!(Syscall::Dup2   => dup2(oldfd: u32, newfd: u32) -> u32);
+use_syscall!(Syscall::Rename => rename(old_path: *const u8, new_path: *const u8) -> u32);
+use_syscall!(Syscall::Mkdir  => mkdir(path: *const u8, mode: u32) -> u32);
+use_syscall!(Syscall::Rmdir  => rmdir(path: *const u8) -> u32);
+use_syscall!(Syscall::Sync   => sync() -> u32);

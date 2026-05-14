@@ -1,5 +1,7 @@
 //! Time and system-info syscall handlers (time, stime, times, uname).
 
+use user_lib::syscall::nr::Syscall;
+
 use crate::{
     define_syscall_handler,
     error::{EINVAL, EPERM, Result},
@@ -11,7 +13,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_TIME = 13,
+    Syscall::Time = 13,
     fn sys_time(ctx: &mut SyscallContext) -> Result<u32> {
         let (tloc, _, _) = ctx.args();
         let t = time::current_time();
@@ -24,7 +26,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_STIME = 25,
+    Syscall::Stime = 25,
     fn sys_stime(ctx: &mut SyscallContext) -> Result<u32> {
         if !is_superuser() {
             return Err(EPERM);
@@ -37,7 +39,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_TIMES = 43,
+    Syscall::Times = 43,
     fn sys_times(ctx: &mut SyscallContext) -> Result<u32> {
         // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
         //
@@ -71,7 +73,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_UNAME = 59,
+    Syscall::Uname = 59,
     fn sys_uname(ctx: &mut SyscallContext) -> Result<u32> {
         // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
         //

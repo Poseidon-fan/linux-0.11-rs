@@ -1,5 +1,7 @@
 //! Process identity syscall handlers (pid, uid, gid, session, group).
 
+use user_lib::syscall::nr::Syscall;
+
 use crate::{
     define_syscall_handler,
     error::{EPERM, ESRCH, Result},
@@ -8,28 +10,28 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETPID = 20,
+    Syscall::Getpid = 20,
     fn sys_getpid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::current_pid())
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETPPID = 64,
+    Syscall::Getppid = 64,
     fn sys_getppid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.relation.father))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETUID = 24,
+    Syscall::Getuid = 24,
     fn sys_getuid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.identity.uid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETUID = 23,
+    Syscall::Setuid = 23,
     fn sys_setuid(ctx: &mut SyscallContext) -> Result<u32> {
         let (uid, _, _) = ctx.args();
         sys_setreuid_impl(uid, uid)
@@ -37,21 +39,21 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETEUID = 49,
+    Syscall::Geteuid = 49,
     fn sys_geteuid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.identity.euid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETGID = 47,
+    Syscall::Getgid = 47,
     fn sys_getgid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.identity.gid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETGID = 46,
+    Syscall::Setgid = 46,
     fn sys_setgid(ctx: &mut SyscallContext) -> Result<u32> {
         let (gid, _, _) = ctx.args();
         sys_setregid_impl(gid, gid)
@@ -59,14 +61,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETEGID = 50,
+    Syscall::Getegid = 50,
     fn sys_getegid(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.identity.egid as u32))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETREUID = 70,
+    Syscall::Setreuid = 70,
     fn sys_setreuid(ctx: &mut SyscallContext) -> Result<u32> {
         let (ruid, euid, _) = ctx.args();
         sys_setreuid_impl(ruid, euid)
@@ -74,7 +76,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETREGID = 71,
+    Syscall::Setregid = 71,
     fn sys_setregid(ctx: &mut SyscallContext) -> Result<u32> {
         let (rgid, egid, _) = ctx.args();
         sys_setregid_impl(rgid, egid)
@@ -82,7 +84,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETPGID = 57,
+    Syscall::Setpgid = 57,
     fn sys_setpgid(ctx: &mut SyscallContext) -> Result<u32> {
         let (pid_arg, pgid_arg, _) = ctx.args();
         let pid = task::current_pid();
@@ -119,14 +121,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_GETPGRP = 65,
+    Syscall::Getpgrp = 65,
     fn sys_getpgrp(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.relation.pgrp))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SETSID = 66,
+    Syscall::Setsid = 66,
     fn sys_setsid(_ctx: &mut SyscallContext) -> Result<u32> {
         let pid = task::current_pid();
         let is_leader = task::with_current(|inner| inner.relation.leader);

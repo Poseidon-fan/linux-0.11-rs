@@ -3,7 +3,7 @@
 use alloc::string::String;
 use core::{arch::asm, mem};
 
-use user_lib::syscall::process::NSIG;
+use user_lib::syscall::{nr::Syscall, signal::NSIG};
 
 use crate::{
     define_syscall_handler,
@@ -336,7 +336,7 @@ fn reload_fs_segment() {
 // ---------------------------------------------------------------------------
 
 define_syscall_handler!(
-    user_lib::syscall::NR_EXECVE = 11,
+    Syscall::Execve = 11,
     fn sys_execve(ctx: &mut SyscallContext) -> Result<u32> {
         let (filename_ptr, argv_ptr, envp_ptr) = ctx.args();
         let filename = uaccess::read_pathname(filename_ptr);

@@ -26,8 +26,8 @@
 //! ```
 
 use user_lib::syscall::{
-    process::{SIGINT, SIGQUIT},
-    termios::*,
+    signal::Signal,
+    tty::{ControlChar, InputMode, LocalMode},
 };
 
 use super::{Tty, TtyState};
@@ -54,11 +54,11 @@ impl LineDiscipline {
 
             // --- Canonical-mode flow control ---
             if state.termios.local_mode.contains(LocalMode::ICANON) {
-                if c == state.termios.control_char(VSTOP) {
+                if c == state.termios.control_char(ControlChar::Stop) {
                     state.stopped = true;
                     continue;
                 }
-                if c == state.termios.control_char(VSTART) {
+                if c == state.termios.control_char(ControlChar::Start) {
                     state.stopped = false;
                     continue;
                 }
@@ -77,7 +77,7 @@ impl LineDiscipline {
             }
 
             // --- Line counting ---
-            if c == b'\n' || c == state.termios.control_char(VEOF) {
+            if c == b'\n' || c == state.termios.control_char(ControlChar::Eof) {
                 state.pending_lines += 1;
             }
 
@@ -121,15 +121,15 @@ impl LineDiscipline {
     /// Check if `c` is a signal character (INTR, QUIT). If so, deliver the
     /// signal and return `true` to discard the byte.
     fn check_signal(state: &TtyState, c: u8) -> bool {
-        let intr_char = state.termios.control_char(VINTR);
+        let intr_char = state.termios.control_char(ControlChar::Intr);
         if c == intr_char {
-            Tty::signal_foreground_group(state.foreground_group, 1u32 << (SIGINT - 1));
+            Tty::signal_foreground_group(state.foreground_group, 1u32 << (Signal::Int as u32 - 1));
             return true;
         }
 
-        let quit_char = state.termios.control_char(VQUIT);
+        let quit_char = state.termios.control_char(ControlChar::Quit);
         if c == quit_char {
-            Tty::signal_foreground_group(state.foreground_group, 1u32 << (SIGQUIT - 1));
+            Tty::signal_foreground_group(state.foreground_group, 1u32 << (Signal::Quit as u32 - 1));
             return true;
         }
 
@@ -139,9 +139,9 @@ impl LineDiscipline {
     /// Handle ERASE and KILL characters in canonical mode. Returns `true` if
     /// the byte was consumed by editing.
     fn handle_editing(state: &mut TtyState, c: u8, echoed: &mut bool) -> bool {
-        let erase_char = state.termios.control_char(VERASE);
-        let kill_char = state.termios.control_char(VKILL);
-        let eof_char = state.termios.control_char(VEOF);
+        let erase_char = state.termios.control_char(ControlChar::Erase);
+        let kill_char = state.termios.control_char(ControlChar::Kill);
+        let eof_char = state.termios.control_char(ControlChar::Eof);
 
         if c == kill_char {
             // Delete the entire current line from cooked_rx.

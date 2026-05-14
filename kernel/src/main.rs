@@ -68,10 +68,11 @@ pub extern "C" fn rust_main() -> ! {
     println!("init complete");
 
     segment::move_to_user_mode();
-    (user_lib::syscall::fork().unwrap() == 0).then(|| user_init());
+    use user_lib::syscall::process;
+    (process::fork().unwrap() == 0).then(|| user_init());
 
     loop {
-        user_lib::syscall::pause().unwrap();
+        process::pause().unwrap();
     }
 }
 
@@ -85,7 +86,7 @@ fn user_init() -> ! {
     use user_lib::syscall::{fs, process};
 
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
-    user_lib::syscall::setup(DRIVE_INFO_ADDR).unwrap();
+    process::setup(DRIVE_INFO_ADDR).unwrap();
 
     // Open /dev/tty0 as fd 0 (stdin), then dup to fd 1 (stdout) and fd 2 (stderr).
     fs::open(
@@ -100,7 +101,7 @@ fn user_init() -> ! {
     user_lib::println!("hello linux");
 
     // --- Phase 1: run /bin/sh with /etc/rc as stdin ---
-    let pid = user_lib::syscall::fork().unwrap();
+    let pid = process::fork().unwrap();
     if pid == 0 {
         fs::close(0).unwrap();
         if fs::open(
@@ -110,7 +111,7 @@ fn user_init() -> ! {
         )
         .is_err()
         {
-            user_lib::syscall::exit(1);
+            user_lib::exit(1);
         }
         let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
         let envp_rc: [*const u8; 2] = [c"HOME=/".as_ptr().cast(), core::ptr::null()];
@@ -122,7 +123,7 @@ fn user_init() -> ! {
             Ok(code) => code,
             Err(e) => e.code(),
         };
-        user_lib::syscall::exit(status);
+        user_lib::exit(status);
     }
 
     // Wait for the rc-shell to finish.
@@ -138,7 +139,7 @@ fn user_init() -> ! {
 
     // --- Phase 2: respawn interactive shells forever ---
     loop {
-        let pid = match user_lib::syscall::fork() {
+        let pid = match process::fork() {
             Ok(p) => p,
             Err(_) => {
                 user_lib::println!("Fork failed in init");
@@ -168,7 +169,7 @@ fn user_init() -> ! {
                     Ok(code) => code,
                     Err(e) => e.code(),
                 };
-            user_lib::syscall::exit(status);
+            user_lib::exit(status);
         }
 
         // Parent: wait for the shell to exit, then report and restart.

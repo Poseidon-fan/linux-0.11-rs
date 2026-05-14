@@ -1,6 +1,9 @@
 //! Signal-related syscall handlers (kill, signal, sigaction, alarm, pause, mask).
 
-use user_lib::syscall::process::{NSIG, SA_NOMASK, SA_ONESHOT, SIGKILL};
+use user_lib::syscall::{
+    nr::Syscall,
+    signal::{NSIG, SigFlags, Signal},
+};
 
 use crate::{
     define_syscall_handler,
@@ -12,7 +15,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_ALARM = 27,
+    Syscall::Alarm = 27,
     fn sys_alarm(ctx: &mut SyscallContext) -> Result<u32> {
         let (seconds, _, _) = ctx.args();
         let old_seconds = task::with_current(|inner| {
@@ -29,7 +32,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_PAUSE = 29,
+    Syscall::Pause = 29,
     fn sys_pause(_ctx: &mut SyscallContext) -> Result<u32> {
         task::with_current(|inner| inner.sched.state = TaskState::Interruptible);
         task::schedule();
@@ -38,7 +41,7 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_KILL = 37,
+    Syscall::Kill = 37,
     fn sys_kill(ctx: &mut SyscallContext) -> Result<u32> {
         let (pid_arg, sig_arg, _) = ctx.args();
         let pid = pid_arg as i32;
@@ -88,14 +91,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SIGNAL = 48,
+    Syscall::Signal = 48,
     fn sys_signal(ctx: &mut SyscallContext) -> Result<u32> {
         let (signum, handler, restorer) = ctx.args();
 
         (1..=NSIG as u32)
             .contains(&signum)
             .then_some(signum)
-            .filter(|&s| s != SIGKILL)
+            .filter(|&s| s != Signal::Kill as u32)
             .ok_or(EPERM)?;
 
         let idx = (signum - 1) as usize;
@@ -104,7 +107,7 @@ define_syscall_handler!(
             inner.signal_info.sigaction[idx] = SigAction {
                 sa_handler: handler,
                 sa_mask: 0,
-                sa_flags: SA_ONESHOT | SA_NOMASK,
+                sa_flags: (SigFlags::ONE_SHOT | SigFlags::NO_MASK).bits(),
                 sa_restorer: restorer,
             };
             old
@@ -114,20 +117,20 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SGETMASK = 68,
+    Syscall::Sgetmask = 68,
     fn sys_sgetmask(_ctx: &mut SyscallContext) -> Result<u32> {
         Ok(task::with_current(|inner| inner.signal_info.blocked))
     }
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SSETMASK = 69,
+    Syscall::Ssetmask = 69,
     fn sys_ssetmask(ctx: &mut SyscallContext) -> Result<u32> {
         let (newmask, _, _) = ctx.args();
         let old = task::with_current(|inner| {
             core::mem::replace(
                 &mut inner.signal_info.blocked,
-                newmask & !(1u32 << (SIGKILL - 1)),
+                newmask & !(1u32 << (Signal::Kill as u32 - 1)),
             )
         });
         Ok(old)
@@ -135,14 +138,14 @@ define_syscall_handler!(
 );
 
 define_syscall_handler!(
-    user_lib::syscall::NR_SIGACTION = 67,
+    Syscall::Sigaction = 67,
     fn sys_sigaction(ctx: &mut SyscallContext) -> Result<u32> {
         let (signum, action_ptr, oldaction_ptr) = ctx.args();
 
         (1..=NSIG as u32)
             .contains(&signum)
             .then_some(signum)
-            .filter(|&s| s != SIGKILL)
+            .filter(|&s| s != Signal::Kill as u32)
             .ok_or(EPERM)?;
 
         let idx = (signum - 1) as usize;
@@ -171,9 +174,10 @@ define_syscall_handler!(
                 inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
             });
             let current = inner.signal_info.sigaction[idx];
-            inner.signal_info.sigaction[idx].sa_mask = ((current.sa_flags & SA_NOMASK) == 0)
-                .then(|| current.sa_mask | (1u32 << idx))
-                .unwrap_or(0);
+            inner.signal_info.sigaction[idx].sa_mask =
+                ((current.sa_flags & SigFlags::NO_MASK.bits()) == 0)
+                    .then(|| current.sa_mask | (1u32 << idx))
+                    .unwrap_or(0);
             old
         });
 

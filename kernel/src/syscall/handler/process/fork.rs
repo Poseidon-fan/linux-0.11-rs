@@ -2,6 +2,8 @@
 
 use alloc::sync::Arc;
 
+use user_lib::syscall::nr::Syscall;
+
 use crate::{
     define_syscall_handler,
     error::{EAGAIN, Result},
@@ -12,7 +14,7 @@ use crate::{
 };
 
 define_syscall_handler!(
-    user_lib::syscall::NR_FORK = 2,
+    Syscall::Fork = 2,
     fn sys_fork(ctx: &mut SyscallContext) -> Result<u32> {
         unsafe extern "C" {
             static pg_dir: u8;
