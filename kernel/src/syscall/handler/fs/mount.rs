@@ -7,7 +7,7 @@ use user_lib::syscall::nr::Syscall;
 use crate::{
     define_syscall_handler,
     driver::{self, blk::hd},
-    error::{EBUSY, ENOENT, ENOTBLK, EPERM, Result},
+    error::{Errno, Result},
     fs::{
         self, InodeType, ROOT_INODE_NUMBER, buffer,
         minix::{INODE_TABLE, InodeId, MinixFileSystem},
@@ -21,7 +21,7 @@ define_syscall_handler!(
     Syscall::Setup = 0,
     fn sys_setup(ctx: &mut SyscallContext) -> Result<u32> {
         let (drive_info_addr, _, _) = ctx.args();
-        hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| EPERM)?;
+        hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| Errno::PERM)?;
         fs::mount_root();
         Ok(0)
     }
@@ -44,30 +44,30 @@ define_syscall_handler!(
         let dev_name = uaccess::read_pathname(dev_name_ptr);
         let dir_name = uaccess::read_pathname(dir_name_ptr);
 
-        let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
+        let dev_inode = path::resolve_path(&dev_name).ok_or(Errno::NOENT)?;
         if dev_inode.file_type() != InodeType::BlockDevice {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
         let dev = dev_inode.device_number();
         drop(dev_inode);
 
-        let dir_inode = path::resolve_path(&dir_name).ok_or(ENOENT)?;
+        let dir_inode = path::resolve_path(&dir_name).ok_or(Errno::NOENT)?;
         if dir_inode.file_type() != InodeType::Directory {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
         if dir_inode.id.inode_number == ROOT_INODE_NUMBER {
-            return Err(EBUSY);
+            return Err(Errno::BUSY);
         }
 
         let mut mt = MOUNT_TABLE.lock();
         if mt.get_fs(dev).is_some() {
-            return Err(EBUSY);
+            return Err(Errno::BUSY);
         }
         if mt.is_mount_point(dir_inode.id) {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
 
-        let new_fs = MinixFileSystem::open(dev).ok_or(EBUSY)?;
+        let new_fs = MinixFileSystem::open(dev).ok_or(Errno::BUSY)?;
         let root_inode = INODE_TABLE.lock().get_inode_raw(
             InodeId {
                 device: dev,
@@ -82,7 +82,7 @@ define_syscall_handler!(
             root_inode,
             mount_point_inode: Some(dir_inode),
         }))
-        .ok_or(EBUSY)?;
+        .ok_or(Errno::BUSY)?;
 
         Ok(0)
     }
@@ -96,23 +96,23 @@ define_syscall_handler!(
         let (dev_name_ptr, _, _) = ctx.args();
         let dev_name = uaccess::read_pathname(dev_name_ptr);
 
-        let dev_inode = path::resolve_path(&dev_name).ok_or(ENOENT)?;
+        let dev_inode = path::resolve_path(&dev_name).ok_or(Errno::NOENT)?;
         if dev_inode.file_type() != InodeType::BlockDevice {
-            return Err(ENOTBLK);
+            return Err(Errno::NOTBLK);
         }
         let dev = dev_inode.device_number();
         drop(dev_inode);
 
         if dev == driver::root_dev() {
-            return Err(EBUSY);
+            return Err(Errno::BUSY);
         }
         if MOUNT_TABLE.lock().get_fs(dev).is_none() {
-            return Err(ENOENT);
+            return Err(Errno::NOENT);
         }
 
         let mut inode_table = INODE_TABLE.lock();
         if inode_table.has_active_inodes(dev) {
-            return Err(EBUSY);
+            return Err(Errno::BUSY);
         }
         inode_table.evict_device(dev);
         drop(inode_table);

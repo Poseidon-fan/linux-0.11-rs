@@ -6,7 +6,7 @@ use user_lib::syscall::fs::{AccessMode, OpenOptions, Stat, Whence};
 
 use super::File;
 use crate::{
-    error::{EBADF, EINVAL, Result},
+    error::{Errno, Result},
     fs::minix::Inode,
     sync::Mutex,
 };
@@ -44,7 +44,7 @@ impl InodeFile {
 impl File for InodeFile {
     fn read(&self, buffer: &mut [u8]) -> Result<usize> {
         if self.access_mode == AccessMode::WriteOnly {
-            return Err(EBADF);
+            return Err(Errno::BADF);
         }
         let mut inner = self.inner.lock();
         let bytes_read = inner.inode.read_at(inner.offset, buffer)?;
@@ -58,7 +58,7 @@ impl File for InodeFile {
 
     fn write(&self, buffer: &[u8]) -> Result<usize> {
         if self.access_mode == AccessMode::ReadOnly {
-            return Err(EBADF);
+            return Err(Errno::BADF);
         }
         let mut inner = self.inner.lock();
         let offset = if self.open_options.contains(OpenOptions::APPEND) {
@@ -79,7 +79,7 @@ impl File for InodeFile {
             Whence::End => inner.inode.inner.lock().disk_inode.size as isize + offset as isize,
         };
         if new_offset < 0 {
-            return Err(EINVAL);
+            return Err(Errno::INVAL);
         }
         inner.offset = new_offset as usize;
         Ok(inner.offset)

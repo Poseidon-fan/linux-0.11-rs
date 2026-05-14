@@ -20,7 +20,7 @@ use user_lib::syscall::fs::Stat;
 use super::File;
 use crate::{
     driver::{DevNum, chr::tty::Tty},
-    error::{EIO, ENODEV, ENOTTY, EPERM, Result},
+    error::{Errno, Result},
     fs::minix::Inode,
     segment::uaccess,
     task,
@@ -67,19 +67,19 @@ fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32> {
     match dev.major() {
         4 => {
             if minor >= Tty::DEVICE_COUNT {
-                return Err(ENODEV);
+                return Err(Errno::NODEV);
             }
             Tty::device(minor).ioctl(minor, cmd, arg)
         }
         5 => {
             let tty_nr = task::with_current(|inner| inner.tty);
             if tty_nr < 0 {
-                return Err(EPERM);
+                return Err(Errno::PERM);
             }
             let minor = tty_nr as usize;
             Tty::device(minor).ioctl(minor, cmd, arg)
         }
-        _ => Err(ENOTTY),
+        _ => Err(Errno::NOTTY),
     }
 }
 
@@ -95,7 +95,7 @@ fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usiz
         1 => rw_memory(dir, dev.minor(), buf, count),
         4 => rw_ttyx(dir, dev.minor() as usize, buf, count),
         5 => rw_tty(dir, buf, count),
-        _ => Err(ENODEV),
+        _ => Err(Errno::NODEV),
     }
 }
 
@@ -107,7 +107,7 @@ fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usiz
 /// operate on our kernel buffer.
 fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usize> {
     if minor >= Tty::DEVICE_COUNT {
-        return Err(ENODEV);
+        return Err(Errno::NODEV);
     }
     let tty = Tty::device(minor);
     uaccess::with_kernel_fs(|| match dir {
@@ -120,7 +120,7 @@ fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usi
 fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize> {
     let tty_nr = task::with_current(|inner| inner.tty);
     if tty_nr < 0 {
-        return Err(EPERM);
+        return Err(Errno::PERM);
     }
     rw_ttyx(dir, tty_nr as usize, buf, count)
 }
@@ -128,15 +128,15 @@ fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize> {
 /// Major 1 — memory pseudo-devices dispatched by minor number.
 fn rw_memory(dir: RwDir, minor: u8, _buf: *const u8, count: usize) -> Result<usize> {
     match minor {
-        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub EIO
-        0..=2 => Err(EIO),
+        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
+        0..=2 => Err(Errno::IO),
         // 3 = /dev/null — reads return 0 bytes, writes succeed silently
         3 => match dir {
             RwDir::Read => Ok(0),
             RwDir::Write => Ok(count),
         },
-        // 4 = /dev/port — stub EIO
-        4 => Err(EIO),
-        _ => Err(EIO),
+        // 4 = /dev/port — stub Errno::IO
+        4 => Err(Errno::IO),
+        _ => Err(Errno::IO),
     }
 }

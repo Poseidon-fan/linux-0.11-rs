@@ -7,7 +7,7 @@ use user_lib::syscall::{
 
 use crate::{
     define_syscall_handler,
-    error::{EINVAL, EPERM, Result},
+    error::{Errno, Result},
     mm,
     segment::uaccess,
     syscall::context::SyscallContext,
@@ -50,7 +50,7 @@ define_syscall_handler!(
         (1..=NSIG as u32)
             .contains(&sig)
             .then_some(())
-            .ok_or(EINVAL)?;
+            .ok_or(Errno::INVAL)?;
 
         let current_pid = task::current_pid();
         let current_euid = task::with_current(|inner| inner.identity.euid);
@@ -59,7 +59,7 @@ define_syscall_handler!(
             let allowed = priv_flag
                 || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
                 || is_superuser();
-            allowed.then_some(()).ok_or(EPERM)?;
+            allowed.then_some(()).ok_or(Errno::PERM)?;
             task.pcb.inner.exclusive(|inner| {
                 inner.signal_info.raise(sig);
                 inner.sched.wake_if_interruptible();
@@ -99,7 +99,7 @@ define_syscall_handler!(
             .contains(&signum)
             .then_some(signum)
             .filter(|&s| s != Signal::Kill as u32)
-            .ok_or(EPERM)?;
+            .ok_or(Errno::PERM)?;
 
         let idx = (signum - 1) as usize;
         let old_handler = task::with_current(|inner| {
@@ -146,7 +146,7 @@ define_syscall_handler!(
             .contains(&signum)
             .then_some(signum)
             .filter(|&s| s != Signal::Kill as u32)
-            .ok_or(EPERM)?;
+            .ok_or(Errno::PERM)?;
 
         let idx = (signum - 1) as usize;
 

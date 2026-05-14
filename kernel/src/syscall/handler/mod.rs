@@ -5,7 +5,7 @@
 //!
 //! - [`process`] — fork, execve, exit, waitpid, kill, signal, identity, etc.
 //! - [`fs`] — open, read, write, close, link, mkdir, stat, pipe, mount, etc.
-//! - [`nosys`] — `-ENOSYS` stubs for unimplemented syscall numbers.
+//! - [`nosys`] — `-Errno::NOSYS` stubs for unimplemented syscall numbers.
 
 mod fs;
 mod nosys;

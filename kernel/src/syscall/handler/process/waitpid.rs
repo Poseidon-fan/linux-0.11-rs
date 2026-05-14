@@ -4,7 +4,7 @@ use user_lib::syscall::{nr::Syscall, signal::Signal};
 
 use crate::{
     define_syscall_handler,
-    error::{ECHILD, EINTR, Result},
+    error::{Errno, Result},
     mm,
     segment::uaccess,
     syscall::context::SyscallContext,
@@ -143,10 +143,10 @@ define_syscall_handler!(
                         inner.signal_info.clear(Signal::Chld as u32);
                         inner.signal_info.signal != 0
                     }) {
-                        return Err(EINTR);
+                        return Err(Errno::INTR);
                     }
                 }
-                ScanResult::NoChild => return Err(ECHILD),
+                ScanResult::NoChild => return Err(Errno::CHILD),
             }
         }
     }

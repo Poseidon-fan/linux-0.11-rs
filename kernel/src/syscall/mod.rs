@@ -13,7 +13,7 @@ pub use context::SyscallContext;
 pub use handler::*;
 
 use crate::{
-    error::ENOSYS,
+    error::Errno,
     signal,
     task::{self, TaskState},
 };
@@ -24,7 +24,7 @@ global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
 pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
     // Check if the syscall number is valid.
     if (ctx.syscall_nr() as usize) >= SYSCALL_TABLE.len() {
-        return -(ENOSYS.code() as i32);
+        return -(Errno::NOSYS.code() as i32);
     }
     // Call the syscall handler.
     let handler = SYSCALL_TABLE[ctx.syscall_nr() as usize];

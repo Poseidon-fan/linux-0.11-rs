@@ -7,7 +7,7 @@ use user_lib::syscall::{nr::Syscall, signal::NSIG};
 
 use crate::{
     define_syscall_handler,
-    error::{EACCES, ENOENT, ENOEXEC, ENOMEM, Result},
+    error::{Errno, Result},
     fs::{BLOCK_SIZE, InodeModeFlags, InodeType, minix::Inode, path},
     mm::{
         address::LinAddr,
@@ -48,20 +48,20 @@ impl AoutHeader {
 
     fn validate(&self, file_size: u32) -> Result<()> {
         if self.a_magic != ZMAGIC {
-            return Err(ENOEXEC);
+            return Err(Errno::NOEXEC);
         }
         if self.a_trsize != 0 || self.a_drsize != 0 {
-            return Err(ENOEXEC);
+            return Err(Errno::NOEXEC);
         }
         if (self.a_text as u64) + (self.a_data as u64) + (self.a_bss as u64) > 0x3000000 {
-            return Err(ENOEXEC);
+            return Err(Errno::NOEXEC);
         }
         let header_plus_payload = (BLOCK_SIZE as u64)
             + (self.a_text as u64)
             + (self.a_data as u64)
             + (self.a_syms as u64);
         if (file_size as u64) < header_plus_payload {
-            return Err(ENOEXEC);
+            return Err(Errno::NOEXEC);
         }
         Ok(())
     }
@@ -94,7 +94,7 @@ impl ArgumentPages {
     fn ensure_page(&mut self, off: usize) -> Result<*mut u8> {
         let page_idx = off / PAGE_SIZE;
         if self.pages[page_idx].is_none() {
-            self.pages[page_idx] = Some(frame::alloc().ok_or(ENOMEM)?);
+            self.pages[page_idx] = Some(frame::alloc().ok_or(Errno::NOMEM)?);
         }
         let frame = self.pages[page_idx].as_ref().unwrap();
         let phys = frame.ppn.addr();
@@ -105,7 +105,7 @@ impl ArgumentPages {
     /// Write one byte at the current cursor and advance downward.
     fn push_byte(&mut self, byte: u8) -> Result<()> {
         if self.p == 0 {
-            return Err(ENOMEM);
+            return Err(Errno::NOMEM);
         }
         self.p -= 1;
         let ptr = self.ensure_page(self.p)?;
@@ -209,7 +209,7 @@ fn check_exec_permission(inode: &Inode) -> Result<(u16, u16)> {
     let disk = &inner.disk_inode;
 
     if disk.mode.file_type() != InodeType::Regular {
-        return Err(EACCES);
+        return Err(Errno::ACCESS);
     }
 
     let flags = disk.mode.flags();
@@ -234,7 +234,7 @@ fn check_exec_permission(inode: &Inode) -> Result<(u16, u16)> {
     }
 
     if (mode & 1) == 0 && !((disk.mode.0 & 0o111) != 0 && task::is_superuser()) {
-        return Err(EACCES);
+        return Err(Errno::ACCESS);
     }
 
     Ok((e_uid, e_gid))
@@ -248,10 +248,10 @@ fn parse_shebang(block: &[u8]) -> Result<(String, String, Option<String>)> {
         .iter()
         .position(|&b| b == b'\n' || b == 0)
         .unwrap_or(block.len().min(1024));
-    let line = core::str::from_utf8(&block[2..end]).map_err(|_| ENOEXEC)?;
+    let line = core::str::from_utf8(&block[2..end]).map_err(|_| Errno::NOEXEC)?;
     let line = line.trim();
     if line.is_empty() {
-        return Err(ENOEXEC);
+        return Err(Errno::NOEXEC);
     }
 
     let (interp, i_arg) = match line.find([' ', '\t']) {
@@ -348,14 +348,16 @@ define_syscall_handler!(
         let mut final_argc = argc;
         let mut sh_bang = false;
 
-        let mut inode = path::resolve_path(&filename).ok_or(ENOENT)?;
+        let mut inode = path::resolve_path(&filename).ok_or(Errno::NOENT)?;
 
         // Resolve the executable — loops at most once for #! scripts.
         let (header, e_uid, e_gid) = loop {
             let (eu, eg) = check_exec_permission(&inode)?;
 
             let mut first_block = [0u8; BLOCK_SIZE];
-            inode.read_at(0, &mut first_block).map_err(|_| EACCES)?;
+            inode
+                .read_at(0, &mut first_block)
+                .map_err(|_| Errno::ACCESS)?;
 
             if !sh_bang && first_block[0] == b'#' && first_block[1] == b'!' {
                 let (interp_path, interp_name, interp_arg) = parse_shebang(&first_block)?;
@@ -383,11 +385,11 @@ define_syscall_handler!(
                 final_argc += 1;
 
                 sh_bang = true;
-                inode = path::resolve_path(&interp_path).ok_or(ENOENT)?;
+                inode = path::resolve_path(&interp_path).ok_or(Errno::NOENT)?;
                 continue;
             }
 
-            let hdr = AoutHeader::from_block(&first_block).ok_or(ENOEXEC)?;
+            let hdr = AoutHeader::from_block(&first_block).ok_or(Errno::NOEXEC)?;
             let file_size = inode.inner.lock().disk_inode.size;
             hdr.validate(file_size)?;
 
@@ -401,7 +403,7 @@ define_syscall_handler!(
         }
 
         if arg_pages.p == 0 {
-            return Err(ENOMEM);
+            return Err(Errno::NOMEM);
         }
 
         // ===== POINT OF NO RETURN =====

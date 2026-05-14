@@ -4,7 +4,7 @@ use user_lib::syscall::nr::Syscall;
 
 use crate::{
     define_syscall_handler,
-    error::{EINVAL, EPERM, Result},
+    error::{Errno, Result},
     mm,
     segment::uaccess,
     syscall::context::SyscallContext,
@@ -29,7 +29,7 @@ define_syscall_handler!(
     Syscall::Stime = 25,
     fn sys_stime(ctx: &mut SyscallContext) -> Result<u32> {
         if !is_superuser() {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
         let (tptr, _, _) = ctx.args();
         let new_time = uaccess::read_u32(tptr as *const u32);
@@ -88,7 +88,7 @@ define_syscall_handler!(
         // Each field is char[9], no null terminator in the struct.
         let (name, _, _) = ctx.args();
         if name == 0 {
-            return Err(EINVAL);
+            return Err(Errno::INVAL);
         }
         // Match "linux .0", "nodename", "release ", "version ", "machine " (each char[9])
         const UTSNAME: &[u8; 45] = b"linux .0\0nodename\0release \0version \0machine \0";

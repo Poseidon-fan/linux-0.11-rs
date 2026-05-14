@@ -12,7 +12,7 @@ use user_lib::syscall::fs::Stat;
 
 use crate::{
     driver::DevNum,
-    error::{EFBIG, EIO, ENOENT, ENOSPC, ERROR, Result},
+    error::{Errno, Result},
     fs::{
         BLOCK_SIZE,
         bitmap::Bitmap,
@@ -205,11 +205,11 @@ impl Inode {
     /// failed when `create` was requested.
     pub fn map_block_id(&self, logic_id: usize, create: bool) -> Result<u32> {
         if logic_id >= MAX_LOGICAL_BLOCKS {
-            return Err(EFBIG);
+            return Err(Errno::FBIG);
         }
 
         let Some(fs) = self.file_system.upgrade() else {
-            return Err(EIO);
+            return Err(Errno::IO);
         };
 
         let mut inner = self.inner.lock();
@@ -222,7 +222,7 @@ impl Inode {
                 dev: self.id.device,
                 block_nr: u32::from(block_nr),
             })
-            .ok_or(EIO)?;
+            .ok_or(Errno::IO)?;
 
             let zone = match (buf.read(|table: &IndirectBlock| table[index]), create) {
                 (0, true) => fs
@@ -316,7 +316,7 @@ impl Inode {
                     dev: self.id.device,
                     block_nr: block_id,
                 }) else {
-                    return if read > 0 { Ok(read) } else { Err(EIO) };
+                    return if read > 0 { Ok(read) } else { Err(Errno::IO) };
                 };
                 block_buf.read(|block: &DataBlock| {
                     target.copy_from_slice(&block[block_offset..block_offset + chunk_len]);
@@ -348,7 +348,7 @@ impl Inode {
             let chunk_len = (buf.len() - written).min(BLOCK_SIZE - block_offset);
             let block_id = match self.map_block_id(logical_block, true) {
                 Ok(0) => {
-                    failure = Some(ERROR);
+                    failure = Some(Errno::ERROR);
                     break;
                 }
                 Ok(block_id) => block_id,
@@ -362,7 +362,7 @@ impl Inode {
                 dev: self.id.device,
                 block_nr: block_id,
             }) else {
-                failure = Some(ERROR);
+                failure = Some(Errno::ERROR);
                 break;
             };
 
@@ -388,7 +388,7 @@ impl Inode {
         if written > 0 {
             Ok(written)
         } else {
-            Err(failure.unwrap_or(ERROR))
+            Err(failure.unwrap_or(Errno::ERROR))
         }
     }
 }
@@ -508,8 +508,8 @@ impl Inode {
         mode: u16,
         link_count: u8,
     ) -> Result<Arc<Inode>> {
-        let fs = self.file_system.upgrade().ok_or(EIO)?;
-        let inode_number = fs.lock().alloc_inode().ok_or(ENOSPC)?;
+        let fs = self.file_system.upgrade().ok_or(Errno::IO)?;
+        let inode_number = fs.lock().alloc_inode().ok_or(Errno::NOSPC)?;
 
         let inode = INODE_TABLE.lock().get_inode_raw(
             InodeId {
@@ -577,7 +577,7 @@ impl Inode {
                 return Ok(inum);
             }
         }
-        Err(ENOENT)
+        Err(Errno::NOENT)
     }
 }
 

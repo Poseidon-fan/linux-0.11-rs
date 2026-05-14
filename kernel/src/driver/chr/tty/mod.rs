@@ -18,7 +18,7 @@ use ring_buffer::RingBuffer;
 use user_lib::syscall::tty::{ControlChar, LocalMode, OutputMode, Termios, TtyRequest};
 
 use crate::{
-    error::{EINTR, EINVAL, Result},
+    error::{Errno, Result},
     segment::uaccess,
     sync::KernelCell,
     task::{self, WaitQueue},
@@ -192,7 +192,7 @@ impl Tty {
         if written == 0 {
             let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
             if has_signal {
-                return Err(EINTR);
+                return Err(Errno::INTR);
             }
         }
 
@@ -310,7 +310,7 @@ impl Tty {
                     .exclusive(|state| state.foreground_group = pgrp as i32);
                 Ok(0)
             }
-            _ => Err(EINVAL),
+            _ => Err(Errno::INVAL),
         }
     }
 

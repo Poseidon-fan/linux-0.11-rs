@@ -6,7 +6,7 @@ use user_lib::syscall::nr::Syscall;
 
 use crate::{
     define_syscall_handler,
-    error::{EAGAIN, Result},
+    error::{Errno, Result},
     mm::space::TASK_LINEAR_SIZE,
     segment::{self, KERNEL_DS},
     syscall::context::SyscallContext,
@@ -23,8 +23,8 @@ define_syscall_handler!(
         // 1. Find a free slot and allocate a new task page.
         let (slot, pid) = TASK_MANAGER
             .exclusive(|manager| manager.alloc_process())
-            .ok_or(EAGAIN)?;
-        let mut new_task = Task::new().ok_or(EAGAIN)?;
+            .ok_or(Errno::AGAIN)?;
+        let mut new_task = Task::new().ok_or(Errno::AGAIN)?;
 
         // 2. Build child PCB from parent state with COW memory.
         let parent = task::current_task();
@@ -51,7 +51,7 @@ define_syscall_handler!(
                 .as_mut()
                 .expect("parent has no memory space")
                 .cow_copy(slot, data_limit)
-                .map_err(|_| EAGAIN)?;
+                .map_err(|_| Errno::AGAIN)?;
 
             let mut child_ldt = p.ldt.clone();
             child_ldt.set_base(new_base);

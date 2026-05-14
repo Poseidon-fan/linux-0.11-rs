@@ -28,7 +28,7 @@ use user_lib::syscall::fs::{Stat, Whence};
 use super::File;
 use crate::{
     driver::DevNum,
-    error::{EINVAL, EIO, Result},
+    error::{Errno, Result},
     fs::{
         BLOCK_SIZE,
         buffer::{self, BufferKey},
@@ -81,10 +81,10 @@ impl File for BlockDeviceFile {
         let new_offset = match whence {
             Whence::Set => offset as isize,
             Whence::Current => inner.offset as isize + offset as isize,
-            Whence::End => return Err(EINVAL),
+            Whence::End => return Err(Errno::INVAL),
         };
         if new_offset < 0 {
-            return Err(EINVAL);
+            return Err(Errno::INVAL);
         }
         inner.offset = new_offset as usize;
         Ok(inner.offset)
@@ -110,7 +110,7 @@ fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize> {
             return if total_read > 0 {
                 Ok(total_read)
             } else {
-                Err(EIO)
+                Err(Errno::IO)
             };
         };
 
@@ -150,7 +150,7 @@ fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize> {
                 return if total_written > 0 {
                     Ok(total_written)
                 } else {
-                    Err(EIO)
+                    Err(Errno::IO)
                 };
             };
             h

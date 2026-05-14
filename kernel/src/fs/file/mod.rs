@@ -18,7 +18,7 @@ pub use inode::InodeFile;
 pub use pipe::PipeFile;
 use user_lib::syscall::fs::{Stat, Whence};
 
-use crate::error::{ENOTTY, ESPIPE, Result};
+use crate::error::{Errno, Result};
 
 /// Generic opened file object in kernel.
 pub trait File: Send + Sync {
@@ -28,17 +28,17 @@ pub trait File: Send + Sync {
 
     /// Reposition the file offset. Returns the new absolute offset on success.
     ///
-    /// The default implementation returns `ESPIPE`, which is correct for
+    /// The default implementation returns `Errno::SPIPE`, which is correct for
     /// non-seekable file types (pipes, character devices, etc.).
     fn seek(&self, _offset: i32, _whence: Whence) -> Result<usize> {
-        Err(ESPIPE)
+        Err(Errno::SPIPE)
     }
 
     /// Device-specific control operation.
     ///
-    /// The default implementation returns `ENOTTY`, which is correct for
+    /// The default implementation returns `Errno::NOTTY`, which is correct for
     /// non-device file types (regular files, directories, etc.).
     fn ioctl(&self, _cmd: u32, _arg: u32) -> Result<u32> {
-        Err(ENOTTY)
+        Err(Errno::NOTTY)
     }
 }

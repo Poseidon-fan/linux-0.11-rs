@@ -24,7 +24,7 @@ use user_lib::syscall::{fs::Stat, signal::Signal};
 
 use super::File;
 use crate::{
-    error::{ENOMEM, EPIPE, Result},
+    error::{Errno, Result},
     mm::frame::{self, PAGE_SIZE, PhysFrame},
     sync::KernelCell,
     task::{self, WaitQueue},
@@ -86,7 +86,7 @@ impl PipeFile {
     ///
     /// The buffer page is allocated from the physical frame allocator.
     pub fn create_pair() -> Result<(Arc<Self>, Arc<Self>)> {
-        let page = frame::alloc().ok_or(ENOMEM)?;
+        let page = frame::alloc().ok_or(Errno::NOMEM)?;
         let shared = Arc::new(PipeShared {
             state: KernelCell::new(PipeState {
                 frame: page,
@@ -157,7 +157,7 @@ impl File for PipeFile {
     /// Write to the pipe (write-end only).
     ///
     /// Blocks (uninterruptible) while the buffer is full and at least one
-    /// read end is still open.  Delivers `SIGPIPE` and returns `EPIPE` when
+    /// read end is still open.  Delivers `SIGPIPE` and returns `Errno::PIPE` when
     /// all readers are gone.
     fn write(&self, input: &[u8]) -> Result<usize> {
         let count = input.len();
@@ -190,7 +190,11 @@ impl File for PipeFile {
             self.shared.wait.wake();
             if no_readers {
                 task::with_current(|inner| inner.signal_info.raise(Signal::Pipe as u32));
-                return if total > 0 { Ok(total) } else { Err(EPIPE) };
+                return if total > 0 {
+                    Ok(total)
+                } else {
+                    Err(Errno::PIPE)
+                };
             }
             self.shared.wait.sleep();
         }

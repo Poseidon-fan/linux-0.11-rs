@@ -22,7 +22,7 @@ use super::{
     address::{LinPageNum, PhysAddr, PhysPageNum},
     frame::{self, LOW_MEM, PAGE_SIZE, PhysFrame},
 };
-use crate::error::{ENOMEM, Result};
+use crate::error::{Errno, Result};
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
 const PDES_PER_PROCESS: usize = 16;
@@ -87,7 +87,7 @@ impl MemorySpace {
     /// Map a pre-allocated physical frame at the given linear page address.
     ///
     /// Ownership of `frame` is transferred into this memory space.  On
-    /// failure the frame is dropped (freed) and `ENOMEM` is returned.
+    /// failure the frame is dropped (freed) and `Errno::NOMEM` is returned.
     pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<()> {
         self.ensure_page_table(lin_page.pde_index())?;
         self.set_pte(lin_page, PageTableEntry::new(frame.ppn, PageFlags::USER_RW));
@@ -107,7 +107,7 @@ impl MemorySpace {
         if self.get_pte(fault_page).is_some_and(|pte| pte.is_present()) {
             return Ok(());
         }
-        let frame = frame::alloc().ok_or(ENOMEM)?;
+        let frame = frame::alloc().ok_or(Errno::NOMEM)?;
         self.set_pte(
             fault_page,
             PageTableEntry::new(frame.ppn, PageFlags::USER_RW),
@@ -135,7 +135,7 @@ impl MemorySpace {
             super::invalidate_tlb();
             return Ok(());
         }
-        let new_frame = frame::alloc().ok_or(ENOMEM)?;
+        let new_frame = frame::alloc().ok_or(Errno::NOMEM)?;
         let new_ppn = new_frame.ppn;
         self.set_pte(fault_page, PageTableEntry::new(new_ppn, PageFlags::USER_RW));
         self.data_frames.insert(fault_page, new_frame);
@@ -156,7 +156,7 @@ impl MemorySpace {
     /// Returns `Ok(false)` when the source page is not eligible for sharing
     /// (not present, dirty, below LOW_MEM, or target already mapped).
     ///
-    /// Returns `Err(ENOMEM)` when a page table allocation fails.
+    /// Returns `Err(Errno::NOMEM)` when a page table allocation fails.
     pub fn try_share_from(
         &mut self,
         source_space: &mut MemorySpace,
@@ -222,7 +222,7 @@ impl MemorySpace {
     ///
     /// # Returns
     ///
-    /// A new `MemorySpace` for the child on success, or `Err(ENOMEM)` if a
+    /// A new `MemorySpace` for the child on success, or `Err(Errno::NOMEM)` if a
     /// page table frame could not be allocated.  On failure, any partially
     /// built state is cleaned up automatically when the returned
     /// `MemorySpace` is dropped.
@@ -249,7 +249,7 @@ impl MemorySpace {
                 child_pde_start + i
             );
 
-            let mut child_pt = PageTable::new().ok_or(ENOMEM)?;
+            let mut child_pt = PageTable::new().ok_or(Errno::NOMEM)?;
 
             // SAFETY: The parent PDE is present, so it points to a valid page
             // table frame.  For task 0 the page tables are set up by head.s
@@ -346,8 +346,8 @@ impl MemorySpace {
         let local = pde_index
             .checked_sub(self.pde_base)
             .filter(|&i| i < PDES_PER_PROCESS)
-            .ok_or(ENOMEM)?;
-        let page_table = PageTable::new().ok_or(ENOMEM)?;
+            .ok_or(Errno::NOMEM)?;
+        let page_table = PageTable::new().ok_or(Errno::NOMEM)?;
         super::write_pde(
             pde_index,
             PageDirectoryEntry::user_page_table(page_table.phys_addr()),

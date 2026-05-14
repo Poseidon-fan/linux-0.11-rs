@@ -4,7 +4,7 @@ use user_lib::syscall::nr::Syscall;
 
 use crate::{
     define_syscall_handler,
-    error::{EPERM, ESRCH, Result},
+    error::{Errno, Result},
     syscall::context::SyscallContext,
     task::{self, TASK_MANAGER, is_superuser},
 };
@@ -107,7 +107,7 @@ define_syscall_handler!(
                         .inner
                         .exclusive(|inner| (inner.relation.leader, inner.relation.session));
                     if is_leader || task_session != current_session {
-                        Err(EPERM)
+                        Err(Errno::PERM)
                     } else {
                         task.pcb
                             .inner
@@ -115,7 +115,7 @@ define_syscall_handler!(
                         Ok(0u32)
                     }
                 })
-                .unwrap_or(Err(ESRCH))
+                .unwrap_or(Err(Errno::SRCH))
         })
     }
 );
@@ -133,7 +133,7 @@ define_syscall_handler!(
         let pid = task::current_pid();
         let is_leader = task::with_current(|inner| inner.relation.leader);
         if is_leader && !is_superuser() {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
         task::with_current(|inner| {
             inner.relation.leader = true;
@@ -152,7 +152,7 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32> {
         if ruid > 0 {
             let allow = inner.identity.euid == ruid as u16 || old_ruid == ruid as u16 || superuser;
             if !allow {
-                return Err(EPERM);
+                return Err(Errno::PERM);
             }
             inner.identity.uid = ruid as u16;
         }
@@ -160,7 +160,7 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32> {
             let allow = old_ruid == euid as u16 || inner.identity.euid == euid as u16 || superuser;
             if !allow {
                 inner.identity.uid = old_ruid;
-                return Err(EPERM);
+                return Err(Errno::PERM);
             }
             inner.identity.euid = euid as u16;
         }
@@ -174,7 +174,7 @@ fn sys_setregid_impl(rgid: u32, egid: u32) -> Result<u32> {
         if rgid > 0 {
             let allow = inner.identity.gid == rgid as u16 || superuser;
             if !allow {
-                return Err(EPERM);
+                return Err(Errno::PERM);
             }
             inner.identity.gid = rgid as u16;
         }
@@ -184,7 +184,7 @@ fn sys_setregid_impl(rgid: u32, egid: u32) -> Result<u32> {
                 || inner.identity.sgid == egid as u16
                 || superuser;
             if !allow {
-                return Err(EPERM);
+                return Err(Errno::PERM);
             }
             inner.identity.egid = egid as u16;
         }

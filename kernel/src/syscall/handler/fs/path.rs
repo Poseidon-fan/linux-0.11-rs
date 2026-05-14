@@ -6,7 +6,7 @@ use user_lib::syscall::{fs::Stat, nr::Syscall};
 
 use crate::{
     define_syscall_handler,
-    error::{EACCES, EEXIST, EISDIR, ENOENT, ENOTDIR, ENOTEMPTY, EPERM, EXDEV, Result},
+    error::{Errno, Result},
     fs::{
         InodeMode, InodeType, get_inode,
         minix::InodeId,
@@ -22,7 +22,7 @@ define_syscall_handler!(
     fn sys_stat(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, buf_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         let stat = inode.stat();
         let bytes = unsafe {
             core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
@@ -39,26 +39,26 @@ define_syscall_handler!(
         let oldname = uaccess::read_pathname(oldname_ptr);
         let newname = uaccess::read_pathname(newname_ptr);
 
-        let old_inode = path::resolve_path(&oldname).ok_or(ENOENT)?;
+        let old_inode = path::resolve_path(&oldname).ok_or(Errno::NOENT)?;
         if old_inode.file_type() == InodeType::Directory {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
 
-        let (dir, basename) = path::resolve_parent(&newname).ok_or(EACCES)?;
+        let (dir, basename) = path::resolve_parent(&newname).ok_or(Errno::ACCESS)?;
         if basename.is_empty() {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
         if dir.id.device != old_inode.id.device {
-            return Err(EXDEV);
+            return Err(Errno::XDEV);
         }
 
         if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
         if dir.lookup(basename)?.is_some() {
-            return Err(EEXIST);
+            return Err(Errno::EXIST);
         }
 
         dir.add_entry(basename, old_inode.id.inode_number)?;
@@ -78,21 +78,21 @@ define_syscall_handler!(
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(Errno::NOENT)?;
         if basename.is_empty() {
-            return Err(ENOENT);
+            return Err(Errno::NOENT);
         }
         if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
-        let inum = dir.lookup(basename)?.ok_or(ENOENT)?;
+        let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
         let inode = get_inode(InodeId {
             device: dir.id.device,
             inode_number: inum,
         });
         if inode.file_type() == InodeType::Directory {
-            return Err(EISDIR);
+            return Err(Errno::ISDIR);
         }
 
         dir.remove_entry(basename)?;
@@ -112,12 +112,12 @@ define_syscall_handler!(
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         if inode.file_type() != InodeType::Directory {
-            return Err(ENOTDIR);
+            return Err(Errno::NOTDIR);
         }
         if !path::check_permission(&inode, AccessMask::MAY_EXEC) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
         task::with_current(|inner| inner.fs.current_directory = Some(inode));
@@ -131,9 +131,9 @@ define_syscall_handler!(
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         if inode.file_type() != InodeType::Directory {
-            return Err(ENOTDIR);
+            return Err(Errno::NOTDIR);
         }
 
         task::with_current(|inner| inner.fs.root_directory = Some(inode));
@@ -147,15 +147,15 @@ define_syscall_handler!(
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(Errno::NOENT)?;
         if basename.is_empty() {
-            return Err(ENOENT);
+            return Err(Errno::NOENT);
         }
         if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
         if dir.lookup(basename)?.is_some() {
-            return Err(EEXIST);
+            return Err(Errno::EXIST);
         }
 
         dir.create_directory(basename, mode as u16)?;
@@ -168,25 +168,25 @@ define_syscall_handler!(
     fn sys_mknod(ctx: &mut SyscallContext) -> Result<u32> {
         let (path_ptr, mode, dev) = ctx.args();
         if !task::is_superuser() {
-            return Err(EPERM);
+            return Err(Errno::PERM);
         }
 
         let pathname = uaccess::read_pathname(path_ptr);
-        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(Errno::NOENT)?;
         if basename.is_empty() {
-            return Err(ENOENT);
+            return Err(Errno::NOENT);
         }
         if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
         if dir.lookup(basename)?.is_some() {
-            return Err(EEXIST);
+            return Err(Errno::EXIST);
         }
 
         let type_bits = mode as u16 & InodeMode::TYPE_MASK;
         if type_bits != 0o060000 && type_bits != 0o020000 {
-            use crate::error::EINVAL;
-            return Err(EINVAL);
+            use crate::error::Errno;
+            return Err(Errno::INVAL);
         }
         let perm_bits = mode as u16 & InodeMode::FLAGS_MASK;
         dir.create_device(basename, type_bits, perm_bits, dev as u16)?;
@@ -200,24 +200,24 @@ define_syscall_handler!(
         let (path_ptr, _, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(Errno::NOENT)?;
         if basename.is_empty() {
-            return Err(ENOENT);
+            return Err(Errno::NOENT);
         }
         if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
-        let inum = dir.lookup(basename)?.ok_or(ENOENT)?;
+        let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
         let inode = get_inode(InodeId {
             device: dir.id.device,
             inode_number: inum,
         });
         if inode.file_type() != InodeType::Directory {
-            return Err(ENOTDIR);
+            return Err(Errno::NOTDIR);
         }
         if !inode.is_empty_directory()? {
-            return Err(ENOTEMPTY);
+            return Err(Errno::NOTEMPTY);
         }
 
         dir.remove_entry(basename)?;
@@ -246,10 +246,10 @@ define_syscall_handler!(
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         let euid = task::with_current(|inner| inner.identity.euid);
         if euid != inode.inner.lock().disk_inode.user_id && !task::is_superuser() {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
         let mut inner = inode.inner.lock();
@@ -269,10 +269,10 @@ define_syscall_handler!(
         let pathname = uaccess::read_pathname(path_ptr);
 
         if !task::is_superuser() {
-            return Err(EACCES);
+            return Err(Errno::ACCESS);
         }
 
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         let mut inner = inode.inner.lock();
         inner.disk_inode.user_id = uid as u16;
         inner.disk_inode.group_id = gid as u8;
@@ -287,7 +287,7 @@ define_syscall_handler!(
         let (path_ptr, mode, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let inode = path::resolve_path(&pathname).ok_or(EACCES)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::ACCESS)?;
         let mask = AccessMask::from_bits_truncate(mode as u16 & 0o7);
 
         let (uid, gid) = task::with_current(|inner| (inner.identity.uid, inner.identity.gid));
@@ -295,7 +295,7 @@ define_syscall_handler!(
         if path::check_permission_as(&inode, mask, uid, gid) {
             Ok(0)
         } else {
-            Err(EACCES)
+            Err(Errno::ACCESS)
         }
     }
 );
@@ -306,7 +306,7 @@ define_syscall_handler!(
         let (path_ptr, times_ptr, _) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
 
-        let inode = path::resolve_path(&pathname).ok_or(ENOENT)?;
+        let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
 
         let (actime, modtime) = if times_ptr != 0 {
             let base = times_ptr as *const u32;

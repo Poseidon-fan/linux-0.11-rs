@@ -10,7 +10,7 @@ use user_lib::syscall::{
 
 use crate::{
     define_syscall_handler,
-    error::{EACCES, EBADF, EEXIST, EINVAL, EISDIR, EMFILE, ENOENT, EPERM, Result},
+    error::{Errno, Result},
     fs::{
         InodeType,
         file::{BlockDeviceFile, CharDeviceFile, File, InodeFile, PipeFile},
@@ -30,7 +30,7 @@ define_syscall_handler!(
         let (path_ptr, raw_flags, mode) = ctx.args();
         let pathname = uaccess::read_pathname(path_ptr);
         let flags = OpenFlags::from_raw(raw_flags);
-        let (access_mode, open_options) = flags.into_parts().ok_or(EINVAL)?;
+        let (access_mode, open_options) = flags.into_parts().ok_or(Errno::INVAL)?;
         let effective_access_mode = if access_mode == AccessMode::ReadOnly
             && open_options.contains(OpenOptions::TRUNCATE)
         {
@@ -39,27 +39,27 @@ define_syscall_handler!(
             access_mode
         };
 
-        let (dir, basename) = path::resolve_parent(&pathname).ok_or(ENOENT)?;
+        let (dir, basename) = path::resolve_parent(&pathname).ok_or(Errno::NOENT)?;
 
         let inode = if basename.is_empty() {
             if effective_access_mode != AccessMode::ReadOnly
                 || open_options.intersects(OpenOptions::CREATE | OpenOptions::TRUNCATE)
             {
-                return Err(EISDIR);
+                return Err(Errno::ISDIR);
             }
             dir
         } else {
             match dir.lookup(basename)? {
                 None if open_options.contains(OpenOptions::CREATE) => {
                     if !path::check_permission(&dir, AccessMask::MAY_WRITE) {
-                        return Err(EACCES);
+                        return Err(Errno::ACCESS);
                     }
                     dir.create_file(basename, mode as u16)?
                 }
-                None => return Err(ENOENT),
+                None => return Err(Errno::NOENT),
                 Some(inum) => {
                     if open_options.contains(OpenOptions::EXCLUSIVE) {
-                        return Err(EEXIST);
+                        return Err(Errno::EXIST);
                     }
                     let inode = get_inode(InodeId {
                         device: dir.id.device,
@@ -69,7 +69,7 @@ define_syscall_handler!(
                     if file_type == InodeType::Directory
                         && effective_access_mode != AccessMode::ReadOnly
                     {
-                        return Err(EPERM);
+                        return Err(Errno::PERM);
                     }
                     let required = match effective_access_mode {
                         AccessMode::ReadOnly => AccessMask::MAY_READ,
@@ -77,7 +77,7 @@ define_syscall_handler!(
                         AccessMode::ReadWrite => AccessMask::MAY_READ | AccessMask::MAY_WRITE,
                     };
                     if !path::check_permission(&inode, required) {
-                        return Err(EPERM);
+                        return Err(Errno::PERM);
                     }
                     inode.inner.lock().access_time = time::current_time();
                     if open_options.contains(OpenOptions::TRUNCATE) {
@@ -95,10 +95,10 @@ define_syscall_handler!(
             }
             InodeType::CharacterDevice => Arc::new(CharDeviceFile::new(inode)),
             InodeType::BlockDevice => Arc::new(BlockDeviceFile::new(inode)),
-            _ => return Err(EPERM),
+            _ => return Err(Errno::PERM),
         };
 
-        let fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(EMFILE)?;
+        let fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(Errno::MFILE)?;
 
         Ok(fd as u32)
     }
@@ -151,9 +151,13 @@ define_syscall_handler!(
     fn sys_close(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         task::with_current(|inner| {
-            let slot = inner.fs.open_files.get_mut(fd as usize).ok_or(EBADF)?;
+            let slot = inner
+                .fs
+                .open_files
+                .get_mut(fd as usize)
+                .ok_or(Errno::BADF)?;
             if slot.is_none() {
-                return Err(EBADF);
+                return Err(Errno::BADF);
             }
             *slot = None;
             Ok(0)
@@ -165,7 +169,7 @@ define_syscall_handler!(
     Syscall::Lseek = 19,
     fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, offset, whence) = ctx.args();
-        let whence = Whence::from_raw(whence).ok_or(EINVAL)?;
+        let whence = Whence::from_raw(whence).ok_or(Errno::INVAL)?;
         let file = get_file(fd)?;
         file.seek(offset as i32, whence).map(|pos| pos as u32)
     }
@@ -176,7 +180,7 @@ define_syscall_handler!(
     fn sys_dup(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
         let file = get_file(fd)?;
-        let new_fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(EMFILE)?;
+        let new_fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(Errno::MFILE)?;
         Ok(new_fd as u32)
     }
 );
@@ -192,7 +196,11 @@ define_syscall_handler!(
         }
         let file = get_file(oldfd)?;
         task::with_current(|inner| {
-            let slot = inner.fs.open_files.get_mut(newfd as usize).ok_or(EBADF)?;
+            let slot = inner
+                .fs
+                .open_files
+                .get_mut(newfd as usize)
+                .ok_or(Errno::BADF)?;
             *slot = Some(file);
             Ok(newfd)
         })
@@ -232,7 +240,7 @@ define_syscall_handler!(
             x if x == FcntlCmd::DupFd as u32 => task::with_current(|inner| {
                 let new_fd = (arg as usize..TASK_OPEN_FILES_LIMIT)
                     .find(|&i| inner.fs.open_files[i].is_none())
-                    .ok_or(EMFILE)?;
+                    .ok_or(Errno::MFILE)?;
                 inner.fs.open_files[new_fd] = Some(Arc::clone(&file));
                 inner.fs.close_on_exec &= !(1 << new_fd);
                 Ok(new_fd as u32)
@@ -256,7 +264,7 @@ define_syscall_handler!(
 
             x if x == FcntlCmd::GetFlags as u32 || x == FcntlCmd::SetFlags as u32 => Ok(0),
 
-            _ => Err(EINVAL),
+            _ => Err(Errno::INVAL),
         }
     }
 );
@@ -268,12 +276,15 @@ define_syscall_handler!(
         let (reader, writer) = PipeFile::create_pair()?;
 
         let (fd0, fd1) = task::with_current(|inner| {
-            let fd0 = inner.fs.add_file(reader as Arc<dyn File>).ok_or(EMFILE)?;
+            let fd0 = inner
+                .fs
+                .add_file(reader as Arc<dyn File>)
+                .ok_or(Errno::MFILE)?;
             match inner.fs.add_file(writer as Arc<dyn File>) {
                 Some(fd1) => Ok((fd0, fd1)),
                 None => {
                     inner.fs.open_files[fd0] = None;
-                    Err(EMFILE)
+                    Err(Errno::MFILE)
                 }
             }
         })?;
@@ -284,7 +295,8 @@ define_syscall_handler!(
     }
 );
 
-/// Retrieve the file object for a given fd, or `Err(EBADF)`.
+/// Retrieve the file object for a given fd, or `Err(Errno::BADF)`.
 fn get_file(fd: u32) -> crate::error::Result<Arc<dyn File>> {
-    task::with_current(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten()).ok_or(EBADF)
+    task::with_current(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten())
+        .ok_or(Errno::BADF)
 }
