@@ -58,10 +58,10 @@ $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 	@$(OBJCOPY) $(OBJCOPY_BOOT_FLAGS) $(TARGET_DIR)/$* $(TARGET_DIR)/$*
 
 run: Image-$(RUN_MODE)
-	@qemu-system-i386 -m 16M -boot a -fda Image-$(RUN_MODE) -hda $(HDA_IMG) -display curses
+	@qemu-system-i386 -m 16M -boot a -drive file=Image-$(RUN_MODE),format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -display curses
 
 dbg: Image-debug
-	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -fda Image-debug -hda $(HDA_IMG) -display curses -s -S
+	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -drive file=Image-debug,format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -display curses -s -S
 
 clean:
 	@echo "Cleaning..."
