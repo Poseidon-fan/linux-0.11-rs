@@ -31,7 +31,6 @@ unsafe extern "C" {
 }
 
 pub fn init(start_mem: u32, end_mem: u32) {
-    crate::println!("ekernel: 0x{:x}", ekernel as usize);
     heap::init();
     frame::init(start_mem, end_mem);
 }

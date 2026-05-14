@@ -184,10 +184,12 @@ impl VgaConsole {
         self.attribute = 0x07;
         self.parser = AnsiParser::new();
 
-        // Continue from wherever early-boot VGA output left off, so all
-        // previous output is preserved on screen.
+        // Continue from wherever early-boot VGA output left off, while clearing
+        // untouched cells below it so later shorter lines do not reveal stale
+        // firmware/setup text.
         let (x, y) = crate::logging::early_vga_cursor();
         self.move_cursor(x, y);
+        self.erase_display(0);
         self.sync_hardware_cursor();
     }
 

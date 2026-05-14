@@ -27,17 +27,17 @@ pub const HEAP_END: usize = 0x200000;
 /// Size of the kernel heap in bytes (1 MB).
 pub const HEAP_SIZE: usize = HEAP_END - HEAP_START;
 
+/// Initializes the kernel heap allocator.
+pub fn init() {
+    unsafe {
+        HEAP_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+    }
+}
+
 #[global_allocator]
 static HEAP_ALLOCATOR: LockedHeap<32> = LockedHeap::empty();
 
 #[alloc_error_handler]
 fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
     panic!("heap allocation error: {:?}", layout);
-}
-
-/// Initializes the kernel heap allocator.
-pub fn init() {
-    unsafe {
-        HEAP_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
-    }
 }
