@@ -1,11 +1,14 @@
-//! Reference-counted physical frame allocator (`mem_map` + free bitmap).
+//! Physical frame handles backed by a reference-counted allocator.
 
 use core::ptr;
 
 use super::address::{PhysAddr, PhysPageNum};
 use crate::sync::KernelCell;
 
+/// Number of bits in a page offset.
 pub const PAGE_SHIFT: u32 = 12;
+
+/// Size of a physical page frame in bytes.
 pub const PAGE_SIZE: usize = 1usize << PAGE_SHIFT;
 
 /// Physical addresses below LOW_MEM belong to the kernel / BIOS and are
@@ -14,13 +17,15 @@ pub const PAGE_SIZE: usize = 1usize << PAGE_SHIFT;
 /// `Drop` impl on [`PhysFrame`] silently skip them.
 pub const LOW_MEM: u32 = 0x200000;
 
-const PAGING_MEMORY: u32 = 14 * 1024 * 1024;
-const PAGING_PAGES: usize = (PAGING_MEMORY as usize) >> PAGE_SHIFT;
-const HIGH_MEMORY: u32 = LOW_MEM + PAGING_MEMORY;
-const UNPAGED_PAGES: u32 = LOW_MEM >> PAGE_SHIFT;
-const BITMAP_WORD_BITS: usize = u32::BITS as usize;
-const FREE_BITMAP_WORDS: usize = PAGING_PAGES.div_ceil(BITMAP_WORD_BITS);
-
+/// Initialize the physical frame allocator.
+///
+/// Frames in `[start_mem, end_mem)` become available for allocation; all other
+/// tracked frames start out reserved.
+///
+/// # Panics
+///
+/// Panics if `start_mem` is below [`LOW_MEM`], if `start_mem > end_mem`, or if
+/// `end_mem` exceeds the allocator's supported physical memory range.
 pub fn init(start_mem: u32, end_mem: u32) {
     // Safety: frame allocator bootstrap runs before task::init in a single
     // boot flow, so no re-entrant access can contend here.
@@ -77,26 +82,39 @@ pub fn ref_count(ppn: PhysPageNum) -> u8 {
 /// reaches zero.  Frames below [`LOW_MEM`] are never freed (they belong
 /// to the kernel's identity-mapped region).
 pub struct PhysFrame {
+    /// Physical page number owned by this handle.
     pub ppn: PhysPageNum,
 }
 
 /// An owned contiguous run of physical page frames.
 ///
-/// This type is useful for kernel objects that require physically contiguous
-/// memory, could be seen as batch version of [`PhysFrame`].
+/// Used by kernel objects that require physically contiguous memory.
 pub struct PhysFrameRange {
+    /// Physical page number of the first frame in the run.
     pub start_ppn: PhysPageNum,
+
+    /// Number of contiguous frames in the run.
     pub page_count: usize,
 }
 
+const PAGING_MEMORY: u32 = 14 * 1024 * 1024;
+const PAGING_PAGES: usize = (PAGING_MEMORY as usize) >> PAGE_SHIFT;
+const HIGH_MEMORY: u32 = LOW_MEM + PAGING_MEMORY;
+const UNPAGED_PAGES: u32 = LOW_MEM >> PAGE_SHIFT;
+
 struct FrameAllocator {
     mem_map: [u8; PAGING_PAGES],
-    /// Bitset cache for free pages (1 = free, 0 = used/refcounted).
-    ///
-    /// This auxiliary structure avoids scanning the whole `mem_map` for every
-    /// allocation and also speeds up contiguous-run checks.
-    free_bitmap: [u32; FREE_BITMAP_WORDS],
 }
+
+/// Frame allocator instance.
+///
+/// Using `static` instead of `lazy_static!` ensures the mem_map array
+/// is placed directly in .bss section at compile time, avoiding stack
+/// allocation during initialization (which would cause stack overflow
+/// in debug builds with the 4KB kernel stack).
+static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAllocator {
+    mem_map: [0; PAGING_PAGES],
+});
 
 impl Drop for PhysFrame {
     fn drop(&mut self) {
@@ -153,48 +171,44 @@ impl FrameAllocator {
         );
 
         self.mem_map.fill(USED);
-        self.free_bitmap.fill(0);
         let start_no = (PhysAddr::from(start_mem).floor().0 - UNPAGED_PAGES) as usize;
         let end_no = (PhysAddr::from(end_mem).floor().0 - UNPAGED_PAGES) as usize;
         self.mem_map[start_no..end_no].fill(0);
-        for idx in start_no..end_no {
-            self.mark_free(idx);
-        }
     }
 
     fn alloc(&mut self) -> Option<PhysFrame> {
-        let idx = self.find_free_page_from_high()?;
+        let idx = self.mem_map.iter().rposition(|&count| count == 0)?;
         let page_addr = Self::page_addr_from_idx(idx);
-        unsafe { ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE) };
+        // Safety: tracked frames are part of the kernel's writable physical
+        // memory window, and this allocator has exclusive access here.
+        unsafe {
+            ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
+        }
         self.mem_map[idx] = 1;
-        self.mark_used(idx);
         Some(PhysFrame {
             ppn: page_addr.into(),
         })
     }
 
     fn alloc_contiguous(&mut self, page_count: usize) -> Option<PhysFrameRange> {
-        if page_count == 0 || page_count > PAGING_PAGES {
+        if page_count == 0 {
             return None;
         }
 
-        if page_count == 1 {
-            let frame = self.alloc()?;
-            return Some(PhysFrameRange {
-                start_ppn: frame.ppn,
-                page_count: 1,
-            });
-        }
-
-        let start_idx = self.find_free_run_from_high(page_count)?;
+        let start_idx = self
+            .mem_map
+            .windows(page_count)
+            .rposition(|run| run.iter().all(|&count| count == 0))?;
+        let start_addr = Self::page_addr_from_idx(start_idx);
         for idx in start_idx..start_idx + page_count {
             let page_addr = Self::page_addr_from_idx(idx);
-            unsafe { ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE) };
+            // Safety: tracked frames are part of the kernel's writable physical
+            // memory window, and this allocator has exclusive access here.
+            unsafe {
+                ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
+            }
             self.mem_map[idx] = 1;
-            self.mark_used(idx);
         }
-
-        let start_addr = Self::page_addr_from_idx(start_idx);
         Some(PhysFrameRange {
             start_ppn: start_addr.into(),
             page_count,
@@ -212,20 +226,14 @@ impl FrameAllocator {
             ppn.0
         );
         self.mem_map[idx] -= 1;
-        if self.mem_map[idx] == 0 {
-            self.mark_free(idx);
-        }
     }
 
     fn dealloc_range(&mut self, start_ppn: PhysPageNum, page_count: usize) {
-        for i in 0..page_count {
-            let delta = i as u32;
-            self.dealloc(PhysPageNum(start_ppn.0 + delta));
+        for ppn in start_ppn.0..start_ppn.0 + page_count as u32 {
+            self.dealloc(PhysPageNum(ppn));
         }
     }
 
-    /// Increment the reference count for an existing page and return a
-    /// new [`PhysFrame`] handle to the same physical page.
     fn share(&mut self, ppn: PhysPageNum) -> PhysFrame {
         let idx = Self::idx_for_ppn(ppn);
         assert!(self.mem_map[idx] > 0, "Sharing a free page (ppn {})", ppn.0);
@@ -233,80 +241,10 @@ impl FrameAllocator {
         PhysFrame { ppn }
     }
 
-    /// Get a page's current reference count from `mem_map`.
     fn ref_count(&self, ppn: PhysPageNum) -> u8 {
         if ppn.0 < UNPAGED_PAGES {
             return u8::MAX;
         }
         self.mem_map[Self::idx_for_ppn(ppn)]
     }
-
-    #[inline]
-    fn mark_free(&mut self, idx: usize) {
-        debug_assert!(idx < PAGING_PAGES);
-        let word = idx / BITMAP_WORD_BITS;
-        let bit = idx % BITMAP_WORD_BITS;
-        self.free_bitmap[word] |= 1u32 << bit;
-    }
-
-    #[inline]
-    fn mark_used(&mut self, idx: usize) {
-        debug_assert!(idx < PAGING_PAGES);
-        let word = idx / BITMAP_WORD_BITS;
-        let bit = idx % BITMAP_WORD_BITS;
-        self.free_bitmap[word] &= !(1u32 << bit);
-    }
-
-    #[inline]
-    fn is_free(&self, idx: usize) -> bool {
-        debug_assert!(idx < PAGING_PAGES);
-        let word = idx / BITMAP_WORD_BITS;
-        let bit = idx % BITMAP_WORD_BITS;
-        (self.free_bitmap[word] >> bit) & 1 == 1
-    }
-
-    fn find_free_page_from_high(&self) -> Option<usize> {
-        (0..FREE_BITMAP_WORDS).rev().find_map(|word_idx| {
-            let word = self.masked_free_word(word_idx);
-            (word != 0).then(|| {
-                let bit = BITMAP_WORD_BITS - 1 - word.leading_zeros() as usize;
-                word_idx * BITMAP_WORD_BITS + bit
-            })
-        })
-    }
-
-    fn find_free_run_from_high(&self, page_count: usize) -> Option<usize> {
-        (0..PAGING_PAGES)
-            .rev()
-            .scan(0usize, |run_len, idx| {
-                *run_len = if self.is_free(idx) { *run_len + 1 } else { 0 };
-                Some((idx, *run_len))
-            })
-            .find_map(|(idx, run_len)| (run_len == page_count).then_some(idx))
-    }
-
-    /// Return a free-bitmap word with out-of-range tail bits masked off.
-    #[inline]
-    fn masked_free_word(&self, word_idx: usize) -> u32 {
-        let mut word = self.free_bitmap[word_idx];
-        if word_idx == FREE_BITMAP_WORDS - 1 {
-            let valid_bits = PAGING_PAGES - word_idx * BITMAP_WORD_BITS;
-            if valid_bits < BITMAP_WORD_BITS {
-                let mask = (1u32 << valid_bits) - 1;
-                word &= mask;
-            }
-        }
-        word
-    }
 }
-
-/// Frame allocator instance.
-///
-/// Using `static` instead of `lazy_static!` ensures the mem_map array
-/// is placed directly in .bss section at compile time, avoiding stack
-/// allocation during initialization (which would cause stack overflow
-/// in debug builds with the 4KB kernel stack).
-static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAllocator {
-    mem_map: [0; PAGING_PAGES],
-    free_bitmap: [0; FREE_BITMAP_WORDS],
-});

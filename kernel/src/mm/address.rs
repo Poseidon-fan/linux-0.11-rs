@@ -2,8 +2,6 @@
 
 use super::frame::PAGE_SHIFT;
 
-const PAGE_OFFSET_MASK: u32 = (1u32 << PAGE_SHIFT) - 1;
-
 /// Linear address after segment translation.
 ///
 /// In i386 architecture: `Logical Address --[Segmentation]--> Linear Address --[Paging]--> Physical Address`
@@ -89,6 +87,8 @@ pub struct PhysPageNum(pub u32);
 #[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct LinPageNum(pub u32);
+
+const PAGE_OFFSET_MASK: u32 = (1u32 << PAGE_SHIFT) - 1;
 
 impl From<u32> for LinAddr {
     fn from(value: u32) -> Self {
