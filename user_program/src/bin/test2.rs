@@ -5,7 +5,7 @@ use core::panic::PanicInfo;
 
 #[unsafe(no_mangle)]
 extern "C" fn _start() -> ! {
-    let _ = user_lib::test();
+    let _ = user_lib::syscall::misc::test();
     user_lib::exit(0);
 }
 
