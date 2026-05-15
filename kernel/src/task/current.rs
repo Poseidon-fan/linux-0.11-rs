@@ -13,18 +13,6 @@ use core::{
 
 use super::task_struct::Task;
 
-/// Raw pointer to the current task object.
-///
-/// # Safety
-///
-/// The pointer must always come from `Arc::as_ptr` and stay valid while
-/// running code can call [`current_task`].
-static CURRENT_TASK: AtomicPtr<Task> = AtomicPtr::new(null_mut());
-/// Bit 7 stores the IF value captured at the outermost IRQ-masked entry.
-const IRQ_SAVED_IF_BIT: u8 = 1 << 7;
-/// Low 7 bits store nested IRQ-masked depth.
-const IRQ_DEPTH_MASK: u8 = 0x7f;
-
 /// Return the current task as a strong `Arc`.
 ///
 /// # Panics
@@ -127,3 +115,17 @@ pub fn set_current_irq_state(saved_if_enabled: Option<bool>, depth: Option<u8>) 
         (*ptr).pcb.irq_state.store(packed, Ordering::Relaxed);
     }
 }
+
+/// Raw pointer to the current task object.
+///
+/// # Safety
+///
+/// The pointer must always come from `Arc::as_ptr` and stay valid while
+/// running code can call [`current_task`].
+static CURRENT_TASK: AtomicPtr<Task> = AtomicPtr::new(null_mut());
+
+/// Bit 7 stores the IF value captured at the outermost IRQ-masked entry.
+const IRQ_SAVED_IF_BIT: u8 = 1 << 7;
+
+/// Low 7 bits store nested IRQ-masked depth.
+const IRQ_DEPTH_MASK: u8 = 0x7f;

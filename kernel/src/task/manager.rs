@@ -2,7 +2,6 @@
 
 use alloc::sync::Arc;
 use core::{
-    array,
     mem::MaybeUninit,
     ptr::{addr_of_mut, write_bytes},
     sync::atomic::{AtomicU32, Ordering},
@@ -10,20 +9,48 @@ use core::{
 
 use lazy_static::lazy_static;
 
-use super::task_struct::{
-    FpuState, LocalDescriptorTable, TASK_PAGE_SIZE, Task, TaskAcctInfo, TaskControlBlock,
-    TaskControlBlockInner, TaskFileSystemContext, TaskIdentityInfo, TaskMemoryLayout, TaskPage,
-    TaskRelationInfo, TaskSchedInfo, TaskSignalInfo, TaskState, TaskStateSegment,
-};
-use crate::{
-    mm::space::MemorySpace,
-    segment::{KERNEL_DS, USER_CS, USER_DS},
-    sync::KernelCell,
-};
+use super::task_struct::{TASK_PAGE_SIZE, Task, TaskControlBlock, TaskPage, TaskState};
+use crate::sync::KernelCell;
 
+/// Number of tasks in the task table.
 pub const TASK_NUM: usize = 64;
 
+lazy_static! {
+    pub static ref TASK_MANAGER: KernelCell<TaskManager> = unsafe {
+        // Initialize the static memory for task 0.
+        let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
+        let init_task_addr = init_task_ptr as u32;
+
+        // Zero the whole task page.
+        write_bytes(init_task_ptr.cast::<u8>(), 0, TASK_PAGE_SIZE);
+
+        // Then initialize only the PCB.
+        addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new_kernel(
+            init_task_addr,
+            &pg_dir as *const u8 as u32,
+        ));
+
+        // Create Task from the static address.
+        let task0 = Task::from_static_addr(init_task_addr);
+
+        // Initialize task array with task 0.
+        let mut tasks: [Option<Arc<Task>>; TASK_NUM] = [const { None }; TASK_NUM];
+        tasks[0] = Some(Arc::new(task0));
+
+        KernelCell::new(TaskManager {
+            tasks,
+            last_pid: AtomicU32::new(0),
+        })
+    };
+}
+
+pub struct TaskManager {
+    pub tasks: [Option<Arc<Task>>; TASK_NUM],
+    last_pid: AtomicU32,
+}
+
 unsafe extern "C" {
+    /// Page directory for the kernel， defined in `head.s`.
     static pg_dir: u8;
 }
 
@@ -32,11 +59,6 @@ unsafe extern "C" {
 /// Located in kernel memory below LOW_MEM (2MB in current layout), so the frame allocator
 /// won't try to free it when the Task is dropped.
 static mut INIT_TASK_PAGE: MaybeUninit<TaskPage> = MaybeUninit::uninit();
-
-pub struct TaskManager {
-    pub tasks: [Option<Arc<Task>>; TASK_NUM],
-    last_pid: AtomicU32,
-}
 
 impl TaskManager {
     /// Select the best runnable task.
@@ -129,92 +151,4 @@ impl TaskManager {
             .find(|&i| self.tasks[i].is_none())
             .map(|slot| (slot, pid))
     }
-}
-
-lazy_static! {
-    pub static ref TASK_MANAGER: KernelCell<TaskManager> = unsafe {
-        // Initialize the static memory for task 0.
-        let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
-        let init_task_addr = init_task_ptr as u32;
-        let task_page_size_u32 = TASK_PAGE_SIZE as u32;
-
-        // Zero the whole task page.
-        write_bytes(init_task_ptr.cast::<u8>(), 0, TASK_PAGE_SIZE);
-
-        // Then initialize only the PCB.
-        addr_of_mut!((*init_task_ptr).pcb).write(TaskControlBlock::new(
-            0,
-            0, // pid = 0
-            TaskControlBlockInner {
-                sched: TaskSchedInfo {
-                    state: TaskState::Running,
-                    counter: 15,
-                    priority: 15,
-                },
-                relation: TaskRelationInfo {
-                    father: u32::MAX,
-                    pgrp: 0,
-                    session: 0,
-                    leader: false,
-                },
-                identity: TaskIdentityInfo::default(),
-                acct: TaskAcctInfo::default(),
-                memory_space: Some(MemorySpace::new(0)), // task 0
-                mem_layout: TaskMemoryLayout::default(),
-                exit_code: 0,
-                tty: -1,
-                fs: TaskFileSystemContext {
-                    umask: 0o022,
-                    root_directory: None,
-                    current_directory: None,
-                    executable_inode: None,
-                    close_on_exec: 0,
-                    open_files: array::from_fn(|_| None),
-                },
-                ldt: LocalDescriptorTable::new(0, 0x9f),
-                signal_info: TaskSignalInfo::default(),
-                tss: TaskStateSegment {
-                    back_link: 0,
-                    esp0: init_task_addr + task_page_size_u32,
-                    ss0: KERNEL_DS.as_u32(),
-                    esp1: 0,
-                    ss1: 0,
-                    esp2: 0,
-                    ss2: 0,
-                    cr3: &pg_dir as *const u8 as u32,
-                    eip: 0,
-                    eflags: 0,
-                    eax: 0,
-                    ecx: 0,
-                    edx: 0,
-                    ebx: 0,
-                    esp: 0,
-                    ebp: 0,
-                    esi: 0,
-                    edi: 0,
-                    es: USER_DS.as_u32(),
-                    cs: USER_CS.as_u32(),
-                    ss: USER_DS.as_u32(),
-                    ds: USER_DS.as_u32(),
-                    fs: USER_DS.as_u32(),
-                    gs: USER_DS.as_u32(),
-                    ldt: crate::segment::ldt_selector(0).as_u32(),
-                    trace_bitmap: 0x8000_0000,
-                    fpu: FpuState::default(),
-                },
-            },
-        ));
-
-        // Create Task from the static address.
-        let task0 = Task::from_static_addr(init_task_addr);
-
-        // Initialize task array with task 0.
-        let mut tasks: [Option<Arc<Task>>; TASK_NUM] = [const { None }; TASK_NUM];
-        tasks[0] = Some(Arc::new(task0));
-
-        KernelCell::new(TaskManager {
-            tasks,
-            last_pid: AtomicU32::new(0),
-        })
-    };
 }

@@ -2,6 +2,7 @@
 
 use alloc::sync::Arc;
 use core::{
+    array,
     mem::size_of,
     ops::{Deref, DerefMut},
     sync::atomic::AtomicU8,
@@ -15,7 +16,7 @@ use crate::{
         frame::{self, PAGE_SIZE, PhysFrameRange},
         space::MemorySpace,
     },
-    segment::Descriptor,
+    segment::{self, Descriptor, KERNEL_DS, USER_CS, USER_DS},
     sync::KernelCell,
 };
 
@@ -147,28 +148,6 @@ pub struct LocalDescriptorTable {
     pub entries: [Descriptor; 3],
 }
 
-/// x87 FPU (Math Coprocessor) state structure.
-#[repr(C)]
-#[derive(Default)]
-pub struct FpuState {
-    /// Control word
-    pub cwd: u32,
-    /// Status word
-    pub swd: u32,
-    /// Tag word
-    pub twd: u32,
-    /// FPU instruction pointer
-    pub fip: u32,
-    /// FPU instruction pointer selector
-    pub fcs: u32,
-    /// FPU operand pointer
-    pub foo: u32,
-    /// FPU operand pointer selector
-    pub fos: u32,
-    /// 8 x 10 bytes for each FP register = 80 bytes (stored as 20 x u32)
-    pub st_space: [u32; 20],
-}
-
 /// Task State Segment (TSS) structure for i386.
 ///
 /// The TSS is a hardware-defined structure used by the x86 processor
@@ -230,9 +209,6 @@ pub struct TaskStateSegment {
 
     /// Bits: trace flag (bit 0), I/O map base address (bits 16-31)
     pub trace_bitmap: u32,
-
-    /// x87 FPU state (for hardware layout alignment)
-    pub fpu: FpuState,
 }
 
 #[repr(u8)]
@@ -367,6 +343,71 @@ impl TaskControlBlock {
             irq_state: AtomicU8::new(0),
             inner: KernelCell::new(inner),
         }
+    }
+
+    /// Slot 0 / pid 0 idle task PCB for a statically allocated [`TaskPage`].
+    ///
+    /// `task_page_addr` is the base address of the task page; `cr3` is the page directory
+    /// physical address used for this address space (kernel page tables for task 0).
+    pub fn new_kernel(task_page_addr: u32, cr3: u32) -> Self {
+        let page_sz = TASK_PAGE_SIZE as u32;
+        Self::new(0, 0, TaskControlBlockInner {
+            sched: TaskSchedInfo {
+                state: TaskState::Running,
+                counter: 15,
+                priority: 15,
+            },
+            relation: TaskRelationInfo {
+                father: u32::MAX,
+                pgrp: 0,
+                session: 0,
+                leader: false,
+            },
+            identity: TaskIdentityInfo::default(),
+            acct: TaskAcctInfo::default(),
+            memory_space: Some(MemorySpace::new(0)),
+            mem_layout: TaskMemoryLayout::default(),
+            exit_code: 0,
+            tty: -1,
+            fs: TaskFileSystemContext {
+                umask: 0o022,
+                root_directory: None,
+                current_directory: None,
+                executable_inode: None,
+                close_on_exec: 0,
+                open_files: array::from_fn(|_| None),
+            },
+            ldt: LocalDescriptorTable::new(0, 0x9f),
+            signal_info: TaskSignalInfo::default(),
+            tss: TaskStateSegment {
+                back_link: 0,
+                esp0: task_page_addr + page_sz,
+                ss0: KERNEL_DS.as_u32(),
+                esp1: 0,
+                ss1: 0,
+                esp2: 0,
+                ss2: 0,
+                cr3,
+                eip: 0,
+                eflags: 0,
+                eax: 0,
+                ecx: 0,
+                edx: 0,
+                ebx: 0,
+                esp: 0,
+                ebp: 0,
+                esi: 0,
+                edi: 0,
+                es: USER_DS.as_u32(),
+                cs: USER_CS.as_u32(),
+                ss: USER_DS.as_u32(),
+                ds: USER_DS.as_u32(),
+                fs: USER_DS.as_u32(),
+                gs: USER_DS.as_u32(),
+                ldt: segment::ldt_selector(0).as_u32(),
+                trace_bitmap: 0x8000_0000,
+            },
+        })
     }
 }
 

@@ -46,11 +46,6 @@ pub fn is_superuser() -> bool {
     with_current(|inner| inner.identity.euid == 0)
 }
 
-unsafe extern "C" {
-    /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
-    fn system_call();
-}
-
 /// Select and switch to the next runnable task.
 ///
 /// If no better task exists, this function returns without switching.
@@ -268,4 +263,9 @@ pub fn init() {
     trap::set_system_gate(0x80, unsafe {
         mem::transmute::<unsafe extern "C" fn(), TrapHandler>(system_call)
     });
+}
+
+unsafe extern "C" {
+    /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
+    fn system_call();
 }

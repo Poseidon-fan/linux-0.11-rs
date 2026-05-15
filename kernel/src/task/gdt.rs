@@ -1,5 +1,6 @@
 //! GDT task descriptor operations.
 
+use super::task_struct::TaskStateSegment;
 use crate::segment::Descriptor;
 
 unsafe extern "C" {
@@ -12,13 +13,10 @@ pub const FIRST_TSS_ENTRY: u16 = 4;
 /// First LDT descriptor entry index in the GDT.
 pub const FIRST_LDT_ENTRY: u16 = 5;
 
-/// TSS structure size (104 bytes in Linux 0.11).
-const TSS_SIZE: u32 = 104;
-
 /// Writes a TSS descriptor for task `n` into the GDT.
 #[inline]
 pub fn set_tss_desc(n: u16, tss_addr: u32) {
-    let desc = Descriptor::tss(tss_addr, TSS_SIZE);
+    let desc = Descriptor::tss(tss_addr, core::mem::size_of::<TaskStateSegment>() as u32);
     unsafe {
         core::ptr::write_volatile(&mut gdt[tss_index(n)], desc.as_u64());
     }

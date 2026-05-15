@@ -16,14 +16,8 @@ use crate::{
 /// Timer ticks per second.
 pub const HZ: u32 = 100;
 
-/// PIT oscillator frequency (Hz).
-const PIT_FREQUENCY: u32 = 1_193_180;
-
 /// PIT reload value for the configured HZ.
 pub const LATCH: u16 = (PIT_FREQUENCY / HZ) as u16;
-
-/// Number of timer ticks since boot.
-static JIFFIES: AtomicU32 = AtomicU32::new(0);
 
 /// Returns current jiffies value.
 #[inline]
@@ -61,6 +55,12 @@ impl TimerInterruptFrame {
         unsafe { self.user_esp_ptr().add(1).cast_const() }
     }
 }
+
+/// Number of timer ticks since boot.
+static JIFFIES: AtomicU32 = AtomicU32::new(0);
+
+/// PIT oscillator frequency (Hz).
+const PIT_FREQUENCY: u32 = 1_193_180;
 
 impl SignalDeliveryFrame for TimerInterruptFrame {
     #[inline]

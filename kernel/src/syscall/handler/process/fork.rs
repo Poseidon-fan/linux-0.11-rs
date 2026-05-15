@@ -137,6 +137,5 @@ fn child_tss(ctx: &SyscallContext, stack_top: u32, cr3: u32, slot: usize) -> Tas
         gs: ctx.gs & 0xffff,
         ldt: segment::ldt_selector(slot as u16).as_u32(),
         trace_bitmap: 0x8000_0000,
-        fpu: FpuState::default(),
     }
 }
