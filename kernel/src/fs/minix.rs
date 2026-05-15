@@ -155,7 +155,7 @@ impl Inode {
                 return;
             }
             // Read the indirect block and free every zone it references.
-            if let Some(buf) = buffer::read_block(BufferKey {
+            if let Some(buf) = buffer::read(BufferKey {
                 dev,
                 block_nr: u32::from(*zone),
             }) {
@@ -164,7 +164,6 @@ impl Inode {
                         fs.free_zone(e);
                     }
                 });
-                buffer::release_block(buf);
             }
             fs.free_zone(*zone);
             *zone = 0;
@@ -177,12 +176,11 @@ impl Inode {
         free(&mut disk.single_indirect_zone);
 
         if disk.double_indirect_zone != 0 {
-            if let Some(buf) = buffer::read_block(BufferKey {
+            if let Some(buf) = buffer::read(BufferKey {
                 dev,
                 block_nr: u32::from(disk.double_indirect_zone),
             }) {
                 let entries = buf.read(|table: &IndirectBlock| *table);
-                buffer::release_block(buf);
                 for mut e in entries {
                     free(&mut e);
                 }
@@ -218,7 +216,7 @@ impl Inode {
                 return Ok(0);
             }
 
-            let buf = buffer::read_block(BufferKey {
+            let buf = buffer::read(BufferKey {
                 dev: self.id.device,
                 block_nr: u32::from(block_nr),
             })
@@ -229,12 +227,11 @@ impl Inode {
                     .lock()
                     .alloc_zone()
                     .inspect(|&new_zone| {
-                        buf.write(|table: &mut IndirectBlock| table[index] = new_zone)
+                        buf.modify(|table: &mut IndirectBlock| table[index] = new_zone)
                     })
                     .unwrap_or(0),
                 (zone, _) => zone,
             };
-            buffer::release_block(buf);
             Ok(zone)
         };
 
@@ -312,7 +309,7 @@ impl Inode {
             if block_id == 0 {
                 target.fill(0);
             } else {
-                let Some(block_buf) = buffer::read_block(BufferKey {
+                let Some(block_buf) = buffer::read(BufferKey {
                     dev: self.id.device,
                     block_nr: block_id,
                 }) else {
@@ -321,7 +318,6 @@ impl Inode {
                 block_buf.read(|block: &DataBlock| {
                     target.copy_from_slice(&block[block_offset..block_offset + chunk_len]);
                 });
-                buffer::release_block(block_buf);
             }
 
             pos += chunk_len;
@@ -358,7 +354,7 @@ impl Inode {
                 }
             };
 
-            let Some(block_buf) = buffer::read_block(BufferKey {
+            let Some(block_buf) = buffer::read(BufferKey {
                 dev: self.id.device,
                 block_nr: block_id,
             }) else {
@@ -367,10 +363,9 @@ impl Inode {
             };
 
             let source = &buf[written..written + chunk_len];
-            block_buf.write(|block: &mut DataBlock| {
+            block_buf.modify(|block: &mut DataBlock| {
                 block[block_offset..block_offset + chunk_len].copy_from_slice(source);
             });
-            buffer::release_block(block_buf);
 
             pos += chunk_len;
             written += chunk_len;
@@ -587,9 +582,9 @@ impl MinixFileSystem {
     /// Minix filesystem.
     pub fn open(dev: DevNum) -> Option<Arc<Mutex<Self>>> {
         // Super block occupies logical block 1.
-        let sb_buf = buffer::read_block(BufferKey { dev, block_nr: 1 })?;
+        let sb_buf = buffer::read(BufferKey { dev, block_nr: 1 })?;
         let super_block: DiskSuperBlock = sb_buf.read(|sb: &DiskSuperBlock| *sb);
-        buffer::release_block(sb_buf);
+        drop(sb_buf);
 
         if super_block.magic != MINIX_SUPER_MAGIC {
             error!("invalid super block magic number");
@@ -605,27 +600,20 @@ impl MinixFileSystem {
 
         let mut inode_bitmap_bufs = Vec::new();
         for _ in 0..super_block.inode_bitmap_block_count {
-            let Some(buf) = buffer::read_block(BufferKey {
+            let buf = buffer::read(BufferKey {
                 dev,
                 block_nr: block,
-            }) else {
-                buffer::release_blocks(inode_bitmap_bufs);
-                return None;
-            };
+            })?;
             block += 1;
             inode_bitmap_bufs.push(buf);
         }
 
         let mut zone_bitmap_bufs = Vec::new();
         for _ in 0..super_block.zone_bitmap_block_count {
-            let Some(buf) = buffer::read_block(BufferKey {
+            let buf = buffer::read(BufferKey {
                 dev,
                 block_nr: block,
-            }) else {
-                buffer::release_blocks(inode_bitmap_bufs);
-                buffer::release_blocks(zone_bitmap_bufs);
-                return None;
-            };
+            })?;
             block += 1;
             zone_bitmap_bufs.push(buf);
         }
@@ -663,14 +651,12 @@ impl MinixFileSystem {
     /// Panics when the backing inode-table block cannot be read.
     fn read_inode(&self, nr: InodeNumber) -> DiskInode {
         let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read_block(BufferKey {
+        let buf = buffer::read(BufferKey {
             dev: self.device,
             block_nr,
         })
         .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
-        let disk_inode = buf.read(|block: &InodeBlock| block[offset]);
-        buffer::release_block(buf);
-        disk_inode
+        buf.read(|block: &InodeBlock| block[offset])
     }
 
     /// Write one on-disk inode back to its block.
@@ -680,13 +666,12 @@ impl MinixFileSystem {
     /// Panics when the backing inode-table block cannot be read.
     fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
         let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read_block(BufferKey {
+        let buf = buffer::read(BufferKey {
             dev: self.device,
             block_nr,
         })
         .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
-        buf.write(|block: &mut InodeBlock| block[offset] = *inode);
-        buffer::release_block(buf);
+        buf.modify(|block: &mut InodeBlock| block[offset] = *inode);
     }
 
     fn inode_block_position(&self, nr: InodeNumber) -> (u32, usize) {
@@ -712,13 +697,11 @@ impl MinixFileSystem {
     /// Allocate one fresh data zone and clear its backing cache block.
     fn alloc_zone(&self) -> Option<u16> {
         let zone = self.zone_bitmap.alloc()? as u16;
-        let buf = buffer::acquire_block(BufferKey {
+        let buf = buffer::get(BufferKey {
             dev: self.device,
             block_nr: u32::from(zone),
         });
-        buf.write(|block: &mut DataBlock| block.fill(0));
-        buf.set_uptodate(true);
-        buffer::release_block(buf);
+        buf.fill_zero();
         Some(zone)
     }
 

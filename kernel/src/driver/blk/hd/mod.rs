@@ -235,22 +235,22 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
             HARD_DISK_MAJOR as u8,
             (drive_index * PARTITION_SLOTS_PER_DRIVE) as u8,
         );
-        let Some(handle) = buffer::read_block(BufferKey { dev, block_nr: 0 }) else {
+        let Some(handle) = buffer::read(BufferKey { dev, block_nr: 0 }) else {
             println!("Unable to read partition table of drive {}", drive_index);
             return Err(());
         };
-        let sector =
-            unsafe { core::slice::from_raw_parts(handle.data.as_ptr(), super::SECTOR_SIZE) };
+        let mut sector = [0; super::SECTOR_SIZE];
+        handle.read_bytes(0, &mut sector);
         let partitions: Result<[_; PRIMARY_PARTITION_COUNT], ()> =
             if sector[MBR_SIGNATURE_OFFSET..][..2] != [0x55, 0xAA] {
                 println!("Bad partition table on drive {}", drive_index);
                 Err(())
             } else {
                 Ok(core::array::from_fn(|i| {
-                    DrivePartition::from_mbr_entry(sector, i)
+                    DrivePartition::from_mbr_entry(&sector, i)
                 }))
             };
-        buffer::release_block(handle);
+        drop(handle);
 
         HARD_DISK_MANAGER.exclusive(|m| {
             m.drives[drive_index].as_mut().ok_or(())?.primary_partitions = partitions?;

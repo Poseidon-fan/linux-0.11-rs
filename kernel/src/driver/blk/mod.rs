@@ -15,7 +15,7 @@ use log::warn;
 
 use crate::{
     driver::DevNum,
-    fs::{BLOCK_SIZE, buffer::BufferHandle},
+    fs::{BLOCK_SIZE, buffer::BufferSlot},
     sync::KernelCell,
     task::WaitQueue,
 };
@@ -43,8 +43,8 @@ fn register_device(
     }
 }
 
-pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<BufferHandle>) {
-    let Some(key) = buffer_handle.key() else {
+pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSlot>) {
+    let Some(key) = buffer.key() else {
         warn!("Buffer key not set");
         return;
     };
@@ -59,15 +59,15 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
     }
 
     // If the buffer is locked, we don't prefetch.
-    if prefetch && buffer_handle.io_lock.is_locked() {
+    if prefetch && buffer.is_io_locked() {
         return;
     }
 
-    buffer_handle.io_lock.acquire();
-    if ty == BlockRequestType::Read && buffer_handle.is_uptodate()
-        || ty == BlockRequestType::Write && !buffer_handle.is_dirty()
+    buffer.acquire_io();
+    if ty == BlockRequestType::Read && buffer.is_uptodate()
+        || ty == BlockRequestType::Write && !buffer.is_dirty()
     {
-        buffer_handle.io_lock.release();
+        buffer.release_io();
         return;
     }
 
@@ -76,7 +76,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
         match candidate {
             Some(slot) => break slot,
             None if prefetch => {
-                buffer_handle.io_lock.release();
+                buffer.release_io();
                 return;
             }
             None => DEVICE_WAIT_QUEUE.sleep(),
@@ -90,10 +90,10 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer_handle: Arc<B
                 ty,
                 first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
                 sector_count: BUFFER_BLOCK_SECTOR_COUNT,
-                data_addr: buffer_handle.data,
+                data_addr: buffer.data_addr(),
             },
             error_count: 0,
-            payload: RequestPayload::BufferCache(buffer_handle),
+            payload: RequestPayload::BufferCache(buffer),
             next_request: None,
         });
         manager.add_request(major, request_slot)
@@ -111,9 +111,9 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
     }
 
     match payload {
-        RequestPayload::BufferCache(buffer_handle) => {
-            buffer_handle.set_uptodate(is_uptodate);
-            buffer_handle.io_lock.release();
+        RequestPayload::BufferCache(buffer) => {
+            buffer.set_uptodate(is_uptodate);
+            buffer.release_io();
         }
         RequestPayload::Paging(wait_queue) => wait_queue.wake(),
     }
@@ -147,7 +147,7 @@ struct BlockRequestIo {
 
 enum RequestPayload {
     /// Request originated from buffer-cache metadata.
-    BufferCache(Arc<BufferHandle>),
+    BufferCache(Arc<BufferSlot>),
     /// Request originated from paging path and waits on its own queue.
     Paging(WaitQueue),
 }
@@ -268,8 +268,8 @@ impl BlockManager {
             "request major must match target device queue"
         );
 
-        if let RequestPayload::BufferCache(buffer_handle) = &self.request(request_slot).payload {
-            buffer_handle.set_dirty(false);
+        if let RequestPayload::BufferCache(buffer) = &self.request(request_slot).payload {
+            buffer.set_dirty(false);
         }
 
         self.request_mut(request_slot).next_request = None;

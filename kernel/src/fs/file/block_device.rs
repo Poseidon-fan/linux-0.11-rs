@@ -106,7 +106,7 @@ fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize> {
         }
 
         let key = BufferKey { dev, block_nr };
-        let Some(handle) = buffer::read_block(key) else {
+        let Some(handle) = buffer::read(key) else {
             return if total_read > 0 {
                 Ok(total_read)
             } else {
@@ -144,9 +144,9 @@ fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize> {
         // For a full-block overwrite we only need a buffer slot; for a
         // partial write we must read the existing content first.
         let handle = if chars == BLOCK_SIZE {
-            buffer::acquire_block(key)
+            buffer::get(key)
         } else {
-            let Some(h) = buffer::read_block(key) else {
+            let Some(h) = buffer::read(key) else {
                 return if total_written > 0 {
                     Ok(total_written)
                 } else {

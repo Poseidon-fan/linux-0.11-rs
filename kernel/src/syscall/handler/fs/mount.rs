@@ -117,7 +117,7 @@ define_syscall_handler!(
         inode_table.evict_device(dev);
         drop(inode_table);
 
-        buffer::sync_dev(dev);
+        buffer::sync_device(dev);
         MOUNT_TABLE.lock().remove_by_device(dev);
         Ok(0)
     }

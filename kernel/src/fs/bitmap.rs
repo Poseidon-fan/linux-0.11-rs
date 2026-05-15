@@ -4,7 +4,6 @@
 //! and allocation scans those bits in ascending order. Bit 0 is always marked
 //! as occupied during construction so it is never handed out.
 
-use alloc::sync::Arc;
 use core::array;
 
 use crate::fs::{BLOCK_SIZE, buffer::BufferHandle, layout::BitmapBlock};
@@ -15,7 +14,7 @@ const WORDS_PER_BLOCK: usize = BLOCK_BITS / WORD_BITS;
 
 /// Filesystem allocation bitmap cached in a fixed number of block slots.
 pub struct Bitmap<const N: usize> {
-    buffers: [Option<Arc<BufferHandle>>; N],
+    buffers: [Option<BufferHandle>; N],
     bit0_id: u32,
     bit_count: usize,
 }
@@ -31,10 +30,10 @@ impl<const N: usize> Bitmap<N> {
     /// initialised.
     pub fn new(
         bit0_id: u32,
-        buffers: impl IntoIterator<Item = Arc<BufferHandle>>,
+        buffers: impl IntoIterator<Item = BufferHandle>,
         bit_count: usize,
     ) -> Self {
-        let mut slots: [Option<Arc<BufferHandle>>; N] = array::from_fn(|_| None);
+        let mut slots: [Option<BufferHandle>; N] = array::from_fn(|_| None);
         let mut loaded = 0usize;
         for (slot, buf) in buffers.into_iter().enumerate() {
             assert!(slot < N, "more buffers supplied than bitmap slot capacity");
@@ -49,7 +48,7 @@ impl<const N: usize> Bitmap<N> {
         slots[0]
             .as_ref()
             .expect("bitmap must have at least one buffer")
-            .write(|bitmap: &mut BitmapBlock| bitmap[0] |= 1);
+            .modify(|bitmap: &mut BitmapBlock| bitmap[0] |= 1);
 
         Self {
             buffers: slots,
@@ -81,7 +80,7 @@ impl<const N: usize> Bitmap<N> {
                 break;
             }
 
-            buf.write(|bitmap: &mut BitmapBlock| bitmap[word_index] |= 1u64 << offset);
+            buf.modify(|bitmap: &mut BitmapBlock| bitmap[word_index] |= 1u64 << offset);
             return Some(self.bit0_id + actual_bit as u32);
         }
         None
@@ -98,7 +97,7 @@ impl<const N: usize> Bitmap<N> {
         let buf = self.buffers[block_slot]
             .as_ref()
             .expect("bitmap buffers must be loaded before free");
-        buf.write(|bitmap: &mut BitmapBlock| bitmap[word_index] &= !mask);
+        buf.modify(|bitmap: &mut BitmapBlock| bitmap[word_index] &= !mask);
     }
 
     /// Count the number of free (zero) bits in the bitmap.

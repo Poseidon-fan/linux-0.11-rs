@@ -1,4 +1,4 @@
-//! Buffer cache metadata structures.
+//! Block buffer cache.
 //!
 //! Memory layout model:
 //!
@@ -13,11 +13,11 @@
 //! |           |           |
 //! data ptr0   data ptr1   data ptr2
 //!
-//! Each block is BLOCK_SIZE bytes and each BufferHandle points to one block.
+//! Each block is `BLOCK_SIZE` bytes and each cache slot points to one block.
 //! ```
 
 use alloc::sync::Arc;
-use core::{mem::size_of, ptr::NonNull};
+use core::ptr::NonNull;
 
 use hashbrown::HashMap;
 use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
@@ -31,61 +31,45 @@ use crate::{
     task::WaitQueue,
 };
 
-lazy_static! {
-    /// Global singleton manager for the buffer-cache metadata graph.
-    static ref BUFFER_MANAGER: Mutex<BufferManager> =
-        Mutex::new(BufferManager::empty());
-}
-
-/// Wait queue for tasks blocked in [`acquire_block`].
-static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
-
 /// Initialize global buffer metadata by scanning `[LOW_MEM, buffer_memory_end)`.
 pub fn init(buffer_memory_end: u32) {
     BUFFER_MANAGER.lock().init(buffer_memory_end);
 }
 
-/// Acquire one cache entry for `key`, reusing an existing binding when present.
-pub fn acquire_block(key: BufferKey) -> Arc<BufferHandle> {
-    loop {
-        if let Some(handle) = try_acquire_cached(key) {
-            return handle;
-        }
-
-        if let Some(handle) = try_acquire_victim(key) {
-            return handle;
-        }
+/// Pin one cache entry for `key`, reusing an existing binding when present.
+///
+/// This does not read from disk. Callers that need existing block contents
+/// should use [`read`] instead.
+pub fn get(key: BufferKey) -> BufferHandle {
+    BufferHandle {
+        slot: acquire_slot(key),
     }
 }
 
-/// Release one logical reference obtained from [`acquire_block`].
-pub fn release_block(handle: Arc<BufferHandle>) {
-    handle.io_lock.wait();
-    handle.dec_ref();
-    BUFFER_WAIT_QUEUE.wake();
-}
+/// Read one block from the cache, submitting disk I/O when the cached copy is invalid.
+pub fn read(key: BufferKey) -> Option<BufferHandle> {
+    let block = get(key);
 
-/// Release multiple logical references obtained from [`acquire_block`].
-pub fn release_blocks(handles: impl IntoIterator<Item = Arc<BufferHandle>>) {
-    for handle in handles {
-        release_block(handle);
+    if block.slot.is_uptodate() {
+        return Some(block);
     }
-}
-
-pub fn read_block(key: BufferKey) -> Option<Arc<BufferHandle>> {
-    let handle = acquire_block(key);
-
-    if handle.is_uptodate() {
-        return Some(handle);
-    }
-    blk::submit_request(blk::BlockRequestType::Read, false, Arc::clone(&handle));
-    handle.io_lock.wait();
-    if handle.is_uptodate() {
-        return Some(handle);
+    blk::submit_request(blk::BlockRequestType::Read, false, Arc::clone(&block.slot));
+    block.slot.wait_io();
+    if block.slot.is_uptodate() {
+        return Some(block);
     }
 
-    release_block(handle);
     None
+}
+
+/// Write all dirty buffers back to disk.
+pub fn sync_all() {
+    sync_dirty(|_| true);
+}
+
+/// Write dirty buffers belonging to `dev` back to disk.
+pub fn sync_device(dev: DevNum) {
+    sync_dirty(|key| key.dev == dev);
 }
 
 /// Unique key for one cached filesystem block.
@@ -97,7 +81,28 @@ pub struct BufferKey {
     pub block_nr: u32,
 }
 
-/// Mutable state protected by [`KernelCell`] inside each buffer handle.
+/// RAII reference to one cached block.
+///
+/// Dropping the guard releases the logical cache reference. Methods on this
+/// type are the intended filesystem-facing interface to block data.
+#[must_use = "dropping the guard releases the cached block"]
+pub struct BufferHandle {
+    slot: Arc<BufferSlot>,
+}
+
+/// Metadata object for one block-sized cache entry.
+pub struct BufferSlot {
+    /// Intrusive link node used by [`BufferList`].
+    buffers_link: LinkedListLink,
+    /// Start address of one `BLOCK_SIZE` data block.
+    data: NonNull<u8>,
+    /// Sleepable ownerless lock for in-flight buffer I/O.
+    io_lock: BusyLock,
+    /// Mutable metadata for cache state and binding.
+    meta: KernelCell<BufferMeta>,
+}
+
+/// Mutable state protected by [`KernelCell`] inside each buffer slot.
 struct BufferMeta {
     /// Current `(dev, block)` binding. `None` means not indexed yet.
     key: Option<BufferKey>,
@@ -109,24 +114,12 @@ struct BufferMeta {
     uptodate: bool,
 }
 
-/// Metadata object for one block-sized cache entry.
-pub struct BufferHandle {
-    /// Intrusive link node used by [`BufferList`].
-    buffers_link: LinkedListLink,
-    /// Start address of one `BLOCK_SIZE` data block.
-    pub data: NonNull<u8>,
-    /// Sleepable ownerless lock for in-flight buffer I/O.
-    pub io_lock: BusyLock,
-    /// Mutable metadata for cache state and binding.
-    meta: KernelCell<BufferMeta>,
-}
-
 intrusive_adapter!(
-    /// Adapter for storing `Arc<BufferHandle>` nodes in an intrusive linked list.
-    BufferAdapter = Arc<BufferHandle>: BufferHandle { buffers_link => LinkedListLink }
+    /// Adapter for storing `Arc<BufferSlot>` nodes in an intrusive linked list.
+    BufferAdapter = Arc<BufferSlot>: BufferSlot { buffers_link => LinkedListLink }
 );
 
-/// Intrusive list wrapper for all buffer handles.
+/// Intrusive list wrapper for all buffer slots.
 ///
 /// This wrapper intentionally hides raw cursor operations and keeps all
 /// list-related `unsafe` in one place.
@@ -134,16 +127,108 @@ struct BufferList {
     list: LinkedList<BufferAdapter>,
 }
 
-/// Global manager of buffer handles and key index.
+/// Global manager of buffer slots and key index.
 struct BufferManager {
-    /// Replacement-order list that permanently keeps all handles.
+    /// Replacement-order list that permanently keeps all slots.
     buffers: BufferList,
-    /// `(dev, block)` lookup index for bound handles.
-    buffer_index: HashMap<BufferKey, Arc<BufferHandle>>,
+    /// `(dev, block)` lookup index for bound slots.
+    buffer_index: HashMap<BufferKey, Arc<BufferSlot>>,
+}
+
+lazy_static! {
+    /// Global singleton manager for the buffer-cache metadata graph.
+    static ref BUFFER_MANAGER: Mutex<BufferManager> =
+        Mutex::new(BufferManager::empty());
+}
+
+/// Wait queue for tasks blocked while pinning a cache entry.
+static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
+
+fn acquire_slot(key: BufferKey) -> Arc<BufferSlot> {
+    loop {
+        if let Some(slot) = try_acquire_cached(key) {
+            return slot;
+        }
+
+        if let Some(slot) = try_acquire_victim(key) {
+            return slot;
+        }
+    }
+}
+
+fn release_slot(slot: &BufferSlot) {
+    slot.wait_io();
+    slot.dec_ref();
+    BUFFER_WAIT_QUEUE.wake();
+}
+
+fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferSlot>> {
+    let slot = BUFFER_MANAGER.lock().pin_buffer(key)?;
+    slot.wait_io();
+
+    if slot.key_matches(key) {
+        return Some(slot);
+    }
+
+    slot.dec_ref();
+
+    None
+}
+
+fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferSlot>> {
+    let Some(slot) = BUFFER_MANAGER.lock().buffers.find_reclaim_candidate() else {
+        BUFFER_WAIT_QUEUE.sleep();
+        return None;
+    };
+
+    slot.wait_io();
+    if slot.ref_count() != 0 {
+        // Another task claimed this victim while we were sleeping.
+        // Restart from the outer acquire loop so a newly cached target
+        // block is observed before we scan for another victim.
+        return None;
+    }
+
+    flush_dirty_victim(&slot);
+
+    if BUFFER_MANAGER.lock().try_rebind_buffer(key, slot.clone()) {
+        return Some(slot);
+    }
+
+    None
+}
+
+fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
+    if !slot.is_dirty() {
+        return;
+    }
+    blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(slot));
+    slot.wait_io();
+}
+
+fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
+    let slots: alloc::vec::Vec<Arc<BufferSlot>> = BUFFER_MANAGER
+        .lock()
+        .buffer_index
+        .values()
+        .filter(|h| h.is_dirty() && h.key().is_some_and(|k| predicate(&k)))
+        .map(Arc::clone)
+        .collect();
+
+    for slot in slots {
+        blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(&slot));
+        slot.wait_io();
+    }
+}
+
+impl Drop for BufferHandle {
+    fn drop(&mut self) {
+        release_slot(&self.slot);
+    }
 }
 
 impl BufferMeta {
-    /// Construct an empty state for a newly created buffer handle.
+    /// Construct an empty state for a newly created buffer slot.
     const fn empty() -> Self {
         Self {
             key: None,
@@ -155,7 +240,66 @@ impl BufferMeta {
 }
 
 impl BufferHandle {
-    /// Build a handle that points to one already-reserved block address.
+    /// Read one typed view from the start of this buffer block.
+    pub fn read<T, R>(&self, reader: impl FnOnce(&T) -> R) -> R {
+        assert!(
+            core::mem::size_of::<T>() <= BLOCK_SIZE,
+            "typed buffer view must fit within one block"
+        );
+
+        // SAFETY: buffer data blocks are block-aligned during initialization,
+        // and callers only request types that fit within one initialized block.
+        let view = unsafe { &*self.slot.data.as_ptr().cast::<T>() };
+        reader(view)
+    }
+
+    /// Mutate one typed view from the start of this buffer block and mark it dirty.
+    pub fn modify<T, R>(&self, writer: impl FnOnce(&mut T) -> R) -> R {
+        assert!(
+            core::mem::size_of::<T>() <= BLOCK_SIZE,
+            "typed buffer view must fit within one block"
+        );
+
+        // SAFETY: the kernel is single-core and this method does not
+        // reschedule. Filesystem code structures mutable access through short
+        // closures, so the mutable typed view cannot outlive this call.
+        let result = unsafe { writer(&mut *self.slot.data.as_ptr().cast::<T>()) };
+        self.slot.set_dirty(true);
+        result
+    }
+
+    /// Copy bytes from block offset `off` into `dst`.
+    pub fn read_bytes(&self, off: usize, dst: &mut [u8]) {
+        let end = off + dst.len();
+        assert!(end <= BLOCK_SIZE);
+        self.read(|block: &[u8; BLOCK_SIZE]| {
+            dst.copy_from_slice(&block[off..end]);
+        });
+    }
+
+    /// Copy `src` into this block at offset `off` and mark it dirty.
+    pub fn write_bytes(&self, off: usize, src: &[u8]) {
+        let end = off + src.len();
+        assert!(end <= BLOCK_SIZE);
+        self.modify(|block: &mut [u8; BLOCK_SIZE]| {
+            block[off..end].copy_from_slice(src);
+        });
+        if off == 0 && src.len() == BLOCK_SIZE {
+            self.slot.set_uptodate(true);
+        }
+    }
+
+    /// Zero the whole block and mark the cached contents valid and dirty.
+    pub fn fill_zero(&self) {
+        // SAFETY: the slot points to one initialized cache block.
+        unsafe { core::ptr::write_bytes(self.slot.data.as_ptr(), 0, BLOCK_SIZE) };
+        self.slot.set_uptodate(true);
+        self.slot.set_dirty(true);
+    }
+}
+
+impl BufferSlot {
+    /// Build a slot that points to one already-reserved block address.
     fn new(data: NonNull<u8>) -> Self {
         Self {
             buffers_link: LinkedListLink::new(),
@@ -175,7 +319,7 @@ impl BufferHandle {
         self.meta.exclusive(|meta| meta.key = key);
     }
 
-    /// Return whether the handle is currently bound to `key`.
+    /// Return whether the slot is currently bound to `key`.
     fn key_matches(&self, key: BufferKey) -> bool {
         self.meta.exclusive(|meta| meta.key == Some(key))
     }
@@ -220,57 +364,29 @@ impl BufferHandle {
         self.meta.exclusive(|meta| meta.uptodate)
     }
 
-    /// Interpret the block start as one `T` reference.
-    pub fn as_ref<T>(&self) -> &T {
-        assert!(
-            size_of::<T>() <= BLOCK_SIZE,
-            "typed buffer view must fit within one block"
-        );
-
-        unsafe { &*self.data.as_ptr().cast::<T>() }
+    /// Sleep until any in-flight I/O for this buffer completes.
+    pub fn wait_io(&self) {
+        self.io_lock.wait();
     }
 
-    /// Interpret the block start as one mutable `T` reference.
-    pub fn as_mut<T>(&mut self) -> &mut T {
-        assert!(
-            size_of::<T>() <= BLOCK_SIZE,
-            "typed buffer view must fit within one block"
-        );
-
-        unsafe { &mut *self.data.as_ptr().cast::<T>() }
+    /// Acquire the ownerless I/O lock for a block request.
+    pub fn acquire_io(&self) {
+        self.io_lock.acquire();
     }
 
-    /// Read one typed view from the start of this buffer block.
-    pub fn read<T, R>(&self, reader: impl FnOnce(&T) -> R) -> R {
-        reader(self.as_ref::<T>())
+    /// Release the ownerless I/O lock after request completion.
+    pub fn release_io(&self) {
+        self.io_lock.release();
     }
 
-    /// Mutate one typed view from the start of this buffer block and mark it dirty.
-    pub fn write<T, R>(&self, writer: impl FnOnce(&mut T) -> R) -> R {
-        let result = unsafe { writer(&mut *self.data.as_ptr().cast::<T>()) };
-        self.set_dirty(true);
-        result
+    /// Return whether this buffer currently has in-flight I/O.
+    pub fn is_io_locked(&self) -> bool {
+        self.io_lock.is_locked()
     }
 
-    /// Copy bytes from block offset `off` into `dst`.
-    pub fn read_bytes(&self, off: usize, dst: &mut [u8]) {
-        assert!(off + dst.len() <= BLOCK_SIZE);
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.data.as_ptr().add(off),
-                dst.as_mut_ptr(),
-                dst.len(),
-            );
-        }
-    }
-
-    /// Copy `src` into this block at offset `off` and mark dirty.
-    pub fn write_bytes(&self, off: usize, src: &[u8]) {
-        assert!(off + src.len() <= BLOCK_SIZE);
-        unsafe {
-            core::ptr::copy_nonoverlapping(src.as_ptr(), self.data.as_ptr().add(off), src.len());
-        }
-        self.set_dirty(true);
+    /// Return the raw data address used by the block request layer.
+    pub fn data_addr(&self) -> NonNull<u8> {
+        self.data
     }
 
     /// Reset metadata for a newly rebound cache entry.
@@ -293,10 +409,10 @@ impl BufferHandle {
 // serialized by `KernelCell` critical sections. `data` is just an address
 // descriptor, while intrusive link mutation is also done under manager-level
 // serialization.
-unsafe impl Send for BufferHandle {}
+unsafe impl Send for BufferSlot {}
 // SAFETY: Same rationale as `Send`; concurrent mutation is not allowed
 // outside the serialized kernel critical-section model.
-unsafe impl Sync for BufferHandle {}
+unsafe impl Sync for BufferSlot {}
 
 impl BufferList {
     /// Create an empty buffer list.
@@ -311,13 +427,13 @@ impl BufferList {
         self.list.iter().count()
     }
 
-    /// Insert one handle at list tail.
-    fn push_back(&mut self, handle: Arc<BufferHandle>) {
-        self.list.push_back(handle);
+    /// Insert one slot at list tail.
+    fn push_back(&mut self, slot: Arc<BufferSlot>) {
+        self.list.push_back(slot);
     }
 
     /// Remove and return list head.
-    fn pop_front(&mut self) -> Option<Arc<BufferHandle>> {
+    fn pop_front(&mut self) -> Option<Arc<BufferSlot>> {
         self.list.pop_front()
     }
 
@@ -326,24 +442,24 @@ impl BufferList {
         while self.pop_front().is_some() {}
     }
 
-    /// Iterate over buffer handles in list order.
-    fn iter(&self) -> impl Iterator<Item = &BufferHandle> {
+    /// Iterate over buffer slots in list order.
+    fn iter(&self) -> impl Iterator<Item = &BufferSlot> {
         self.list.iter()
     }
 
     /// Return the best reclaim candidate in current list order.
-    fn find_reclaim_candidate(&self) -> Option<Arc<BufferHandle>> {
+    fn find_reclaim_candidate(&self) -> Option<Arc<BufferSlot>> {
         let mut cursor = self.list.front();
-        let mut best: Option<(Arc<BufferHandle>, u8)> = None;
+        let mut best: Option<(Arc<BufferSlot>, u8)> = None;
 
-        while let Some(handle) = cursor.get() {
-            let state = (handle.ref_count(), handle.reclaim_penalty());
+        while let Some(slot) = cursor.get() {
+            let state = (slot.ref_count(), slot.reclaim_penalty());
 
             if state.0 == 0 && best.as_ref().is_none_or(|(_, penalty)| state.1 < *penalty) {
-                let handle = cursor
+                let slot = cursor
                     .clone_pointer()
-                    .expect("cursor must point at a live buffer handle");
-                best = Some((handle, state.1));
+                    .expect("cursor must point at a live buffer slot");
+                best = Some((slot, state.1));
                 if state.1 == 0 {
                     break;
                 }
@@ -352,19 +468,22 @@ impl BufferList {
             cursor.move_next();
         }
 
-        best.map(|(handle, _)| handle)
+        best.map(|(slot, _)| slot)
     }
 
-    /// Move one buffer handle to the free-list tail.
-    fn move_to_back(&mut self, handle: &Arc<BufferHandle>) {
-        let ptr = Arc::as_ptr(handle);
+    /// Move one buffer slot to the free-list tail.
+    fn move_to_back(&mut self, slot: &Arc<BufferSlot>) {
+        let ptr = Arc::as_ptr(slot);
+        // SAFETY: every slot managed by `BufferManager` is permanently
+        // linked in this intrusive list, and list mutation is serialized by
+        // the manager mutex.
         let removed = unsafe {
             self.list
                 .cursor_mut_from_ptr(ptr)
                 .remove()
-                .expect("buffer handle must stay linked in the list")
+                .expect("buffer slot must stay linked in the list")
         };
-        debug_assert!(Arc::ptr_eq(&removed, handle));
+        debug_assert!(Arc::ptr_eq(&removed, slot));
         self.list.push_back(removed);
     }
 }
@@ -380,10 +499,10 @@ impl BufferManager {
         }
     }
 
-    /// Initialize handles by scanning `[LOW_MEM, buffer_memory_end)` in
+    /// Initialize slots by scanning `[LOW_MEM, buffer_memory_end)` in
     /// `BLOCK_SIZE` chunks.
     ///
-    /// Existing handles and index entries are discarded.
+    /// Existing slots and index entries are discarded.
     fn init(&mut self, buffer_memory_end: u32) {
         self.buffer_index.clear();
         self.buffers.clear();
@@ -396,7 +515,7 @@ impl BufferManager {
             let addr = region_start + index * BLOCK_SIZE;
             let data = NonNull::new(addr as *mut u8)
                 .expect("LOW_MEM and scanned block addresses are non-zero");
-            self.buffers.push_back(Arc::new(BufferHandle::new(data)));
+            self.buffers.push_back(Arc::new(BufferSlot::new(data)));
         }
 
         #[cfg(debug_assertions)]
@@ -410,39 +529,35 @@ impl BufferManager {
     }
 
     /// Pin an existing buffer and increment its logical reference count.
-    fn pin_buffer(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
-        let handle = Arc::clone(self.buffer_index.get(&key)?);
-        handle.inc_ref();
-        Some(handle)
+    fn pin_buffer(&mut self, key: BufferKey) -> Option<Arc<BufferSlot>> {
+        let slot = Arc::clone(self.buffer_index.get(&key)?);
+        slot.inc_ref();
+        Some(slot)
     }
 
     /// Rebind one reclaim candidate to a new key.
-    fn try_rebind_buffer(&mut self, key: BufferKey, handle: Arc<BufferHandle>) -> bool {
+    fn try_rebind_buffer(&mut self, key: BufferKey, slot: Arc<BufferSlot>) -> bool {
         if self.buffer_index.contains_key(&key) {
             return false;
         }
 
-        let old_key = handle.key();
+        let old_key = slot.key();
         if let Some(old_key) = old_key {
             self.index_remove(old_key);
         }
 
-        handle.reset_after_rebind();
+        slot.reset_after_rebind();
 
-        let replaced = self.index_insert(key, handle.clone());
+        let replaced = self.index_insert(key, slot.clone());
         debug_assert!(replaced.is_none(), "buffer key must stay unique");
-        self.buffers.move_to_back(&handle);
+        self.buffers.move_to_back(&slot);
         true
     }
 
-    /// Insert a key mapping and update handle state key.
-    fn index_insert(
-        &mut self,
-        key: BufferKey,
-        handle: Arc<BufferHandle>,
-    ) -> Option<Arc<BufferHandle>> {
-        handle.set_key(Some(key));
-        let replaced = self.buffer_index.insert(key, handle);
+    /// Insert a key mapping and update slot state key.
+    fn index_insert(&mut self, key: BufferKey, slot: Arc<BufferSlot>) -> Option<Arc<BufferSlot>> {
+        slot.set_key(Some(key));
+        let replaced = self.buffer_index.insert(key, slot);
         if let Some(old_handle) = replaced.as_ref() {
             if old_handle.key_matches(key) {
                 old_handle.set_key(None);
@@ -451,12 +566,12 @@ impl BufferManager {
         replaced
     }
 
-    /// Remove a key mapping and clear matching handle state key.
-    fn index_remove(&mut self, key: BufferKey) -> Option<Arc<BufferHandle>> {
+    /// Remove a key mapping and clear matching slot state key.
+    fn index_remove(&mut self, key: BufferKey) -> Option<Arc<BufferSlot>> {
         let removed = self.buffer_index.remove(&key);
-        if let Some(handle) = removed.as_ref() {
-            if handle.key_matches(key) {
-                handle.set_key(None);
+        if let Some(slot) = removed.as_ref() {
+            if slot.key_matches(key) {
+                slot.set_key(None);
             }
         }
         removed
@@ -465,77 +580,8 @@ impl BufferManager {
     /// Validate basic manager invariants in debug builds.
     #[cfg(debug_assertions)]
     fn assert_basic_invariants(&self) {
-        for handle in self.buffer_index.values() {
-            debug_assert!(handle.key().is_some(), "indexed buffer must have a key");
+        for slot in self.buffer_index.values() {
+            debug_assert!(slot.key().is_some(), "indexed buffer must have a key");
         }
-    }
-}
-
-fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferHandle>> {
-    let handle = BUFFER_MANAGER.lock().pin_buffer(key)?;
-    handle.io_lock.wait();
-
-    if handle.key_matches(key) {
-        return Some(handle);
-    }
-
-    handle.dec_ref();
-
-    None
-}
-
-fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferHandle>> {
-    let Some(handle) = BUFFER_MANAGER.lock().buffers.find_reclaim_candidate() else {
-        BUFFER_WAIT_QUEUE.sleep();
-        return None;
-    };
-
-    handle.io_lock.wait();
-    if handle.ref_count() != 0 {
-        // Another task claimed this victim while we were sleeping.
-        // Restart from the outer acquire loop so a newly cached target
-        // block is observed before we scan for another victim.
-        return None;
-    }
-
-    flush_dirty_victim(&handle);
-
-    if BUFFER_MANAGER.lock().try_rebind_buffer(key, handle.clone()) {
-        return Some(handle);
-    }
-
-    None
-}
-
-fn flush_dirty_victim(handle: &Arc<BufferHandle>) {
-    if !handle.is_dirty() {
-        return;
-    }
-    blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(handle));
-    handle.io_lock.wait();
-}
-
-/// Write all dirty buffers back to disk.
-pub fn sync_buffers() {
-    sync_dirty(|_| true);
-}
-
-/// Write dirty buffers belonging to `dev` back to disk.
-pub fn sync_dev(dev: DevNum) {
-    sync_dirty(|key| key.dev == dev);
-}
-
-fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
-    let handles: alloc::vec::Vec<Arc<BufferHandle>> = BUFFER_MANAGER
-        .lock()
-        .buffer_index
-        .values()
-        .filter(|h| h.is_dirty() && h.key().is_some_and(|k| predicate(&k)))
-        .map(Arc::clone)
-        .collect();
-
-    for handle in handles {
-        blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(&handle));
-        handle.io_lock.wait();
     }
 }

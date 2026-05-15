@@ -206,7 +206,7 @@ fn load_exe_page(inode: &Inode, address_offset: u32, end_data: u32) -> Option<Ph
         let block_id = inode.map_block_id(first_block + i, false).ok()?;
 
         let buf = if block_id != 0 {
-            buffer::read_block(BufferKey {
+            buffer::read(BufferKey {
                 dev: inode.id.device,
                 block_nr: block_id,
             })
@@ -215,11 +215,11 @@ fn load_exe_page(inode: &Inode, address_offset: u32, end_data: u32) -> Option<Ph
         };
 
         match buf {
-            Some(bh) => {
-                // SAFETY: `dst` points inside the freshly allocated page, and
-                // the buffer block contains exactly `BLOCK_SIZE` initialized bytes.
-                unsafe { ptr::copy_nonoverlapping(bh.data.as_ptr(), dst, BLOCK_SIZE) };
-                buffer::release_block(bh);
+            Some(block) => {
+                // SAFETY: `dst` points inside the freshly allocated page and
+                // covers one block-sized initialized destination range.
+                let dst = unsafe { core::slice::from_raw_parts_mut(dst, BLOCK_SIZE) };
+                block.read_bytes(0, dst);
             }
             None => {
                 // SAFETY: `dst` points to one block-sized range inside the

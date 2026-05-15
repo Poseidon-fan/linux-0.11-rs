@@ -33,7 +33,7 @@ use crate::{
 /// Flush all dirty inode and buffer-cache state to disk.
 pub fn sync() {
     minix::INODE_TABLE.lock().sync_inodes();
-    buffer::sync_buffers();
+    buffer::sync_all();
 }
 
 /// Filesystem logical block size in bytes.
