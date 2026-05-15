@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// System call context — the complete register frame built on the kernel
-/// stack by `syscall_entry.s` before calling into Rust.
+/// stack by the `system_call` entry stub before calling into Rust.
 ///
 /// Since system calls are always issued from user mode (`int 0x80` with
 /// DPL = 3), a privilege-level transition (ring 3 → ring 0) is guaranteed.

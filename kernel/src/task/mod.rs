@@ -31,6 +31,7 @@ use crate::{
     pmio::{inb_p, outb, outb_p},
     segment,
     sync::assert_can_schedule,
+    syscall,
     trap::{self, TrapHandler},
 };
 
@@ -261,11 +262,6 @@ pub fn init() {
     outb(inb_p(0x21) & !0x01, 0x21);
 
     trap::set_system_gate(0x80, unsafe {
-        mem::transmute::<unsafe extern "C" fn(), TrapHandler>(system_call)
+        mem::transmute::<unsafe extern "C" fn(), TrapHandler>(syscall::system_call)
     });
-}
-
-unsafe extern "C" {
-    /// Assembly entry point for `int 0x80`, defined in `syscall_entry.s`.
-    fn system_call();
 }

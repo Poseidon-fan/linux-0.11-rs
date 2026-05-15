@@ -1,13 +1,13 @@
 //! System call dispatch via `int 0x80`.
 //!
-//! The assembly entry stub (`syscall_entry.s`) saves registers and calls
+//! The naked `system_call` entry stub saves registers and calls
 //! [`syscall_rust_entry`], which indexes into the [`SYSCALL_TABLE`](handler::SYSCALL_TABLE)
 //! distributed slice populated by [`define_syscall_handler!`](crate::define_syscall_handler).
 
 mod context;
 mod handler;
 
-use core::arch::global_asm;
+use core::arch::naked_asm;
 
 pub use context::SyscallContext;
 pub use handler::*;
@@ -18,7 +18,51 @@ use crate::{
     task::{self, TaskState},
 };
 
-global_asm!(include_str!("syscall_entry.s"), options(att_syntax));
+/// `int 0x80` entry from user mode.
+///
+/// Push order matches [`SyscallContext`](SyscallContext) layout. Callee-saved
+/// registers are captured so fork/exec can read them from the frame. After
+/// [`syscall_rust_entry`] returns, the saved EAX slot is overwritten with the
+/// return value so `popl %eax` restores it before `iret`.
+#[naked]
+pub extern "C" fn system_call() {
+    unsafe {
+        naked_asm!(
+            "push %ds",
+            "push %es",
+            "push %fs",
+            "pushl %edx",
+            "pushl %ecx",
+            "pushl %ebx",
+            "pushl %eax",
+            "pushl %ebp",
+            "pushl %edi",
+            "pushl %esi",
+            "push %gs",
+            "movl $0x10, %edx",
+            "mov %dx, %ds",
+            "mov %dx, %es",
+            "movl $0x17, %edx",
+            "mov %dx, %fs",
+            "movl %esp, %eax",
+            "pushl %eax",
+            "call {rust_entry}",
+            "addl $4, %esp",
+            "movl %eax, 16(%esp)",
+            "addl $16, %esp",
+            "popl %eax",
+            "popl %ebx",
+            "popl %ecx",
+            "popl %edx",
+            "pop %fs",
+            "pop %es",
+            "pop %ds",
+            "iret",
+            rust_entry = sym syscall_rust_entry,
+            options(att_syntax),
+        );
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
