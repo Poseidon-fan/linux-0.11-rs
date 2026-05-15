@@ -10,8 +10,10 @@
 //!
 //! # TLB consistency
 //!
-//! All public methods that modify page table entries flush the TLB before
-//! returning.  Callers never need to invalidate the TLB themselves.
+//! Public [`MemorySpace`] methods that install or change user-visible page
+//! table entries flush the TLB before returning.  Internal helpers that only
+//! write PTE slots do not; batching code (for example [`cow_copy`]) flushes
+//! once after a sequence of updates.
 
 use core::ptr;
 
@@ -24,14 +26,8 @@ use super::{
 };
 use crate::error::{Errno, Result};
 
-/// Number of page directory entries per process (64MB / 4MB = 16).
-const PDES_PER_PROCESS: usize = 16;
-
 /// Linear address space size per task slot (64MB).
 pub const TASK_LINEAR_SIZE: u32 = (PDES_PER_PROCESS * ENTRIES_PER_TABLE * PAGE_SIZE) as u32;
-
-/// Number of PTEs to copy when forking from task 0 (640KB).
-const TASK0_NR_PAGES: usize = 0xA0000 / PAGE_SIZE;
 
 /// A process's virtual memory space.
 ///
@@ -47,10 +43,16 @@ const TASK0_NR_PAGES: usize = 0xA0000 / PAGE_SIZE;
 pub struct MemorySpace {
     page_tables: [Option<PageTable>; PDES_PER_PROCESS],
     data_frames: HashMap<LinPageNum, PhysFrame>,
-    /// Starting index in the shared page directory for this process.
-    /// For process n, this is `n * 16`.
+    // Starting index in the shared page directory for this process.
+    // For process n, this is `n * 16`.
     pde_base: usize,
 }
+
+/// Number of PTEs to copy when forking from task 0 (640KB).
+const TASK0_NR_PAGES: usize = 0xA0000 / PAGE_SIZE;
+
+/// Number of page directory entries per process (64MB / 4MB = 16).
+const PDES_PER_PROCESS: usize = 16;
 
 impl MemorySpace {
     /// Create an empty memory space for the given task slot.
@@ -70,66 +72,65 @@ impl MemorySpace {
     /// Returns `None` when the page is outside this memory space range or
     /// when the corresponding PDE is not present.
     pub fn get_pte(&self, page: LinPageNum) -> Option<PageTableEntry> {
-        self.find_pte(page).map(|ptr| unsafe { *ptr })
+        self.find_pte(page).map(|ptr| {
+            // SAFETY: `find_pte` only returns a pointer into a present page
+            // table for this address space.
+            unsafe { *ptr }
+        })
     }
 
-    /// Convert an absolute linear page to a process-local `(pde_offset, pte_index)` pair.
+    /// Convert an absolute linear page to a process-local `(pde_offset, pte_index)`.
     ///
     /// Returns `None` if the page is outside this process's address range.
     pub fn to_local(&self, page: LinPageNum) -> Option<(usize, usize)> {
-        let local_pde = page.pde_index().checked_sub(self.pde_base)?;
-        if local_pde >= PDES_PER_PROCESS {
+        let pde_offset = page.pde_index().checked_sub(self.pde_base)?;
+        if pde_offset >= PDES_PER_PROCESS {
             return None;
         }
-        Some((local_pde, page.pte_index()))
+        Some((pde_offset, page.pte_index()))
     }
 
-    /// Map a pre-allocated physical frame at the given linear page address.
+    /// Ensure `lin_page` is mapped to a present, writable, user page.
     ///
-    /// Ownership of `frame` is transferred into this memory space.  On
-    /// failure the frame is dropped (freed) and `Errno::NOMEM` is returned.
-    pub fn map_page(&mut self, lin_page: LinPageNum, frame: PhysFrame) -> Result<()> {
+    /// When `frame` is `Some`, ownership of the pre-allocated frame is
+    /// transferred into this memory space.  The target page must not already be
+    /// present; otherwise [`Errno::EXIST`] is returned.
+    ///
+    /// When `frame` is `None`, a zeroed frame is allocated on demand.  If the
+    /// page is already present, this is a no-op.
+    pub fn map_page(&mut self, lin_page: LinPageNum, frame: Option<PhysFrame>) -> Result<()> {
         self.ensure_page_table(lin_page.pde_index())?;
+        let already_present = self.get_pte(lin_page).is_some_and(|pte| pte.is_present());
+        if frame.is_none() && already_present {
+            return Ok(());
+        }
+        if frame.is_some() && already_present {
+            return Err(Errno::EXIST);
+        }
+        let frame = frame.map_or_else(|| frame::alloc().ok_or(Errno::NOMEM), Ok)?;
         self.set_pte(lin_page, PageTableEntry::new(frame.ppn, PageFlags::USER_RW));
         self.data_frames.insert(lin_page, frame);
         super::invalidate_tlb();
         Ok(())
     }
 
-    /// Ensure `fault_page` is mapped to a present, writable, user page.
-    ///
-    /// This is the anonymous-demand-paging path for not-present page faults:
-    /// - Allocate a page table when the PDE is missing.
-    /// - Allocate a zeroed data frame.
-    /// - Install a user/writable/present PTE.
-    pub fn map_zero_page(&mut self, fault_page: LinPageNum) -> Result<()> {
-        self.ensure_page_table(fault_page.pde_index())?;
-        if self.get_pte(fault_page).is_some_and(|pte| pte.is_present()) {
-            return Ok(());
-        }
-        let frame = frame::alloc().ok_or(Errno::NOMEM)?;
-        self.set_pte(
-            fault_page,
-            PageTableEntry::new(frame.ppn, PageFlags::USER_RW),
-        );
-        self.data_frames.insert(fault_page, frame);
-        super::invalidate_tlb();
-        Ok(())
-    }
-
-    /// Ensure the faulting page mapping becomes writable.
+    /// Ensure the linear page mapping becomes writable.
     ///
     /// - If the old page is uniquely referenced (`ref_count == 1`), just clear write-protect.
     /// - Otherwise allocate a new page, copy old content, and remap this PTE to the new page.
-    pub fn ensure_page_writable(&mut self, fault_page: LinPageNum) -> Result<()> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if `lin_page` has no present page-table entry.
+    pub fn ensure_page_writable(&mut self, lin_page: LinPageNum) -> Result<()> {
         let pte = self
-            .get_pte(fault_page)
+            .get_pte(lin_page)
             .expect("ensure_page_writable: PTE not found");
         let old_phys_addr = pte.phys_addr();
         let old_ppn: PhysPageNum = old_phys_addr.into();
         if old_phys_addr.as_u32() >= LOW_MEM && frame::ref_count(old_ppn) == 1 {
             self.set_pte(
-                fault_page,
+                lin_page,
                 PageTableEntry::new(old_ppn, pte.flags().union(PageFlags::WRITABLE)),
             );
             super::invalidate_tlb();
@@ -137,18 +138,29 @@ impl MemorySpace {
         }
         let new_frame = frame::alloc().ok_or(Errno::NOMEM)?;
         let new_ppn = new_frame.ppn;
-        self.set_pte(fault_page, PageTableEntry::new(new_ppn, PageFlags::USER_RW));
-        self.data_frames.insert(fault_page, new_frame);
+        self.set_pte(lin_page, PageTableEntry::new(new_ppn, PageFlags::USER_RW));
+        self.data_frames.insert(lin_page, new_frame);
         super::invalidate_tlb();
-        copy_page(old_ppn, new_ppn);
+
+        let src_addr: PhysAddr = old_ppn.into();
+        let dst_addr: PhysAddr = new_ppn.into();
+        // SAFETY: Both addresses point to valid page frames.  The destination
+        // was freshly allocated, so it cannot overlap the source frame.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                src_addr.as_ptr::<u8>(),
+                dst_addr.as_mut_ptr::<u8>(),
+                PAGE_SIZE,
+            );
+        }
         Ok(())
     }
 
-    /// Try to share a page from `source_space` at the same process-local offset.
+    /// Try to share a local page from `source_space` into this memory space.
     ///
-    /// `local_pde_offset` and `pte_index` identify the page within both
-    /// processes' address spaces (the same virtual offset, different linear
-    /// addresses due to per-process PDE bases).
+    /// `local_pde_offset` and `pte_index` identify the same virtual page
+    /// position within both processes' address spaces, even though each
+    /// process has a different linear PDE base.
     ///
     /// Returns `Ok(true)` when the page was successfully shared (both PTEs
     /// are write-protected and the frame's reference count is incremented).
@@ -157,11 +169,10 @@ impl MemorySpace {
     /// (not present, dirty, below LOW_MEM, or target already mapped).
     ///
     /// Returns `Err(Errno::NOMEM)` when a page table allocation fails.
-    pub fn try_share_from(
+    pub fn try_share_local_page_from(
         &mut self,
         source_space: &mut MemorySpace,
-        local_pde_offset: usize,
-        pte_index: usize,
+        (local_pde_offset, pte_index): (usize, usize),
     ) -> Result<bool> {
         let source_page =
             LinPageNum::from_indices(source_space.pde_base + local_pde_offset, pte_index);
@@ -335,6 +346,8 @@ impl MemorySpace {
         let ptr = self
             .find_pte(page)
             .expect("set_pte: PDE not present for target page");
+        // SAFETY: `find_pte` returned a valid mutable pointer to the target
+        // page table entry.
         unsafe { *ptr = pte };
     }
 
@@ -375,16 +388,5 @@ impl Drop for MemorySpace {
             }
         }
         super::invalidate_tlb();
-    }
-}
-
-/// Copy one 4KB physical page.
-///
-/// Both `src_page` and `dst_page` must be valid allocated frames
-fn copy_page(src_page: PhysPageNum, dst_page: PhysPageNum) {
-    let src: PhysAddr = src_page.into();
-    let dst: PhysAddr = dst_page.into();
-    unsafe {
-        ptr::copy_nonoverlapping(src.as_ptr::<u8>(), dst.as_mut_ptr::<u8>(), PAGE_SIZE);
     }
 }

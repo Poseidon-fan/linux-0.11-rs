@@ -160,7 +160,7 @@ impl ArgumentPages {
             lin_addr -= PAGE_SIZE as u32;
             if let Some(frame) = frame_slot.take() {
                 let lin_page = LinAddr(lin_addr).floor();
-                if space.map_page(lin_page, frame).is_err() {
+                if space.map_page(lin_page, Some(frame)).is_err() {
                     panic!("failed to map argument page");
                 }
             }

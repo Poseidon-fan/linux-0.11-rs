@@ -23,8 +23,9 @@ pub use page::{
     invalidate_tlb, read_pde, write_pde,
 };
 pub use page_fault::{handle_no_page, handle_wp_page};
+use user_lib::syscall::signal::Signal;
 
-use crate::task;
+use crate::{println, task};
 
 unsafe extern "C" {
     fn ekernel();
@@ -33,6 +34,15 @@ unsafe extern "C" {
 pub fn init(start_mem: u32, end_mem: u32) {
     heap::init();
     frame::init(start_mem, end_mem);
+}
+
+/// Terminate the current process due to out-of-memory.
+///
+/// Must NOT be called from inside a `with_current` or `TASK_MANAGER.exclusive`
+/// closure because `exit_process` acquires those locks internally.
+pub fn oom() -> ! {
+    println!("out of memory");
+    task::exit_process(Signal::Segv as i32)
 }
 
 /// Ensure user address range [addr, addr+size) is writable.
@@ -67,6 +77,6 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
     });
 
     if failed {
-        page_fault::oom();
+        oom();
     }
 }
