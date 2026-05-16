@@ -442,11 +442,6 @@ impl BufferList {
         while self.pop_front().is_some() {}
     }
 
-    /// Iterate over buffer slots in list order.
-    fn iter(&self) -> impl Iterator<Item = &BufferSlot> {
-        self.list.iter()
-    }
-
     /// Return the best reclaim candidate in current list order.
     fn find_reclaim_candidate(&self) -> Option<Arc<BufferSlot>> {
         let mut cursor = self.list.front();

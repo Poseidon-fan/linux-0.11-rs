@@ -41,8 +41,6 @@ struct DriveGeometry {
     pub cylinder_count: u16,
     /// Write-precompensation cylinder programmed into the controller.
     pub write_precompensation: u16,
-    /// Landing zone cylinder used by restore sequences.
-    pub landing_zone: u16,
     /// Control byte written to the ATA control register.
     pub control: u8,
 }
@@ -121,7 +119,6 @@ impl DriveGeometry {
                 head_count: u16::from(uaccess::read_u8(entry_addr.add(2))),
                 write_precompensation: uaccess::read_u16(entry_addr.add(5).cast::<u16>()),
                 control: uaccess::read_u8(entry_addr.add(8)),
-                landing_zone: uaccess::read_u16(entry_addr.add(12).cast::<u16>()),
                 sectors_per_track: u16::from(uaccess::read_u8(entry_addr.add(14))),
             }
         };

@@ -412,13 +412,6 @@ impl TaskControlBlock {
 }
 
 impl TaskPage {
-    pub fn new(pcb: TaskControlBlock) -> Self {
-        Self {
-            pcb,
-            stack: [0; TASK_PAGE_SIZE - size_of::<TaskControlBlock>()],
-        }
-    }
-
     pub fn stack_top(&self) -> u32 {
         let top = self as *const TaskPage as usize + TASK_PAGE_SIZE;
         top as u32

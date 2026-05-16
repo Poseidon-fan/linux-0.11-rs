@@ -209,14 +209,6 @@ impl DiskDirectoryEntry {
             .unwrap_or(MINIX_NAME_LENGTH);
         core::str::from_utf8(&self.name[..len]).unwrap()
     }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, size_of::<Self>()) }
-    }
-
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self as *mut _ as *mut u8, size_of::<Self>()) }
-    }
 }
 
 const _: () = assert!(size_of::<DiskSuperBlock>() == 20);

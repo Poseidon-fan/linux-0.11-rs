@@ -167,16 +167,7 @@ impl PageTable {
         self.frame.ppn.addr()
     }
 
-    /// Interpret the underlying frame as an array of 1024 page table entries.
-    pub fn as_pte_array(&self) -> &[PageTableEntry; ENTRIES_PER_TABLE] {
-        unsafe {
-            &*self
-                .phys_addr()
-                .as_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>()
-        }
-    }
-
-    /// Mutable version of [`as_pte_array`](Self::as_pte_array).
+    /// Interpret the underlying frame as a mutable array of 1024 page table entries.
     pub fn as_pte_array_mut(&mut self) -> &mut [PageTableEntry; ENTRIES_PER_TABLE] {
         unsafe {
             &mut *self

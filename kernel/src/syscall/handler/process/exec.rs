@@ -458,6 +458,8 @@ define_syscall_handler!(
 
             inner.identity.euid = e_uid;
             inner.identity.egid = e_gid;
+            inner.identity.suid = e_uid;
+            inner.identity.sgid = e_gid;
 
             sp
         });

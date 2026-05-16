@@ -177,7 +177,6 @@ pub fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) 
 struct ParsedPath<'a> {
     raw: &'a str,
     is_absolute: bool,
-    has_trailing_slash: bool,
 }
 
 /// One logical pathname component yielded during parsing.
@@ -211,23 +210,12 @@ impl<'a> ParsedPath<'a> {
         Some(Self {
             raw: path,
             is_absolute: path.starts_with('/'),
-            has_trailing_slash: path.len() > 1 && path.ends_with('/'),
         })
-    }
-
-    /// Return whether the pathname designates the root path with no components.
-    fn is_root(&self) -> bool {
-        self.is_absolute && self.components().next().is_none()
     }
 
     /// Return whether the pathname starts from the task root directory.
     fn is_absolute(&self) -> bool {
         self.is_absolute
-    }
-
-    /// Return whether the pathname ends with a slash beyond the `/` root case.
-    fn has_trailing_slash(&self) -> bool {
-        self.has_trailing_slash
     }
 
     /// Iterate over logical pathname components.

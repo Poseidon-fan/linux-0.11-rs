@@ -161,16 +161,6 @@ impl LinAddr {
     pub fn page_offset(self) -> u32 {
         self.0 & PAGE_OFFSET_MASK
     }
-
-    /// Return the page-directory index (top 10 bits).
-    pub fn pde_index(self) -> usize {
-        ((self.0 >> 22) & 0x3FF) as usize
-    }
-
-    /// Return the page-table index (middle 10 bits).
-    pub fn pte_index(self) -> usize {
-        ((self.0 >> 12) & 0x3FF) as usize
-    }
 }
 
 impl PhysAddr {

@@ -27,10 +27,6 @@ use user_lib::syscall::signal::Signal;
 
 use crate::{println, task};
 
-unsafe extern "C" {
-    fn ekernel();
-}
-
 pub fn init(start_mem: u32, end_mem: u32) {
     heap::init();
     frame::init(start_mem, end_mem);
@@ -60,7 +56,7 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
 
         let user_addr = address::LinAddr(addr);
         let mut remaining = (size as u32).saturating_add(user_addr.page_offset());
-        let mut linear_addr = user_addr.align_down().0.wrapping_add(base);
+        let mut linear_addr = user_addr.align_down().as_u32().wrapping_add(base);
 
         while remaining > 0 {
             let lin_page = address::LinAddr(linear_addr).floor();

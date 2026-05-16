@@ -42,12 +42,6 @@ impl RingBuffer {
         }
     }
 
-    /// Number of bytes currently stored.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.head.wrapping_sub(self.tail) & MASK
-    }
-
     /// Free space available for writing.
     #[inline]
     pub fn remaining(&self) -> usize {

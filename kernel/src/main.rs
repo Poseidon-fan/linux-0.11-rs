@@ -7,7 +7,6 @@
 #![feature(asm_goto)]
 #![feature(used_with_arg)]
 #![feature(stmt_expr_attributes)]
-#![allow(dead_code)]
 
 extern crate alloc;
 

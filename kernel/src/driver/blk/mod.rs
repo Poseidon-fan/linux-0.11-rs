@@ -83,7 +83,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
         }
     };
 
-    if let Some(request_handler) = BLOCK_MANAGER.exclusive(|manager| {
+    if let Some(start) = BLOCK_MANAGER.exclusive(|manager| {
         manager.requests[request_slot] = Some(BlockRequest {
             io: BlockRequestIo {
                 dev: key.dev,
@@ -98,14 +98,22 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
         });
         manager.add_request(major, request_slot)
     }) {
-        request_handler();
+        if let Some(activate) = start.activate {
+            activate(start.dev);
+        }
+        (start.request_handler)();
     }
 }
 
 /// Complete the current request for one block-device major.
 pub fn complete_current_request(major: usize, is_uptodate: bool) {
     let (request, device) = BLOCK_MANAGER.exclusive(|manager| manager.take_current_request(major));
-    let BlockRequest { io, payload, .. } = request;
+    let BlockRequest {
+        io,
+        payload,
+        next_request,
+        ..
+    } = request;
     if let Some(deactivate) = device.deactivate {
         deactivate(io.dev);
     }
@@ -116,6 +124,13 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
             buffer.release_io();
         }
         RequestPayload::Paging(wait_queue) => wait_queue.wake(),
+    }
+
+    if let Some(next_request) = next_request {
+        let next_dev = BLOCK_MANAGER.exclusive(|manager| manager.request(next_request).io.dev);
+        if let Some(activate) = device.activate {
+            activate(next_dev);
+        }
     }
 
     if !is_uptodate {
@@ -149,6 +164,10 @@ enum RequestPayload {
     /// Request originated from buffer-cache metadata.
     BufferCache(Arc<BufferSlot>),
     /// Request originated from paging path and waits on its own queue.
+    #[expect(
+        dead_code,
+        reason = "paging I/O is reserved until swap support is wired"
+    )]
     Paging(WaitQueue),
 }
 
@@ -169,6 +188,13 @@ struct BlockDevice {
     // Optional hook for hardware that must be released after I/O completes.
     deactivate: Option<fn(DevNum)>,
     current_request: Option<usize>,
+}
+
+/// Work to perform outside the block-manager critical section.
+struct RequestStart {
+    request_handler: fn(),
+    activate: Option<fn(DevNum)>,
+    dev: DevNum,
 }
 
 struct BlockManager {
@@ -258,7 +284,7 @@ impl BlockManager {
             < (right.io.ty as u8, right.io.dev.0, right.io.first_sector)
     }
 
-    fn add_request(&mut self, major: usize, request_slot: usize) -> Option<fn()> {
+    fn add_request(&mut self, major: usize, request_slot: usize) -> Option<RequestStart> {
         debug_assert!(major < BLOCK_DEVICE_SLOT_COUNT);
         debug_assert!(request_slot < REQUEST_POOL_CAPACITY);
         debug_assert!(self.requests[request_slot].is_some());
@@ -274,16 +300,25 @@ impl BlockManager {
 
         self.request_mut(request_slot).next_request = None;
 
-        let (request_handler, current_request) = match &self.devices[major] {
-            Some(device) => (device.request_handler, device.current_request),
+        let (request_handler, activate, current_request) = match &self.devices[major] {
+            Some(device) => (
+                device.request_handler,
+                device.activate,
+                device.current_request,
+            ),
             None => panic!("block device not found"),
         };
         let Some(mut current_slot) = current_request else {
+            let request_dev = self.request(request_slot).io.dev;
             self.devices[major]
                 .as_mut()
                 .expect("block device not found")
                 .current_request = Some(request_slot);
-            return Some(request_handler);
+            return Some(RequestStart {
+                request_handler,
+                activate,
+                dev: request_dev,
+            });
         };
 
         // Keep the current head as the in-flight request and splice the new

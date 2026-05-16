@@ -18,9 +18,10 @@ use crate::{
         bitmap::Bitmap,
         buffer::{self, BufferKey},
         layout::{
-            DIRECT_ZONE_COUNT, DIRECTORY_ENTRY_SIZE, DataBlock, DiskDirectoryEntry, DiskInode,
-            DiskSuperBlock, INODES_PER_BLOCK, InodeBlock, InodeMode, InodeNumber, InodeType,
-            MINIX_SUPER_MAGIC,
+            DIRECT_ZONE_COUNT, DIRECTORY_ENTRIES_PER_BLOCK, DIRECTORY_ENTRY_SIZE,
+            DOUBLE_INDIRECT_ZONE_INDEX, DataBlock, DirectoryBlock, DiskDirectoryEntry, DiskInode,
+            DiskSuperBlock, INDIRECT_ZONE_INDEX, INODES_PER_BLOCK, InodeBlock, InodeMode,
+            InodeNumber, InodeType, MINIX_SUPER_MAGIC,
         },
     },
     sync::Mutex,
@@ -257,14 +258,14 @@ impl Inode {
                 }
                 zone
             }
-            _ if logic_id < DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT => {
+            _ if logic_id < INDIRECT_ZONE_INDEX + INDIRECT_ENTRY_COUNT => {
                 let (root_zone, allocated) = try_alloc(inner.disk_inode.single_indirect_zone);
                 if allocated {
                     inner.disk_inode.single_indirect_zone = root_zone;
                     inner.is_dirty = true;
                     inner.change_time = time::current_time();
                 }
-                resolve_indirect_entry(root_zone, logic_id - DIRECT_ZONE_COUNT)?
+                resolve_indirect_entry(root_zone, logic_id - INDIRECT_ZONE_INDEX)?
             }
             _ => {
                 let (root_zone, allocated) = try_alloc(inner.disk_inode.double_indirect_zone);
@@ -273,7 +274,8 @@ impl Inode {
                     inner.is_dirty = true;
                     inner.change_time = time::current_time();
                 }
-                let block = logic_id - DIRECT_ZONE_COUNT - INDIRECT_ENTRY_COUNT;
+                let double_indirect_start = DOUBLE_INDIRECT_ZONE_INDEX + INDIRECT_ENTRY_COUNT - 1;
+                let block = logic_id - double_indirect_start;
                 let outer_index = block / INDIRECT_ENTRY_COUNT;
                 let inner_index = block % INDIRECT_ENTRY_COUNT;
                 let second_level_zone = resolve_indirect_entry(root_zone, outer_index)?;
@@ -411,19 +413,17 @@ impl Inode {
 impl Inode {
     pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>> {
         assert!(self.file_type() == InodeType::Directory);
-        let file_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
-        let mut dirent = DiskDirectoryEntry::empty();
-        for i in 0..file_count {
-            let len = self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
-            assert_eq!(len, DIRECTORY_ENTRY_SIZE);
+
+        self.find_directory_entry(|_, dirent| {
             if dirent.inode_number.0 == 0 {
-                continue;
+                return None;
             }
             if dirent.name() == name {
-                return Ok(Some(dirent.inode_number));
+                Some(dirent.inode_number)
+            } else {
+                None
             }
-        }
-        Ok(None)
+        })
     }
 
     /// Add a new directory entry mapping `name` to `inode_number`.
@@ -436,23 +436,12 @@ impl Inode {
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
 
         // Scan for an empty slot.
-        let mut slot = entry_count;
-        let mut dirent = DiskDirectoryEntry::empty();
-        for i in 0..entry_count {
-            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
-            if dirent.inode_number.0 == 0 {
-                slot = i;
-                break;
-            }
-        }
+        let slot = self
+            .find_directory_entry(|slot, dirent| (dirent.inode_number.0 == 0).then_some(slot))?
+            .unwrap_or(entry_count);
 
         // Write the new entry at the chosen slot.
-        let new_entry = DiskDirectoryEntry::new(name, inode_number);
-        let offset = slot * DIRECTORY_ENTRY_SIZE;
-        let written = self.write_at(offset, new_entry.as_bytes())?;
-        assert_eq!(written, DIRECTORY_ENTRY_SIZE);
-
-        Ok(())
+        self.write_directory_entry(slot, DiskDirectoryEntry::new(name, inode_number))
     }
 
     /// Create a new regular file inside this directory.
@@ -543,36 +532,103 @@ impl Inode {
     /// Check whether this directory contains only `.` and `..` entries.
     pub fn is_empty_directory(&self) -> Result<bool> {
         assert!(self.file_type() == InodeType::Directory);
-        let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
-        let mut dirent = DiskDirectoryEntry::empty();
-        for i in 0..entry_count {
-            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
+
+        let non_dot_entry = self.find_directory_entry(|_, dirent| {
             if dirent.inode_number.0 == 0 {
-                continue;
+                return None;
             }
             let name = dirent.name();
             if name != "." && name != ".." {
-                return Ok(false);
+                Some(())
+            } else {
+                None
             }
-        }
-        Ok(true)
+        })?;
+        Ok(non_dot_entry.is_none())
     }
 
     /// Remove the directory entry matching `name` and return its inode number.
     pub fn remove_entry(&self, name: &str) -> Result<InodeNumber> {
         assert!(self.file_type() == InodeType::Directory);
+
+        let Some((slot, inum)) = self.find_directory_entry(|slot, dirent| {
+            (dirent.inode_number.0 != 0 && dirent.name() == name)
+                .then_some((slot, dirent.inode_number))
+        })?
+        else {
+            return Err(Errno::NOENT);
+        };
+
+        self.write_directory_entry(slot, DiskDirectoryEntry::empty())?;
+        Ok(inum)
+    }
+
+    /// Scan directory entries block by block in on-disk layout order.
+    fn find_directory_entry<T>(
+        &self,
+        mut visit: impl FnMut(usize, &DiskDirectoryEntry) -> Option<T>,
+    ) -> Result<Option<T>> {
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
-        let mut dirent = DiskDirectoryEntry::empty();
-        for i in 0..entry_count {
-            self.read_at(DIRECTORY_ENTRY_SIZE * i, dirent.as_bytes_mut())?;
-            if dirent.inode_number.0 != 0 && dirent.name() == name {
-                let inum = dirent.inode_number;
-                let empty = DiskDirectoryEntry::empty();
-                self.write_at(DIRECTORY_ENTRY_SIZE * i, empty.as_bytes())?;
-                return Ok(inum);
+
+        for first_slot in (0..entry_count).step_by(DIRECTORY_ENTRIES_PER_BLOCK) {
+            let logical_block = first_slot / DIRECTORY_ENTRIES_PER_BLOCK;
+            let block_id = self.map_block_id(logical_block, false)?;
+            if block_id == 0 {
+                continue;
+            }
+
+            let Some(block_buf) = buffer::read(BufferKey {
+                dev: self.id.device,
+                block_nr: block_id,
+            }) else {
+                return Err(Errno::IO);
+            };
+
+            let entries_in_block = (entry_count - first_slot).min(DIRECTORY_ENTRIES_PER_BLOCK);
+            let found = block_buf.read(|block: &DirectoryBlock| {
+                block
+                    .iter()
+                    .take(entries_in_block)
+                    .enumerate()
+                    .find_map(|(offset, dirent)| visit(first_slot + offset, dirent))
+            });
+            if found.is_some() {
+                return Ok(found);
             }
         }
-        Err(Errno::NOENT)
+
+        Ok(None)
+    }
+
+    /// Write one directory entry by slot number using the typed directory-block view.
+    fn write_directory_entry(&self, slot: usize, dirent: DiskDirectoryEntry) -> Result<()> {
+        let logical_block = slot / DIRECTORY_ENTRIES_PER_BLOCK;
+        let entry_index = slot % DIRECTORY_ENTRIES_PER_BLOCK;
+        let block_id = match self.map_block_id(logical_block, true)? {
+            0 => return Err(Errno::ERROR),
+            block_id => block_id,
+        };
+
+        let Some(block_buf) = buffer::read(BufferKey {
+            dev: self.id.device,
+            block_nr: block_id,
+        }) else {
+            return Err(Errno::IO);
+        };
+
+        block_buf.modify(|block: &mut DirectoryBlock| {
+            block[entry_index] = dirent;
+        });
+
+        let end_offset = (slot + 1) * DIRECTORY_ENTRY_SIZE;
+        let mut inner = self.inner.lock();
+        if end_offset > inner.disk_inode.size as usize {
+            inner.disk_inode.size = end_offset as u32;
+        }
+        inner.disk_inode.modification_time = time::current_time();
+        inner.change_time = inner.disk_inode.modification_time;
+        inner.is_dirty = true;
+        Ok(())
     }
 }
 

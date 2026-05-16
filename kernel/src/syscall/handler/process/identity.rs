@@ -157,12 +157,18 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32> {
             inner.identity.uid = ruid as u16;
         }
         if euid > 0 {
-            let allow = old_ruid == euid as u16 || inner.identity.euid == euid as u16 || superuser;
+            let allow = old_ruid == euid as u16
+                || inner.identity.euid == euid as u16
+                || inner.identity.suid == euid as u16
+                || superuser;
             if !allow {
                 inner.identity.uid = old_ruid;
                 return Err(Errno::PERM);
             }
             inner.identity.euid = euid as u16;
+            if superuser {
+                inner.identity.suid = euid as u16;
+            }
         }
         Ok(0)
     })

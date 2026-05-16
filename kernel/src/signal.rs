@@ -52,6 +52,7 @@ pub trait SignalDeliveryFrame {
 enum PendingSignalAction {
     None,
     Deliver(DeliverAction),
+    Stop,
     Exit { signr: u32 },
 }
 
@@ -81,6 +82,8 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
             x if x == SigHandler::Default as u32 => {
                 if signr == Signal::Chld as u32 {
                     PendingSignalAction::None
+                } else if signr == Signal::Stop as u32 || signr == Signal::Tstp as u32 {
+                    PendingSignalAction::Stop
                 } else {
                     PendingSignalAction::Exit { signr }
                 }
@@ -103,6 +106,10 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
 
     match action {
         PendingSignalAction::None => {}
+        PendingSignalAction::Stop => {
+            task::with_current(|inner| inner.sched.state = task::TaskState::Stopped);
+            task::schedule();
+        }
         PendingSignalAction::Exit { signr } => task::exit_process(1 << (signr - 1)),
         PendingSignalAction::Deliver(deliver) => {
             if frame.deliver_signal(deliver) {
