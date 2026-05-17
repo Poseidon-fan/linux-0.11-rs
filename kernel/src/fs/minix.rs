@@ -156,10 +156,7 @@ impl Inode {
                 return;
             }
             // Read the indirect block and free every zone it references.
-            if let Some(buf) = buffer::read(BufferKey {
-                dev,
-                block_nr: u32::from(*zone),
-            }) {
+            if let Some(buf) = buffer::read(BufferKey::new(dev, u32::from(*zone))) {
                 buf.read(|table: &IndirectBlock| {
                     for &e in table {
                         fs.free_zone(e);
@@ -177,10 +174,9 @@ impl Inode {
         free(&mut disk.single_indirect_zone);
 
         if disk.double_indirect_zone != 0 {
-            if let Some(buf) = buffer::read(BufferKey {
-                dev,
-                block_nr: u32::from(disk.double_indirect_zone),
-            }) {
+            if let Some(buf) =
+                buffer::read(BufferKey::new(dev, u32::from(disk.double_indirect_zone)))
+            {
                 let entries = buf.read(|table: &IndirectBlock| *table);
                 for mut e in entries {
                     free(&mut e);
@@ -217,11 +213,8 @@ impl Inode {
                 return Ok(0);
             }
 
-            let buf = buffer::read(BufferKey {
-                dev: self.id.device,
-                block_nr: u32::from(block_nr),
-            })
-            .ok_or(Errno::IO)?;
+            let buf = buffer::read(BufferKey::new(self.id.device, u32::from(block_nr)))
+                .ok_or(Errno::IO)?;
 
             let zone = match (buf.read(|table: &IndirectBlock| table[index]), create) {
                 (0, true) => fs
@@ -311,10 +304,7 @@ impl Inode {
             if block_id == 0 {
                 target.fill(0);
             } else {
-                let Some(block_buf) = buffer::read(BufferKey {
-                    dev: self.id.device,
-                    block_nr: block_id,
-                }) else {
+                let Some(block_buf) = buffer::read(BufferKey::new(self.id.device, block_id)) else {
                     return if read > 0 { Ok(read) } else { Err(Errno::IO) };
                 };
                 block_buf.read(|block: &DataBlock| {
@@ -356,10 +346,7 @@ impl Inode {
                 }
             };
 
-            let Some(block_buf) = buffer::read(BufferKey {
-                dev: self.id.device,
-                block_nr: block_id,
-            }) else {
+            let Some(block_buf) = buffer::read(BufferKey::new(self.id.device, block_id)) else {
                 failure = Some(Errno::ERROR);
                 break;
             };
@@ -577,10 +564,7 @@ impl Inode {
                 continue;
             }
 
-            let Some(block_buf) = buffer::read(BufferKey {
-                dev: self.id.device,
-                block_nr: block_id,
-            }) else {
+            let Some(block_buf) = buffer::read(BufferKey::new(self.id.device, block_id)) else {
                 return Err(Errno::IO);
             };
 
@@ -609,10 +593,7 @@ impl Inode {
             block_id => block_id,
         };
 
-        let Some(block_buf) = buffer::read(BufferKey {
-            dev: self.id.device,
-            block_nr: block_id,
-        }) else {
+        let Some(block_buf) = buffer::read(BufferKey::new(self.id.device, block_id)) else {
             return Err(Errno::IO);
         };
 
@@ -638,7 +619,7 @@ impl MinixFileSystem {
     /// Minix filesystem.
     pub fn open(dev: DevNum) -> Option<Arc<Mutex<Self>>> {
         // Super block occupies logical block 1.
-        let sb_buf = buffer::read(BufferKey { dev, block_nr: 1 })?;
+        let sb_buf = buffer::read(BufferKey::new(dev, 1))?;
         let super_block: DiskSuperBlock = sb_buf.read(|sb: &DiskSuperBlock| *sb);
         drop(sb_buf);
 
@@ -656,20 +637,14 @@ impl MinixFileSystem {
 
         let mut inode_bitmap_bufs = Vec::new();
         for _ in 0..super_block.inode_bitmap_block_count {
-            let buf = buffer::read(BufferKey {
-                dev,
-                block_nr: block,
-            })?;
+            let buf = buffer::read(BufferKey::new(dev, block))?;
             block += 1;
             inode_bitmap_bufs.push(buf);
         }
 
         let mut zone_bitmap_bufs = Vec::new();
         for _ in 0..super_block.zone_bitmap_block_count {
-            let buf = buffer::read(BufferKey {
-                dev,
-                block_nr: block,
-            })?;
+            let buf = buffer::read(BufferKey::new(dev, block))?;
             block += 1;
             zone_bitmap_bufs.push(buf);
         }
@@ -707,11 +682,8 @@ impl MinixFileSystem {
     /// Panics when the backing inode-table block cannot be read.
     fn read_inode(&self, nr: InodeNumber) -> DiskInode {
         let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read(BufferKey {
-            dev: self.device,
-            block_nr,
-        })
-        .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
+        let buf = buffer::read(BufferKey::new(self.device, block_nr))
+            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
         buf.read(|block: &InodeBlock| block[offset])
     }
 
@@ -722,11 +694,8 @@ impl MinixFileSystem {
     /// Panics when the backing inode-table block cannot be read.
     fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
         let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read(BufferKey {
-            dev: self.device,
-            block_nr,
-        })
-        .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
+        let buf = buffer::read(BufferKey::new(self.device, block_nr))
+            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
         buf.modify(|block: &mut InodeBlock| block[offset] = *inode);
     }
 
@@ -753,10 +722,7 @@ impl MinixFileSystem {
     /// Allocate one fresh data zone and clear its backing cache block.
     fn alloc_zone(&self) -> Option<u16> {
         let zone = self.zone_bitmap.alloc()? as u16;
-        let buf = buffer::get(BufferKey {
-            dev: self.device,
-            block_nr: u32::from(zone),
-        });
+        let buf = buffer::get(BufferKey::new(self.device, u32::from(zone)));
         buf.fill_zero();
         Some(zone)
     }

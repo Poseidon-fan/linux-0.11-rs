@@ -206,10 +206,7 @@ fn load_exe_page(inode: &Inode, address_offset: u32, end_data: u32) -> Option<Ph
         let block_id = inode.map_block_id(first_block + i, false).ok()?;
 
         let buf = if block_id != 0 {
-            buffer::read(BufferKey {
-                dev: inode.id.device,
-                block_nr: block_id,
-            })
+            buffer::read(BufferKey::new(inode.id.device, block_id))
         } else {
             None
         };

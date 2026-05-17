@@ -69,16 +69,14 @@ pub fn sync_all() {
 
 /// Write dirty buffers belonging to `dev` back to disk.
 pub fn sync_device(dev: DevNum) {
-    sync_dirty(|key| key.dev == dev);
+    sync_dirty(|key| key.dev() == dev);
 }
 
 /// Unique key for one cached filesystem block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferKey {
-    /// Device number (`major:minor` encoded).
-    pub dev: DevNum,
-    /// Filesystem block number on the device.
-    pub block_nr: u32,
+    dev: DevNum,
+    block_nr: u32,
 }
 
 /// RAII reference to one cached block.
@@ -224,6 +222,23 @@ fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
 impl Drop for BufferHandle {
     fn drop(&mut self) {
         release_slot(&self.slot);
+    }
+}
+
+impl BufferKey {
+    /// Create a cache key for block `block_nr` on device `dev`.
+    pub fn new(dev: DevNum, block_nr: u32) -> Self {
+        Self { dev, block_nr }
+    }
+
+    /// Device number (`major:minor` encoded).
+    pub fn dev(self) -> DevNum {
+        self.dev
+    }
+
+    /// Filesystem block number on the device.
+    pub fn block_nr(self) -> u32 {
+        self.block_nr
     }
 }
 

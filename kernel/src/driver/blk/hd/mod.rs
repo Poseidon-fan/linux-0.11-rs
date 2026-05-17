@@ -232,7 +232,7 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<(), ()> {
             HARD_DISK_MAJOR as u8,
             (drive_index * PARTITION_SLOTS_PER_DRIVE) as u8,
         );
-        let Some(handle) = buffer::read(BufferKey { dev, block_nr: 0 }) else {
+        let Some(handle) = buffer::read(BufferKey::new(dev, 0)) else {
             println!("Unable to read partition table of drive {}", drive_index);
             return Err(());
         };

@@ -50,7 +50,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
     };
 
     // Check if the device is available.
-    let major = key.dev.major() as usize;
+    let major = key.dev().major() as usize;
     if major >= BLOCK_DEVICE_SLOT_COUNT
         || BLOCK_MANAGER.exclusive(|manager| manager.devices[major].is_none())
     {
@@ -86,9 +86,9 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
     if let Some(start) = BLOCK_MANAGER.exclusive(|manager| {
         manager.requests[request_slot] = Some(BlockRequest {
             io: BlockRequestIo {
-                dev: key.dev,
+                dev: key.dev(),
                 ty,
-                first_sector: key.block_nr * BUFFER_BLOCK_SECTOR_COUNT,
+                first_sector: key.block_nr() * BUFFER_BLOCK_SECTOR_COUNT,
                 sector_count: BUFFER_BLOCK_SECTOR_COUNT,
                 data_addr: buffer.data_addr(),
             },
