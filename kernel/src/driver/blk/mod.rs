@@ -64,7 +64,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
     }
 
     buffer.acquire_io();
-    if ty == BlockRequestType::Read && buffer.is_uptodate()
+    if ty == BlockRequestType::Read && buffer.is_up_to_date()
         || ty == BlockRequestType::Write && !buffer.is_dirty()
     {
         buffer.release_io();
@@ -88,7 +88,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
             io: BlockRequestIo {
                 dev: key.dev(),
                 ty,
-                first_sector: key.block_nr() * BUFFER_BLOCK_SECTOR_COUNT,
+                first_sector: key.block_number() * BUFFER_BLOCK_SECTOR_COUNT,
                 sector_count: BUFFER_BLOCK_SECTOR_COUNT,
                 data_addr: buffer.data_addr(),
             },
@@ -106,7 +106,7 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
 }
 
 /// Complete the current request for one block-device major.
-pub fn complete_current_request(major: usize, is_uptodate: bool) {
+pub fn complete_current_request(major: usize, is_up_to_date: bool) {
     let (request, device) = BLOCK_MANAGER.exclusive(|manager| manager.take_current_request(major));
     let BlockRequest {
         io,
@@ -120,7 +120,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
 
     match payload {
         RequestPayload::BufferCache(buffer) => {
-            buffer.set_uptodate(is_uptodate);
+            buffer.set_up_to_date(is_up_to_date);
             buffer.release_io();
         }
         RequestPayload::Paging(wait_queue) => wait_queue.wake(),
@@ -133,7 +133,7 @@ pub fn complete_current_request(major: usize, is_uptodate: bool) {
         }
     }
 
-    if !is_uptodate {
+    if !is_up_to_date {
         warn!(
             "block I/O error: dev {:04x}, sector {}",
             io.dev.0, io.first_sector

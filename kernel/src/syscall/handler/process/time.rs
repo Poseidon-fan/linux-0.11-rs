@@ -1,6 +1,6 @@
 //! Time and system-info syscall handlers (time, stime, times, uname).
 
-use user_lib::syscall::nr::Syscall;
+use user_lib::syscall::Syscall;
 
 use crate::{
     define_syscall_handler,

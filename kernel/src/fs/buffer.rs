@@ -16,7 +16,7 @@
 //! Each block is `BLOCK_SIZE` bytes and each cache slot points to one block.
 //! ```
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::ptr::NonNull;
 
 use hashbrown::HashMap;
@@ -24,7 +24,10 @@ use intrusive_collections::{LinkedList, LinkedListLink, intrusive_adapter};
 use lazy_static::lazy_static;
 
 use crate::{
-    driver::{DevNum, blk},
+    driver::{
+        DevNum,
+        blk::{self, BlockRequestType},
+    },
     fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
     sync::{BusyLock, KernelCell, Mutex},
@@ -50,33 +53,45 @@ pub fn get(key: BufferKey) -> BufferHandle {
 pub fn read(key: BufferKey) -> Option<BufferHandle> {
     let block = get(key);
 
-    if block.slot.is_uptodate() {
+    if block.slot.is_up_to_date() {
         return Some(block);
     }
-    blk::submit_request(blk::BlockRequestType::Read, false, Arc::clone(&block.slot));
+    blk::submit_request(BlockRequestType::Read, false, Arc::clone(&block.slot));
     block.slot.wait_io();
-    if block.slot.is_uptodate() {
+    if block.slot.is_up_to_date() {
         return Some(block);
     }
 
     None
 }
 
-/// Write all dirty buffers back to disk.
-pub fn sync_all() {
-    sync_dirty(|_| true);
-}
+/// Write back every cached buffer that is dirty and whose binding key
+/// satisfies `predicate`.
+///
+/// The matching slot set is snapshotted while the manager lock is held and
+/// then flushed sequentially, waiting for each block request to complete
+/// before submitting the next one. Buffers that become dirty after the
+/// snapshot is taken are not flushed by this call.
+pub fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
+    let slots: Vec<Arc<BufferSlot>> = BUFFER_MANAGER
+        .lock()
+        .buffer_index
+        .values()
+        .filter(|slot| slot.is_dirty() && slot.key().is_some_and(|key| predicate(&key)))
+        .map(Arc::clone)
+        .collect();
 
-/// Write dirty buffers belonging to `dev` back to disk.
-pub fn sync_device(dev: DevNum) {
-    sync_dirty(|key| key.dev() == dev);
+    for slot in slots {
+        blk::submit_request(BlockRequestType::Write, false, Arc::clone(&slot));
+        slot.wait_io();
+    }
 }
 
 /// Unique key for one cached filesystem block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferKey {
     dev: DevNum,
-    block_nr: u32,
+    block_number: u32,
 }
 
 /// RAII reference to one cached block.
@@ -91,7 +106,7 @@ pub struct BufferHandle {
 /// Metadata object for one block-sized cache entry.
 pub struct BufferSlot {
     /// Intrusive link node used by [`BufferList`].
-    buffers_link: LinkedListLink,
+    list_link: LinkedListLink,
     /// Start address of one `BLOCK_SIZE` data block.
     data: NonNull<u8>,
     /// Sleepable ownerless lock for in-flight buffer I/O.
@@ -109,12 +124,12 @@ struct BufferMeta {
     /// Dirty flag: data differs from on-disk copy.
     dirty: bool,
     /// Up-to-date flag: data is known valid.
-    uptodate: bool,
+    up_to_date: bool,
 }
 
 intrusive_adapter!(
     /// Adapter for storing `Arc<BufferSlot>` nodes in an intrusive linked list.
-    BufferAdapter = Arc<BufferSlot>: BufferSlot { buffers_link => LinkedListLink }
+    BufferAdapter = Arc<BufferSlot>: BufferSlot { list_link => LinkedListLink }
 );
 
 /// Intrusive list wrapper for all buffer slots.
@@ -200,23 +215,8 @@ fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
     if !slot.is_dirty() {
         return;
     }
-    blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(slot));
+    blk::submit_request(BlockRequestType::Write, false, Arc::clone(slot));
     slot.wait_io();
-}
-
-fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
-    let slots: alloc::vec::Vec<Arc<BufferSlot>> = BUFFER_MANAGER
-        .lock()
-        .buffer_index
-        .values()
-        .filter(|h| h.is_dirty() && h.key().is_some_and(|k| predicate(&k)))
-        .map(Arc::clone)
-        .collect();
-
-    for slot in slots {
-        blk::submit_request(blk::BlockRequestType::Write, false, Arc::clone(&slot));
-        slot.wait_io();
-    }
 }
 
 impl Drop for BufferHandle {
@@ -226,9 +226,9 @@ impl Drop for BufferHandle {
 }
 
 impl BufferKey {
-    /// Create a cache key for block `block_nr` on device `dev`.
-    pub fn new(dev: DevNum, block_nr: u32) -> Self {
-        Self { dev, block_nr }
+    /// Create a cache key for block `block_number` on device `dev`.
+    pub fn new(dev: DevNum, block_number: u32) -> Self {
+        Self { dev, block_number }
     }
 
     /// Device number (`major:minor` encoded).
@@ -237,8 +237,8 @@ impl BufferKey {
     }
 
     /// Filesystem block number on the device.
-    pub fn block_nr(self) -> u32 {
-        self.block_nr
+    pub fn block_number(self) -> u32 {
+        self.block_number
     }
 }
 
@@ -249,7 +249,7 @@ impl BufferMeta {
             key: None,
             ref_count: 0,
             dirty: false,
-            uptodate: false,
+            up_to_date: false,
         }
     }
 }
@@ -300,7 +300,7 @@ impl BufferHandle {
             block[off..end].copy_from_slice(src);
         });
         if off == 0 && src.len() == BLOCK_SIZE {
-            self.slot.set_uptodate(true);
+            self.slot.set_up_to_date(true);
         }
     }
 
@@ -308,7 +308,7 @@ impl BufferHandle {
     pub fn fill_zero(&self) {
         // SAFETY: the slot points to one initialized cache block.
         unsafe { core::ptr::write_bytes(self.slot.data.as_ptr(), 0, BLOCK_SIZE) };
-        self.slot.set_uptodate(true);
+        self.slot.set_up_to_date(true);
         self.slot.set_dirty(true);
     }
 }
@@ -317,7 +317,7 @@ impl BufferSlot {
     /// Build a slot that points to one already-reserved block address.
     fn new(data: NonNull<u8>) -> Self {
         Self {
-            buffers_link: LinkedListLink::new(),
+            list_link: LinkedListLink::new(),
             data,
             meta: KernelCell::new(BufferMeta::empty()),
             io_lock: BusyLock::new(),
@@ -348,7 +348,7 @@ impl BufferSlot {
     fn dec_ref(&self) {
         self.meta.exclusive(|meta| {
             if meta.ref_count == 0 {
-                panic!("Trying to free free buffer");
+                panic!("releasing buffer slot with zero reference count");
             }
             meta.ref_count -= 1;
         });
@@ -370,13 +370,13 @@ impl BufferSlot {
     }
 
     /// Mark the buffer up-to-date or invalid.
-    pub fn set_uptodate(&self, uptodate: bool) {
-        self.meta.exclusive(|meta| meta.uptodate = uptodate);
+    pub fn set_up_to_date(&self, up_to_date: bool) {
+        self.meta.exclusive(|meta| meta.up_to_date = up_to_date);
     }
 
     /// Return whether the buffer contents are valid.
-    pub fn is_uptodate(&self) -> bool {
-        self.meta.exclusive(|meta| meta.uptodate)
+    pub fn is_up_to_date(&self) -> bool {
+        self.meta.exclusive(|meta| meta.up_to_date)
     }
 
     /// Sleep until any in-flight I/O for this buffer completes.
@@ -409,7 +409,7 @@ impl BufferSlot {
         self.meta.exclusive(|meta| {
             meta.ref_count = 1;
             meta.dirty = false;
-            meta.uptodate = false;
+            meta.up_to_date = false;
         });
     }
 
@@ -438,7 +438,10 @@ impl BufferList {
     }
 
     /// Count current list nodes.
-    fn len(&self) -> usize {
+    ///
+    /// This is O(n) — it walks the intrusive list. Callers should treat this
+    /// as a diagnostic helper rather than a hot-path accessor.
+    fn count(&self) -> usize {
         self.list.iter().count()
     }
 
@@ -535,7 +538,7 @@ impl BufferManager {
 
     /// Return the current number of managed buffers.
     fn buffer_count(&self) -> usize {
-        self.buffers.len()
+        self.buffers.count()
     }
 
     /// Pin an existing buffer and increment its logical reference count.

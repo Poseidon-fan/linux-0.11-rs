@@ -2,7 +2,7 @@
 
 use core::mem;
 
-use user_lib::syscall::{fs::Stat, nr::Syscall};
+use user_lib::syscall::{Syscall, fs::Stat};
 
 use crate::{
     define_syscall_handler,

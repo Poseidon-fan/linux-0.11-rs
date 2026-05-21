@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 
-use user_lib::syscall::nr::Syscall;
+use user_lib::syscall::Syscall;
 
 use crate::{
     define_syscall_handler,
@@ -117,7 +117,7 @@ define_syscall_handler!(
         inode_table.evict_device(dev);
         drop(inode_table);
 
-        buffer::sync_device(dev);
+        buffer::sync_dirty(|key| key.dev() == dev);
         MOUNT_TABLE.lock().remove_by_device(dev);
         Ok(0)
     }

@@ -66,12 +66,10 @@ pub extern "C" fn system_call() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
-    // Check if the syscall number is valid.
-    if (ctx.syscall_nr() as usize) >= SYSCALL_TABLE.len() {
+    if (ctx.syscall_number() as usize) >= SYSCALL_TABLE.len() {
         return -(Errno::NOSYS.code() as i32);
     }
-    // Call the syscall handler.
-    let handler = SYSCALL_TABLE[ctx.syscall_nr() as usize];
+    let handler = SYSCALL_TABLE[ctx.syscall_number() as usize];
     let result = handler(ctx);
 
     // Schedule if needed.

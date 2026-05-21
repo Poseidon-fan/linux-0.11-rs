@@ -3,7 +3,7 @@
 use alloc::string::String;
 use core::{arch::asm, mem};
 
-use user_lib::syscall::{nr::Syscall, signal::NSIG};
+use user_lib::syscall::{Syscall, signal::NSIG};
 
 use crate::{
     define_syscall_handler,

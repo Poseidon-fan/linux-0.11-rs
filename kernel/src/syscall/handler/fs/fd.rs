@@ -4,8 +4,8 @@ use alloc::{sync::Arc, vec};
 use core::mem;
 
 use user_lib::syscall::{
+    Syscall,
     fs::{AccessMode, FcntlCmd, OpenFlags, OpenOptions, Stat, Whence},
-    nr::Syscall,
 };
 
 use crate::{

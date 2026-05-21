@@ -208,12 +208,12 @@ impl Inode {
         };
 
         let mut inner = self.inner.lock();
-        let resolve_indirect_entry = |block_nr: u16, index: usize| -> Result<u16> {
-            if block_nr == 0 {
+        let resolve_indirect_entry = |block_number: u16, index: usize| -> Result<u16> {
+            if block_number == 0 {
                 return Ok(0);
             }
 
-            let buf = buffer::read(BufferKey::new(self.id.device, u32::from(block_nr)))
+            let buf = buffer::read(BufferKey::new(self.id.device, u32::from(block_number)))
                 .ok_or(Errno::IO)?;
 
             let zone = match (buf.read(|table: &IndirectBlock| table[index]), create) {
@@ -674,16 +674,16 @@ impl MinixFileSystem {
 
     /// Read one on-disk inode by its number.
     ///
-    /// The caller must ensure `nr` is a valid, non-zero inode number within
-    /// the filesystem's inode count.
+    /// The caller must ensure `inode_number` is a valid, non-zero inode
+    /// number within the filesystem's inode count.
     ///
     /// # Panics
     ///
     /// Panics when the backing inode-table block cannot be read.
-    fn read_inode(&self, nr: InodeNumber) -> DiskInode {
-        let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read(BufferKey::new(self.device, block_nr))
-            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
+    fn read_inode(&self, inode_number: InodeNumber) -> DiskInode {
+        let (block_number, offset) = self.inode_block_position(inode_number);
+        let buf = buffer::read(BufferKey::new(self.device, block_number))
+            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_number));
         buf.read(|block: &InodeBlock| block[offset])
     }
 
@@ -692,21 +692,21 @@ impl MinixFileSystem {
     /// # Panics
     ///
     /// Panics when the backing inode-table block cannot be read.
-    fn write_inode(&self, nr: InodeNumber, inode: &DiskInode) {
-        let (block_nr, offset) = self.inode_block_position(nr);
-        let buf = buffer::read(BufferKey::new(self.device, block_nr))
-            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_nr));
+    fn write_inode(&self, inode_number: InodeNumber, inode: &DiskInode) {
+        let (block_number, offset) = self.inode_block_position(inode_number);
+        let buf = buffer::read(BufferKey::new(self.device, block_number))
+            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_number));
         buf.modify(|block: &mut InodeBlock| block[offset] = *inode);
     }
 
-    fn inode_block_position(&self, nr: InodeNumber) -> (u32, usize) {
-        let index = (nr.0 - 1) as usize;
-        let block_nr = 2
+    fn inode_block_position(&self, inode_number: InodeNumber) -> (u32, usize) {
+        let index = (inode_number.0 - 1) as usize;
+        let block_number = 2
             + self.super_block.inode_bitmap_block_count as u32
             + self.super_block.zone_bitmap_block_count as u32
             + (index / INODES_PER_BLOCK) as u32;
         let offset = index % INODES_PER_BLOCK;
-        (block_nr, offset)
+        (block_number, offset)
     }
 
     /// Allocate a fresh inode number from the inode bitmap and write a zeroed
@@ -714,9 +714,9 @@ impl MinixFileSystem {
     ///
     /// Returns `None` when the bitmap is full.
     fn alloc_inode(&self) -> Option<InodeNumber> {
-        let nr = InodeNumber(self.inode_bitmap.alloc()? as u16);
-        self.write_inode(nr, &DiskInode::zeroed());
-        Some(nr)
+        let inode_number = InodeNumber(self.inode_bitmap.alloc()? as u16);
+        self.write_inode(inode_number, &DiskInode::zeroed());
+        Some(inode_number)
     }
 
     /// Allocate one fresh data zone and clear its backing cache block.

@@ -565,14 +565,14 @@ impl VgaConsole {
 
     // ---- Insert / delete ----
 
-    fn insert_chars(&mut self, mut nr: u32) {
-        if nr > self.columns as u32 {
-            nr = self.columns as u32;
+    fn insert_chars(&mut self, mut count: u32) {
+        if count > self.columns as u32 {
+            count = self.columns as u32;
         }
-        if nr == 0 {
-            nr = 1;
+        if count == 0 {
+            count = 1;
         }
-        for _ in 0..nr {
+        for _ in 0..count {
             self.insert_char_at_cursor();
         }
     }
@@ -589,14 +589,14 @@ impl VgaConsole {
         }
     }
 
-    fn delete_chars(&mut self, mut nr: u32) {
-        if nr > self.columns as u32 {
-            nr = self.columns as u32;
+    fn delete_chars(&mut self, mut count: u32) {
+        if count > self.columns as u32 {
+            count = self.columns as u32;
         }
-        if nr == 0 {
-            nr = 1;
+        if count == 0 {
+            count = 1;
         }
-        for _ in 0..nr {
+        for _ in 0..count {
             self.delete_char_at_cursor();
         }
     }
@@ -615,36 +615,36 @@ impl VgaConsole {
         unsafe { ptr::write_volatile(p.wrapping_add(i - self.cursor_x), self.erase_cell) };
     }
 
-    fn insert_lines(&mut self, mut nr: u32) {
-        if nr > self.lines as u32 {
-            nr = self.lines as u32;
+    fn insert_lines(&mut self, mut count: u32) {
+        if count > self.lines as u32 {
+            count = self.lines as u32;
         }
-        if nr == 0 {
-            nr = 1;
+        if count == 0 {
+            count = 1;
         }
         let old_top = self.scroll_top;
         let old_bottom = self.scroll_bottom;
         self.scroll_top = self.cursor_y;
         self.scroll_bottom = self.lines;
-        for _ in 0..nr {
+        for _ in 0..count {
             self.scroll_down();
         }
         self.scroll_top = old_top;
         self.scroll_bottom = old_bottom;
     }
 
-    fn delete_lines(&mut self, mut nr: u32) {
-        if nr > self.lines as u32 {
-            nr = self.lines as u32;
+    fn delete_lines(&mut self, mut count: u32) {
+        if count > self.lines as u32 {
+            count = self.lines as u32;
         }
-        if nr == 0 {
-            nr = 1;
+        if count == 0 {
+            count = 1;
         }
         let old_top = self.scroll_top;
         let old_bottom = self.scroll_bottom;
         self.scroll_top = self.cursor_y;
         self.scroll_bottom = self.lines;
-        for _ in 0..nr {
+        for _ in 0..count {
             self.scroll_up();
         }
         self.scroll_top = old_top;

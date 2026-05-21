@@ -1,7 +1,7 @@
 //! Signal-related syscall handlers (kill, signal, sigaction, alarm, pause, mask).
 
 use user_lib::syscall::{
-    nr::Syscall,
+    Syscall,
     signal::{NSIG, SigFlags, Signal},
 };
 

@@ -1,6 +1,6 @@
 //! Miscellaneous syscall wrappers for legacy or currently unimplemented entries.
 
-use crate::{syscall::nr::Syscall, use_syscall};
+use crate::{syscall::Syscall, use_syscall};
 
 use_syscall!(Syscall::Break => break_() -> u32);
 use_syscall!(Syscall::Stty => stty(fd: u32, arg: u32) -> u32);

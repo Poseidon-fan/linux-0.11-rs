@@ -1,6 +1,6 @@
 //! `waitpid` syscall — reap child processes.
 
-use user_lib::syscall::{nr::Syscall, signal::Signal};
+use user_lib::syscall::{Syscall, signal::Signal};
 
 use crate::{
     define_syscall_handler,

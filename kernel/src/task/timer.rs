@@ -89,7 +89,7 @@ impl SignalDeliveryFrame for TimerInterruptFrame {
         let new_esp = signal::push_user_signal_frame(
             user_esp,
             action.restorer,
-            action.signr,
+            action.signal_number,
             action.blocked,
             action.sa_flags,
             regs,

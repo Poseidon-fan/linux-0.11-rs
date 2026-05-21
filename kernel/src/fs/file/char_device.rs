@@ -72,11 +72,11 @@ fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32> {
             Tty::device(minor).ioctl(minor, cmd, arg)
         }
         5 => {
-            let tty_nr = task::with_current(|inner| inner.tty);
-            if tty_nr < 0 {
+            let tty_index = task::with_current(|inner| inner.tty);
+            if tty_index < 0 {
                 return Err(Errno::PERM);
             }
-            let minor = tty_nr as usize;
+            let minor = tty_index as usize;
             Tty::device(minor).ioctl(minor, cmd, arg)
         }
         _ => Err(Errno::NOTTY),
@@ -118,11 +118,11 @@ fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usi
 
 /// Major 5 — read/write the calling process's controlling terminal.
 fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize> {
-    let tty_nr = task::with_current(|inner| inner.tty);
-    if tty_nr < 0 {
+    let tty_index = task::with_current(|inner| inner.tty);
+    if tty_index < 0 {
         return Err(Errno::PERM);
     }
-    rw_ttyx(dir, tty_nr as usize, buf, count)
+    rw_ttyx(dir, tty_index as usize, buf, count)
 }
 
 /// Major 1 — memory pseudo-devices dispatched by minor number.

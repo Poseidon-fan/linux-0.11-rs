@@ -22,12 +22,15 @@ pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32>];
 #[macro_export]
 macro_rules! define_syscall_handler {
     (
-        $nr_path:path = $nr:literal,
+        $number_path:path = $number:literal,
         fn $fn_name:ident($ctx:ident : &mut SyscallContext) -> $ret:ty $body:block
     ) => {
-        const _: () = assert!($nr_path as u32 == $nr, "syscall number mismatch with user_lib");
+        const _: () = assert!(
+            $number_path as u32 == $number,
+            "syscall number mismatch with user_lib"
+        );
 
-        #[::linkme::distributed_slice($crate::syscall::SYSCALL_TABLE, $nr)]
+        #[::linkme::distributed_slice($crate::syscall::SYSCALL_TABLE, $number)]
         fn $fn_name($ctx: &mut SyscallContext) -> $ret $body
     };
 }

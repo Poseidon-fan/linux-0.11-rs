@@ -98,14 +98,14 @@ fn block_read(dev: DevNum, pos: &mut usize, buf: &mut [u8]) -> Result<usize> {
     let mut total_read = 0;
 
     while count > 0 {
-        let block_nr = (*pos / BLOCK_SIZE) as u32;
+        let block_number = (*pos / BLOCK_SIZE) as u32;
         let offset_in_block = *pos % BLOCK_SIZE;
         let mut chars = BLOCK_SIZE - offset_in_block;
         if chars > count {
             chars = count;
         }
 
-        let key = BufferKey::new(dev, block_nr);
+        let key = BufferKey::new(dev, block_number);
         let Some(handle) = buffer::read(key) else {
             return if total_read > 0 {
                 Ok(total_read)
@@ -132,14 +132,14 @@ fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize> {
     let mut total_written = 0;
 
     while count > 0 {
-        let block_nr = (*pos / BLOCK_SIZE) as u32;
+        let block_number = (*pos / BLOCK_SIZE) as u32;
         let offset_in_block = *pos % BLOCK_SIZE;
         let mut chars = BLOCK_SIZE - offset_in_block;
         if chars > count {
             chars = count;
         }
 
-        let key = BufferKey::new(dev, block_nr);
+        let key = BufferKey::new(dev, block_number);
 
         // For a full-block overwrite we only need a buffer slot; for a
         // partial write we must read the existing content first.

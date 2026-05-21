@@ -8,7 +8,7 @@
 //! ```text
 //! User stack after delivery (growing downward):
 //!
-//!   restorer | signr | [blocked] | eax | ecx | edx | eflags | old_eip
+//!   restorer | signal_number | [blocked] | eax | ecx | edx | eflags | old_eip
 //! ```
 
 use user_lib::syscall::signal::{NSIG, SigFlags, SigHandler, Signal};
@@ -33,7 +33,7 @@ pub struct SignalSavedRegisters {
 pub struct DeliverAction {
     pub handler: u32,
     pub restorer: u32,
-    pub signr: u32,
+    pub signal_number: u32,
     pub blocked: u32,
     pub sa_flags: u32,
     pub sa_mask: u32,
@@ -53,7 +53,7 @@ enum PendingSignalAction {
     None,
     Deliver(DeliverAction),
     Stop,
-    Exit { signr: u32 },
+    Exit { signal_number: u32 },
 }
 
 /// Checks for one pending unblocked signal and delivers it before returning
@@ -74,18 +74,20 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
             return PendingSignalAction::None;
         }
         inner.signal_info.clear(bit as u32 + 1);
-        let signr = (bit + 1) as u32;
+        let signal_number = (bit + 1) as u32;
         let sa = inner.signal_info.sigaction[bit];
 
         match sa.sa_handler {
             x if x == SigHandler::Ignore as u32 => PendingSignalAction::None,
             x if x == SigHandler::Default as u32 => {
-                if signr == Signal::Chld as u32 {
+                if signal_number == Signal::Chld as u32 {
                     PendingSignalAction::None
-                } else if signr == Signal::Stop as u32 || signr == Signal::Tstp as u32 {
+                } else if signal_number == Signal::Stop as u32
+                    || signal_number == Signal::Tstp as u32
+                {
                     PendingSignalAction::Stop
                 } else {
-                    PendingSignalAction::Exit { signr }
+                    PendingSignalAction::Exit { signal_number }
                 }
             }
             handler => {
@@ -95,7 +97,7 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
                 PendingSignalAction::Deliver(DeliverAction {
                     handler,
                     restorer: sa.sa_restorer,
-                    signr,
+                    signal_number,
                     blocked: inner.signal_info.blocked,
                     sa_flags: sa.sa_flags,
                     sa_mask: sa.sa_mask,
@@ -110,7 +112,9 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
             task::with_current(|inner| inner.sched.state = task::TaskState::Stopped);
             task::schedule();
         }
-        PendingSignalAction::Exit { signr } => task::exit_process(1 << (signr - 1)),
+        PendingSignalAction::Exit { signal_number } => {
+            task::exit_process(1 << (signal_number - 1));
+        }
         PendingSignalAction::Deliver(deliver) => {
             if frame.deliver_signal(deliver) {
                 task::with_current(|inner| {
@@ -127,14 +131,14 @@ pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
 /// layout (top to bottom) is:
 ///
 /// ```text
-/// restorer | signr | [blocked] | eax | ecx | edx | eflags | old_eip
+/// restorer | signal_number | [blocked] | eax | ecx | edx | eflags | old_eip
 /// ```
 ///
 /// The `blocked` slot is omitted when `SA_NOMASK` is set.
 pub fn push_user_signal_frame(
     user_esp: u32,
     restorer: u32,
-    signr: u32,
+    signal_number: u32,
     blocked: u32,
     sa_flags: u32,
     regs: SignalSavedRegisters,
@@ -152,7 +156,7 @@ pub fn push_user_signal_frame(
     };
 
     push(restorer);
-    push(signr);
+    push(signal_number);
     if !has_nomask {
         push(blocked);
     }

@@ -21,7 +21,7 @@ use crate::{
 /// | ESI                |  0x04
 /// | EDI                |  0x08
 /// | EBP                |  0x0C
-/// | EAX (syscall nr)   |  0x10
+/// | EAX (syscall num)  |  0x10
 /// | EBX (arg1)         |  0x14
 /// | ECX (arg2)         |  0x18
 /// | EDX (arg3)         |  0x1C
@@ -81,7 +81,7 @@ pub struct SyscallContext {
 impl SyscallContext {
     /// Returns the syscall number (value of EAX when `int 0x80` was executed).
     #[inline]
-    pub fn syscall_nr(&self) -> u32 {
+    pub fn syscall_number(&self) -> u32 {
         self.eax
     }
 
@@ -113,7 +113,7 @@ impl SignalDeliveryFrame for SyscallContext {
         let new_esp = signal::push_user_signal_frame(
             self.user_esp,
             action.restorer,
-            action.signr,
+            action.signal_number,
             action.blocked,
             action.sa_flags,
             regs,

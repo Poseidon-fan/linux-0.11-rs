@@ -3,7 +3,7 @@
 use bitflags::bitflags;
 
 use crate::{
-    syscall::{SyscallArg, nr::Syscall},
+    syscall::{Syscall, SyscallArg},
     use_syscall,
 };
 

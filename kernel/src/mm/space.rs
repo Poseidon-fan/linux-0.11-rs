@@ -39,7 +39,7 @@ pub const TASK_LINEAR_SIZE: u32 = (PDES_PER_PROCESS * ENTRIES_PER_TABLE * PAGE_S
 ///   represents one reference-counted stake; dropping it decrements
 ///   `mem_map`.
 /// - `pde_base` records the starting PDE index in the shared page directory
-///   (`task_nr * 16`), used by `Drop` to clear the entries.
+///   (`task_index * 16`), used by `Drop` to clear the entries.
 pub struct MemorySpace {
     page_tables: [Option<PageTable>; PDES_PER_PROCESS],
     data_frames: HashMap<LinPageNum, PhysFrame>,
@@ -49,7 +49,7 @@ pub struct MemorySpace {
 }
 
 /// Number of PTEs to copy when forking from task 0 (640KB).
-const TASK0_NR_PAGES: usize = 0xA0000 / PAGE_SIZE;
+const TASK0_PAGE_COUNT: usize = 0xA0000 / PAGE_SIZE;
 
 /// Number of page directory entries per process (64MB / 4MB = 16).
 const PDES_PER_PROCESS: usize = 16;
@@ -59,11 +59,11 @@ impl MemorySpace {
     ///
     /// No page tables or data frames are allocated; the caller is
     /// responsible for populating them (e.g. via [`cow_copy`]).
-    pub fn new(task_nr: usize) -> Self {
+    pub fn new(task_index: usize) -> Self {
         Self {
             page_tables: [const { None }; PDES_PER_PROCESS],
             data_frames: HashMap::new(),
-            pde_base: task_nr * PDES_PER_PROCESS,
+            pde_base: task_index * PDES_PER_PROCESS,
         }
     }
 
@@ -221,13 +221,13 @@ impl MemorySpace {
     ///
     /// # Special case: task 0 (`pde_base == 0`)
     ///
-    /// When forking from task 0, only the first [`TASK0_NR_PAGES`] PTEs
+    /// When forking from task 0, only the first [`TASK0_PAGE_COUNT`] PTEs
     /// (640KB) are copied.  Pages below LOW_MEM are shared without
     /// reference counting (they are kernel/BIOS memory that is never freed).
     ///
     /// # Arguments
     ///
-    /// - `child_nr`: task slot number for the child process
+    /// - `child_index`: task slot index for the child process
     /// - `data_limit`: byte-granular data segment limit (from LDT), used
     ///   to compute how many PDEs (4MB blocks) need to be copied.
     ///
@@ -237,18 +237,18 @@ impl MemorySpace {
     /// page table frame could not be allocated.  On failure, any partially
     /// built state is cleaned up automatically when the returned
     /// `MemorySpace` is dropped.
-    pub fn cow_copy(&mut self, child_nr: usize, data_limit: u32) -> Result<MemorySpace> {
+    pub fn cow_copy(&mut self, child_index: usize, data_limit: u32) -> Result<MemorySpace> {
         let parent_pde_start = self.pde_base;
-        let child_pde_start = child_nr * PDES_PER_PROCESS;
+        let child_pde_start = child_index * PDES_PER_PROCESS;
         let is_task0 = parent_pde_start == 0;
 
-        let nr_pdes = (data_limit as usize)
+        let pde_count = (data_limit as usize)
             .div_ceil(ENTRIES_PER_TABLE * PAGE_SIZE)
             .min(PDES_PER_PROCESS);
 
-        let mut child = MemorySpace::new(child_nr);
+        let mut child = MemorySpace::new(child_index);
 
-        for i in 0..nr_pdes {
+        for i in 0..pde_count {
             let parent_pde = super::read_pde(parent_pde_start + i);
             if !parent_pde.is_present() {
                 continue;
@@ -271,16 +271,16 @@ impl MemorySpace {
                     .as_mut_ptr::<[PageTableEntry; ENTRIES_PER_TABLE]>()
             };
 
-            let nr_entries = if is_task0 {
-                TASK0_NR_PAGES
+            let entry_count = if is_task0 {
+                TASK0_PAGE_COUNT
             } else {
                 ENTRIES_PER_TABLE
             };
 
             let child_ptes = child_pt.as_pte_array_mut();
-            for (j, (parent_pte, child_pte)) in parent_ptes[..nr_entries]
+            for (j, (parent_pte, child_pte)) in parent_ptes[..entry_count]
                 .iter_mut()
-                .zip(&mut child_ptes[..nr_entries])
+                .zip(&mut child_ptes[..entry_count])
                 .enumerate()
                 .filter(|(_, (p, _))| p.is_present())
             {

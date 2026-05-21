@@ -19,7 +19,7 @@ mod signal;
 mod time;
 mod waitpid;
 
-use user_lib::syscall::nr::Syscall;
+use user_lib::syscall::Syscall;
 
 use crate::{define_syscall_handler, error::Result, syscall::context::SyscallContext, task};
 

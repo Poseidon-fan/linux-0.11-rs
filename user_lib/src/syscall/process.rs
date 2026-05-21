@@ -1,6 +1,6 @@
 //! Process-management syscall wrappers.
 
-use crate::{syscall::nr::Syscall, use_syscall};
+use crate::{syscall::Syscall, use_syscall};
 
 use_syscall!(Syscall::Setup => setup(drive_info_addr: *const u8) -> u32);
 use_syscall!(Syscall::Exit => exit(status: u32) -> u32);
