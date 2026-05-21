@@ -56,8 +56,7 @@ pub fn read(key: BufferKey) -> Option<BufferHandle> {
     if block.slot.is_up_to_date() {
         return Some(block);
     }
-    block::submit_request(BlockRequestType::Read, false, Arc::clone(&block.slot));
-    block.slot.wait_io();
+    submit_and_wait(BlockRequestType::Read, &block.slot);
     if block.slot.is_up_to_date() {
         return Some(block);
     }
@@ -81,9 +80,8 @@ pub fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
         .map(Arc::clone)
         .collect();
 
-    for slot in slots {
-        block::submit_request(BlockRequestType::Write, false, Arc::clone(&slot));
-        slot.wait_io();
+    for slot in &slots {
+        submit_and_wait(BlockRequestType::Write, slot);
     }
 }
 
@@ -215,7 +213,17 @@ fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
     if !slot.is_dirty() {
         return;
     }
-    block::submit_request(BlockRequestType::Write, false, Arc::clone(slot));
+    submit_and_wait(BlockRequestType::Write, slot);
+}
+
+// Submit a non-prefetch block request for `slot` and block on the slot's
+// I/O lock until the device layer releases it.
+//
+// `submit_request` may no-op early (already up-to-date read, or clean
+// write), in which case the I/O lock is released before this function
+// returns and `wait_io` falls through immediately.
+fn submit_and_wait(ty: BlockRequestType, slot: &Arc<BufferSlot>) {
+    block::submit_request(ty, false, Arc::clone(slot));
     slot.wait_io();
 }
 
