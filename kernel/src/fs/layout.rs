@@ -104,13 +104,21 @@ pub struct InodeMode(pub u16);
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct DiskSuperBlock {
+    /// Total inodes in the filesystem (bit 0 of the inode bitmap is reserved).
     pub inode_count: u16,
+    /// Total zones (block-sized units) in the device.
     pub zone_count: u16,
+    /// Number of blocks holding the inode bitmap.
     pub inode_bitmap_block_count: u16,
+    /// Number of blocks holding the zone bitmap.
     pub zone_bitmap_block_count: u16,
+    /// First zone number available for file data; zones below this hold metadata.
     pub first_data_zone: u16,
+    /// `log2(blocks_per_zone)`; only `0` (zone == block) is supported by this kernel.
     pub log_zone_size: u16,
+    /// Maximum addressable file size in bytes.
     pub max_file_size: u32,
+    /// Filesystem magic; must equal [`MINIX_SUPER_MAGIC`].
     pub magic: u16,
 }
 
@@ -118,28 +126,42 @@ pub struct DiskSuperBlock {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct DiskInode {
+    /// File type bits and permission/special bits; see [`InodeMode`].
     pub mode: InodeMode,
+    /// Owning user ID.
     pub user_id: u16,
+    /// File size in bytes (for directories: total entry-table size).
     pub size: u32,
+    /// Last data modification time, in seconds since the epoch.
     pub modification_time: u32,
+    /// Owning group ID (Minix V1 stores only 8 bits).
     pub group_id: u8,
+    /// Hard-link count; the inode is freed when this reaches zero.
     pub link_count: u8,
+    /// First [`DIRECT_ZONE_COUNT`] zone numbers; `0` represents a sparse hole.
     pub direct_zones: [u16; DIRECT_ZONE_COUNT],
+    /// Zone holding a block of direct zone pointers; `0` if unused.
     pub single_indirect_zone: u16,
+    /// Zone holding a block of single-indirect zone pointers; `0` if unused.
     pub double_indirect_zone: u16,
 }
 
 /// Minix on-disk directory entry.
 #[repr(C)]
 pub struct DiskDirectoryEntry {
+    /// Inode this name resolves to; `0` marks the slot as deleted.
     pub inode_number: InodeNumber,
+    /// NUL-padded filename; entries shorter than [`MINIX_NAME_LENGTH`] end at the first NUL.
     pub name: [u8; MINIX_NAME_LENGTH],
 }
 
+/// One full block reinterpreted as 64-bit bitmap words.
 pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
 /// One full block of on-disk inodes, used when reading inode table blocks.
 pub type InodeBlock = [DiskInode; INODES_PER_BLOCK];
+/// One full block of raw bytes.
 pub type DataBlock = [u8; BLOCK_SIZE];
+/// One full block of directory entries, used when scanning a directory block.
 pub type DirectoryBlock = [DiskDirectoryEntry; DIRECTORY_ENTRIES_PER_BLOCK];
 
 impl DiskInode {
@@ -166,7 +188,12 @@ impl InodeMode {
     /// Mask that selects the special and permission bits below the type field.
     pub const FLAGS_MASK: u16 = 0o007777;
 
-    /// Decode the inode type field if the stored value is recognized.
+    /// Decode the inode type field.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the masked type bits do not match any [`InodeType`] variant,
+    /// which indicates on-disk corruption.
     pub const fn file_type(self) -> InodeType {
         match self.0 & Self::TYPE_MASK {
             0o100000 => InodeType::Regular,
@@ -174,7 +201,7 @@ impl InodeMode {
             0o060000 => InodeType::BlockDevice,
             0o020000 => InodeType::CharacterDevice,
             0o010000 => InodeType::Fifo,
-            _ => panic!("invalid inode type"),
+            _ => panic!("unrecognized inode type bits in mode word"),
         }
     }
 
@@ -185,6 +212,7 @@ impl InodeMode {
 }
 
 impl DiskDirectoryEntry {
+    /// Return an all-zero "deleted" directory entry.
     pub const fn empty() -> Self {
         Self {
             inode_number: InodeNumber(0),
@@ -192,6 +220,11 @@ impl DiskDirectoryEntry {
         }
     }
 
+    /// Build a directory entry binding `name` to `inode_number`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name.len()` exceeds [`MINIX_NAME_LENGTH`].
     pub fn new(name: &str, inode_number: InodeNumber) -> Self {
         let mut bytes = [0; MINIX_NAME_LENGTH];
         bytes[..name.len()].copy_from_slice(name.as_bytes());
@@ -201,6 +234,12 @@ impl DiskDirectoryEntry {
         }
     }
 
+    /// Return the entry name as a string slice, trimmed at the first NUL.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored bytes are not valid UTF-8. Callers that allow
+    /// arbitrary byte filenames must validate the slice themselves.
     pub fn name(&self) -> &str {
         let len = self
             .name
@@ -211,6 +250,9 @@ impl DiskDirectoryEntry {
     }
 }
 
+// On-disk layout invariants enforced at compile time. Any change to the
+// `Disk*` structs above must keep these sizes intact, otherwise filesystem
+// images written by other tools would be misinterpreted.
 const _: () = assert!(size_of::<DiskSuperBlock>() == 20);
 const _: () = assert!(size_of::<DiskInode>() == 32);
 const _: () = assert!(size_of::<DiskDirectoryEntry>() == 16);
