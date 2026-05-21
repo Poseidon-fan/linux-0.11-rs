@@ -28,25 +28,52 @@ use crate::{
     task, time,
 };
 
-/// Maximum number of bitmap blocks cached from one Minix super block.
-const MINIX_BITMAP_BLOCK_SLOTS: usize = 8;
-
-/// Number of runtime inode slots kept in the global inode table.
-const INODE_TABLE_CAPACITY: usize = 32;
-
-/// Number of 16-bit zone pointers stored in one indirect block.
-const INDIRECT_ENTRY_COUNT: usize = BLOCK_SIZE / size_of::<u16>();
-
-/// Maximum logical block count representable by direct and indirect pointers.
-const MAX_LOGICAL_BLOCKS: usize =
-    DIRECT_ZONE_COUNT + INDIRECT_ENTRY_COUNT + INDIRECT_ENTRY_COUNT * INDIRECT_ENTRY_COUNT;
-
-/// One indirect block interpreted as 16-bit Minix zone identifiers.
-type IndirectBlock = [u16; INDIRECT_ENTRY_COUNT];
-
 lazy_static! {
     /// Global runtime inode table protected by a mutex.
     pub static ref INODE_TABLE: Mutex<InodeTable> = Mutex::new(InodeTable::new());
+}
+
+/// Runtime inode identifier used in the global inode table and mount lookups.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InodeId {
+    /// Device the inode lives on.
+    pub device: DevNum,
+    /// Inode number within the device's filesystem.
+    pub inode_number: InodeNumber,
+}
+
+/// Runtime inode object.
+pub struct Inode {
+    /// Stable identifier; never changes after construction.
+    pub id: InodeId,
+    /// Weak handle back to the owning filesystem; upgrade fails after unmount.
+    pub file_system: Weak<Mutex<MinixFileSystem>>,
+    /// Mutable per-inode state guarded by a mutex.
+    pub inner: Mutex<InodeInner>,
+}
+
+/// Mutable per-inode state held inside [`Inode::inner`].
+pub struct InodeInner {
+    /// Cached copy of the on-disk inode record.
+    pub disk_inode: DiskInode,
+    /// Set when `disk_inode` (or any field below) needs writing back to disk.
+    pub is_dirty: bool,
+    /// Last access time, in seconds since the epoch.
+    pub access_time: u32,
+    /// Last metadata change time, in seconds since the epoch.
+    pub change_time: u32,
+}
+
+/// Shared filesystem instance mounted from one block device.
+pub struct MinixFileSystem {
+    /// Block device this filesystem was loaded from.
+    pub device: DevNum,
+    /// Cached copy of the on-disk super block.
+    pub super_block: DiskSuperBlock,
+    /// Inode allocation bitmap, pinned in the buffer cache.
+    pub inode_bitmap: Bitmap<MINIX_BITMAP_BLOCK_CAPACITY>,
+    /// Data-zone allocation bitmap, pinned in the buffer cache.
+    pub zone_bitmap: Bitmap<MINIX_BITMAP_BLOCK_CAPACITY>,
 }
 
 /// Fixed-capacity table that caches runtime inode objects.
@@ -57,62 +84,46 @@ lazy_static! {
 /// new inodes. A clock pointer provides round-robin fairness during
 /// eviction scans.
 pub struct InodeTable {
+    /// Fixed-capacity cache slots; `None` means the slot is empty.
     slots: [Option<Arc<Inode>>; INODE_TABLE_CAPACITY],
+    /// Clock-hand position for the next eviction scan.
     clock: usize,
 }
 
-/// Runtime inode identifier used in the global inode table and mount lookups.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct InodeId {
-    pub device: DevNum,
-    pub inode_number: InodeNumber,
-}
+/// Maximum number of bitmap blocks cached from one Minix super block.
+const MINIX_BITMAP_BLOCK_CAPACITY: usize = 8;
 
-/// Shared filesystem instance mounted from one block device.
-pub struct MinixFileSystem {
-    pub device: DevNum,
-    pub super_block: DiskSuperBlock,
-    pub inode_bitmap: Bitmap<MINIX_BITMAP_BLOCK_SLOTS>,
-    pub zone_bitmap: Bitmap<MINIX_BITMAP_BLOCK_SLOTS>,
-}
+/// Number of runtime inode slots kept in the global inode table.
+const INODE_TABLE_CAPACITY: usize = 32;
 
-/// Runtime inode object.
-pub struct Inode {
-    pub id: InodeId,
-    pub file_system: Weak<Mutex<MinixFileSystem>>,
-    pub inner: Mutex<InodeInner>,
-}
+/// Number of 16-bit zone pointers stored in one indirect block.
+const INDIRECT_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / size_of::<u16>();
 
-pub struct InodeInner {
-    pub disk_inode: DiskInode,
-    pub is_dirty: bool,
-    pub access_time: u32,
-    pub change_time: u32,
+/// Maximum logical block count representable by direct and indirect pointers.
+const MAX_LOGICAL_BLOCKS: usize = DIRECT_ZONE_COUNT
+    + INDIRECT_ENTRIES_PER_BLOCK
+    + INDIRECT_ENTRIES_PER_BLOCK * INDIRECT_ENTRIES_PER_BLOCK;
+
+/// One indirect block interpreted as 16-bit Minix zone identifiers.
+type IndirectBlock = [u16; INDIRECT_ENTRIES_PER_BLOCK];
+
+impl InodeId {
+    /// Construct an inode identifier from a device number and inode number.
+    pub const fn new(device: DevNum, inode_number: InodeNumber) -> Self {
+        Self {
+            device,
+            inode_number,
+        }
+    }
 }
 
 impl Inode {
     /// Return the file type of this inode.
     ///
-    /// Acquires `self.inner` — must NOT be called when `inner` is already locked.
+    /// Acquires `inner`; do not call while the current task already holds
+    /// `inner`, or the recursive lock will deadlock.
     pub fn file_type(&self) -> InodeType {
         self.inner.lock().disk_inode.mode.file_type()
-    }
-
-    /// Write this inode back to its inode-table block and clear the dirty flag.
-    ///
-    /// If the inode is not dirty or its backing filesystem is no longer
-    /// available, this function returns without modifying on-disk state.
-    fn sync(&self) {
-        let mut inner = self.inner.lock();
-        if !inner.is_dirty {
-            return;
-        }
-
-        if let Some(fs) = self.file_system.upgrade() {
-            fs.lock()
-                .write_inode(self.id.inode_number, &inner.disk_inode);
-            inner.is_dirty = false;
-        }
     }
 
     /// Build a `Stat` structure from this inode's metadata.
@@ -151,40 +162,12 @@ impl Inode {
         let mut inner = self.inner.lock();
         let disk = &mut inner.disk_inode;
 
-        let free = |zone: &mut u16| {
-            if *zone == 0 {
-                return;
-            }
-            // Read the indirect block and free every zone it references.
-            if let Some(buf) = buffer::read(BufferKey::new(dev, u32::from(*zone))) {
-                buf.read(|table: &IndirectBlock| {
-                    for &e in table {
-                        fs.free_zone(e);
-                    }
-                });
-            }
+        for zone in &mut disk.direct_zones {
             fs.free_zone(*zone);
             *zone = 0;
-        };
-
-        for z in &mut disk.direct_zones {
-            fs.free_zone(*z);
-            *z = 0;
         }
-        free(&mut disk.single_indirect_zone);
-
-        if disk.double_indirect_zone != 0 {
-            if let Some(buf) =
-                buffer::read(BufferKey::new(dev, u32::from(disk.double_indirect_zone)))
-            {
-                let entries = buf.read(|table: &IndirectBlock| *table);
-                for mut e in entries {
-                    free(&mut e);
-                }
-            }
-            fs.free_zone(disk.double_indirect_zone);
-            disk.double_indirect_zone = 0;
-        }
+        free_zone_tree(&fs, dev, core::mem::take(&mut disk.single_indirect_zone), 1);
+        free_zone_tree(&fs, dev, core::mem::take(&mut disk.double_indirect_zone), 2);
 
         disk.size = 0;
         let now = time::current_time();
@@ -251,7 +234,7 @@ impl Inode {
                 }
                 zone
             }
-            _ if logic_id < INDIRECT_ZONE_INDEX + INDIRECT_ENTRY_COUNT => {
+            _ if logic_id < INDIRECT_ZONE_INDEX + INDIRECT_ENTRIES_PER_BLOCK => {
                 let (root_zone, allocated) = try_alloc(inner.disk_inode.single_indirect_zone);
                 if allocated {
                     inner.disk_inode.single_indirect_zone = root_zone;
@@ -267,10 +250,11 @@ impl Inode {
                     inner.is_dirty = true;
                     inner.change_time = time::current_time();
                 }
-                let double_indirect_start = DOUBLE_INDIRECT_ZONE_INDEX + INDIRECT_ENTRY_COUNT - 1;
+                let double_indirect_start =
+                    DOUBLE_INDIRECT_ZONE_INDEX + INDIRECT_ENTRIES_PER_BLOCK - 1;
                 let block = logic_id - double_indirect_start;
-                let outer_index = block / INDIRECT_ENTRY_COUNT;
-                let inner_index = block % INDIRECT_ENTRY_COUNT;
+                let outer_index = block / INDIRECT_ENTRIES_PER_BLOCK;
+                let inner_index = block % INDIRECT_ENTRIES_PER_BLOCK;
                 let second_level_zone = resolve_indirect_entry(root_zone, outer_index)?;
                 resolve_indirect_entry(second_level_zone, inner_index)?
             }
@@ -279,6 +263,12 @@ impl Inode {
         Ok(u32::from(block_id))
     }
 
+    /// Read up to `buf.len()` bytes starting at byte `offset` of this file.
+    ///
+    /// Returns the number of bytes actually read, which may be less than
+    /// `buf.len()` when the request is clipped by end-of-file. Returns
+    /// `Ok(0)` when `offset` is at or past EOF. Sparse holes in the file
+    /// are returned as zero bytes. Updates the access time on success.
     pub fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -321,6 +311,13 @@ impl Inode {
         Ok(read)
     }
 
+    /// Write `buf` starting at byte `offset` of this file, allocating blocks
+    /// on demand and extending the file size when needed.
+    ///
+    /// Returns the number of bytes actually written. A short write is
+    /// reported as `Ok(written)` rather than `Err` whenever any progress was
+    /// made; only a complete failure surfaces the underlying error. Updates
+    /// the modification and change times.
     pub fn write_at(&self, offset: usize, buf: &[u8]) -> Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -328,27 +325,23 @@ impl Inode {
 
         let mut pos = offset;
         let mut written = 0usize;
-        let mut failure = None;
 
-        while written < buf.len() {
+        let outcome: Result<()> = loop {
+            if written >= buf.len() {
+                break Ok(());
+            }
+
             let logical_block = pos / BLOCK_SIZE;
             let block_offset = pos % BLOCK_SIZE;
             let chunk_len = (buf.len() - written).min(BLOCK_SIZE - block_offset);
-            let block_id = match self.map_block_id(logical_block, true) {
-                Ok(0) => {
-                    failure = Some(Errno::ERROR);
-                    break;
-                }
-                Ok(block_id) => block_id,
-                Err(errno) => {
-                    failure = Some(errno);
-                    break;
-                }
-            };
 
+            let block_id = match self.map_block_id(logical_block, true) {
+                Ok(0) => break Err(Errno::ERROR),
+                Ok(id) => id,
+                Err(errno) => break Err(errno),
+            };
             let Some(block_buf) = buffer::read(BufferKey::new(self.id.device, block_id)) else {
-                failure = Some(Errno::ERROR);
-                break;
+                break Err(Errno::ERROR);
             };
 
             let source = &buf[written..written + chunk_len];
@@ -358,7 +351,7 @@ impl Inode {
 
             pos += chunk_len;
             written += chunk_len;
-        }
+        };
 
         let now = time::current_time();
         let mut inner = self.inner.lock();
@@ -369,10 +362,26 @@ impl Inode {
         inner.change_time = now;
         inner.is_dirty = true;
 
-        if written > 0 {
-            Ok(written)
-        } else {
-            Err(failure.unwrap_or(Errno::ERROR))
+        match (written, outcome) {
+            (0, Err(errno)) => Err(errno),
+            _ => Ok(written),
+        }
+    }
+
+    /// Write this inode back to its inode-table block and clear the dirty flag.
+    ///
+    /// If the inode is not dirty or its backing filesystem is no longer
+    /// available, this function returns without modifying on-disk state.
+    fn sync(&self) {
+        let mut inner = self.inner.lock();
+        if !inner.is_dirty {
+            return;
+        }
+
+        if let Some(fs) = self.file_system.upgrade() {
+            fs.lock()
+                .write_inode(self.id.inode_number, &inner.disk_inode);
+            inner.is_dirty = false;
         }
     }
 }
@@ -398,8 +407,16 @@ impl Inode {
 
 // Directory operations
 impl Inode {
+    /// Look up `name` in this directory and return the matching inode number.
+    ///
+    /// Returns `Ok(None)` if no live entry has that name. Returns an error
+    /// only when an underlying block read fails.
     pub fn lookup(&self, name: &str) -> Result<Option<InodeNumber>> {
-        assert!(self.file_type() == InodeType::Directory);
+        assert_eq!(
+            self.file_type(),
+            InodeType::Directory,
+            "lookup called on non-directory inode"
+        );
 
         self.find_directory_entry(|_, dirent| {
             if dirent.inode_number.0 == 0 {
@@ -418,16 +435,18 @@ impl Inode {
     /// Reuses the first empty slot (inode_number == 0) if one exists; otherwise
     /// appends at the end, allocating a new data block when needed.
     pub fn add_entry(&self, name: &str, inode_number: InodeNumber) -> Result<()> {
-        assert!(self.file_type() == InodeType::Directory);
+        assert_eq!(
+            self.file_type(),
+            InodeType::Directory,
+            "add_entry called on non-directory inode"
+        );
 
         let entry_count = self.inner.lock().disk_inode.size as usize / DIRECTORY_ENTRY_SIZE;
 
-        // Scan for an empty slot.
         let slot = self
             .find_directory_entry(|slot, dirent| (dirent.inode_number.0 == 0).then_some(slot))?
             .unwrap_or(entry_count);
 
-        // Write the new entry at the chosen slot.
         self.write_directory_entry(slot, DiskDirectoryEntry::new(name, inode_number))
     }
 
@@ -482,13 +501,9 @@ impl Inode {
         let fs = self.file_system.upgrade().ok_or(Errno::IO)?;
         let inode_number = fs.lock().alloc_inode().ok_or(Errno::NOSPC)?;
 
-        let inode = INODE_TABLE.lock().acquire_raw(
-            InodeId {
-                device: self.id.device,
-                inode_number,
-            },
-            &fs,
-        );
+        let inode = INODE_TABLE
+            .lock()
+            .acquire_raw(InodeId::new(self.id.device, inode_number), &fs);
 
         let (euid, egid, umask) =
             task::with_current(|inner| (inner.identity.euid, inner.identity.egid, inner.fs.umask));
@@ -518,7 +533,11 @@ impl Inode {
 
     /// Check whether this directory contains only `.` and `..` entries.
     pub fn is_empty_directory(&self) -> Result<bool> {
-        assert!(self.file_type() == InodeType::Directory);
+        assert_eq!(
+            self.file_type(),
+            InodeType::Directory,
+            "is_empty_directory called on non-directory inode"
+        );
 
         let non_dot_entry = self.find_directory_entry(|_, dirent| {
             if dirent.inode_number.0 == 0 {
@@ -536,7 +555,11 @@ impl Inode {
 
     /// Remove the directory entry matching `name` and return its inode number.
     pub fn remove_entry(&self, name: &str) -> Result<InodeNumber> {
-        assert!(self.file_type() == InodeType::Directory);
+        assert_eq!(
+            self.file_type(),
+            InodeType::Directory,
+            "remove_entry called on non-directory inode"
+        );
 
         let Some((slot, inum)) = self.find_directory_entry(|slot, dirent| {
             (dirent.inode_number.0 != 0 && dirent.name() == name)
@@ -683,7 +706,7 @@ impl MinixFileSystem {
     fn read_inode(&self, inode_number: InodeNumber) -> DiskInode {
         let (block_number, offset) = self.inode_block_position(inode_number);
         let buf = buffer::read(BufferKey::new(self.device, block_number))
-            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_number));
+            .unwrap_or_else(|| panic!("unable to read inode block {}", block_number));
         buf.read(|block: &InodeBlock| block[offset])
     }
 
@@ -695,10 +718,15 @@ impl MinixFileSystem {
     fn write_inode(&self, inode_number: InodeNumber, inode: &DiskInode) {
         let (block_number, offset) = self.inode_block_position(inode_number);
         let buf = buffer::read(BufferKey::new(self.device, block_number))
-            .unwrap_or_else(|| panic!("unable to read i-node block {}", block_number));
+            .unwrap_or_else(|| panic!("unable to read inode block {}", block_number));
         buf.modify(|block: &mut InodeBlock| block[offset] = *inode);
     }
 
+    /// Locate one inode within the inode-table region.
+    ///
+    /// Returns `(block_number, slot_in_block)`, where `block_number` is the
+    /// absolute device block holding the inode and `slot_in_block` is the
+    /// `InodeBlock` array index inside that block.
     fn inode_block_position(&self, inode_number: InodeNumber) -> (u32, usize) {
         let index = (inode_number.0 - 1) as usize;
         let block_number = 2
@@ -762,7 +790,7 @@ impl InodeTable {
     /// Panics if every slot is actively referenced by external code and no
     /// eviction candidate exists.
     pub fn acquire_raw(&mut self, id: InodeId, fs: &Arc<Mutex<MinixFileSystem>>) -> Arc<Inode> {
-        assert_ne!(id.device.0, 0, "iget with dev==0");
+        assert_ne!(id.device.0, 0, "acquire_raw called with zero device number");
 
         if let Some(inode) = self.lookup(id) {
             return inode;
@@ -833,9 +861,7 @@ impl InodeTable {
             if !arc.inner.lock().is_dirty {
                 return Some(slot_index);
             }
-            if dirty_fallback.is_none() {
-                dirty_fallback = Some(slot_index);
-            }
+            dirty_fallback.get_or_insert(slot_index);
         }
 
         dirty_fallback
@@ -886,4 +912,29 @@ impl InodeTable {
             victim.sync();
         }
     }
+}
+
+/// Recursively free a zone tree rooted at `zone`.
+///
+/// `levels` is the depth of the indirection tree:
+/// - `0`: `zone` is a data zone; free it directly.
+/// - `1`: `zone` is a single-indirect block whose entries are data zones.
+/// - `2`: `zone` is a double-indirect block whose entries are single-indirect
+///   blocks.
+///
+/// Zero entries (sparse holes) and unreadable blocks are skipped silently;
+/// the indirection root itself is always returned to the bitmap.
+fn free_zone_tree(fs: &MinixFileSystem, dev: DevNum, zone: u16, levels: u32) {
+    if zone == 0 {
+        return;
+    }
+    if levels > 0 {
+        if let Some(buf) = buffer::read(BufferKey::new(dev, u32::from(zone))) {
+            let entries = buf.read(|table: &IndirectBlock| *table);
+            for child in entries {
+                free_zone_tree(fs, dev, child, levels - 1);
+            }
+        }
+    }
+    fs.free_zone(zone);
 }

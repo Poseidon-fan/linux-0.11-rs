@@ -1,7 +1,9 @@
-//! Path parsing and pathname-resolution helpers.
+//! Pathname-resolution helpers built on top of [`std`]-style string splitting.
 //!
-//! This module keeps pathname parsing separate from inode traversal so later
-//! resolution code can reuse one structured view of the input path.
+//! Path components are obtained directly from `path.split('/')`, with `.` and
+//! `..` recognised as special cases during traversal. The final component is
+//! returned verbatim to the caller so name-based lookups see the raw bytes
+//! the user requested.
 
 use alloc::sync::Arc;
 
@@ -17,6 +19,16 @@ use crate::{
     task, time,
 };
 
+bitflags! {
+    /// Permission mask bits.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct AccessMask: u16 {
+        const MAY_EXEC  = 1;
+        const MAY_WRITE = 2;
+        const MAY_READ  = 4;
+    }
+}
+
 /// Resolve one pathname to its final inode.
 pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
     let (dir, basename) = resolve_parent(path)?;
@@ -25,10 +37,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
         dir
     } else {
         let inum = dir.lookup(basename).ok()??;
-        resolve_inode(InodeId {
-            device: dir.id.device,
-            inode_number: inum,
-        })
+        resolve_inode(InodeId::new(dir.id.device, inum))
     };
 
     {
@@ -43,32 +52,34 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
 /// Resolve a pathname to its parent directory inode and the final component name.
 ///
 /// Returns `(parent_directory_inode, basename)` where `basename` is the last
-/// path component as a raw string.  When the path ends with `/`, `basename` is
+/// path component as a raw string. When the path ends with `/`, `basename` is
 /// empty — the caller decides how to handle that case.
 ///
 /// The returned parent directory is guaranteed to be a directory inode with
 /// search (execute) permission for the current task.
 pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
-    let parsed_path = ParsedPath::parse(path)?;
-    let fs_ctx = task::with_current(|inner| inner.fs.clone());
+    if path.is_empty() {
+        return None;
+    }
 
+    let ends_with_slash = path.ends_with('/');
+    let fs_ctx = task::with_current(|inner| inner.fs.clone());
     let root_inode = fs_ctx.root_directory.clone()?;
 
-    let mut current_inode = if parsed_path.is_absolute() {
+    let mut current_inode = if path.starts_with('/') {
         Arc::clone(&root_inode)
     } else {
         fs_ctx.current_directory.clone()?
     };
 
-    let basename = match path.rfind('/') {
-        Some(i) => &path[i + 1..],
-        None => path,
-    };
+    let mut basename = "";
+    let mut components = path.split('/').filter(|c| !c.is_empty()).peekable();
 
-    let mut components = parsed_path.components().peekable();
-    while let Some(component) = components.next() {
-        // The last component is the basename — don't traverse it.
-        if !basename.is_empty() && components.peek().is_none() {
+    while let Some(name) = components.next() {
+        // The final component is the basename unless the path ended with '/',
+        // in which case every component (including the last) is traversed.
+        if components.peek().is_none() && !ends_with_slash {
+            basename = name;
             break;
         }
 
@@ -78,22 +89,16 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
             return None;
         }
 
-        match component {
-            PathComponent::CurrentDirectory => {}
-            PathComponent::ParentDirectory => {
-                current_inode = resolve_dotdot(&current_inode, &root_inode)?;
-            }
-            PathComponent::Name(name) => {
+        match name {
+            "." => {}
+            ".." => current_inode = resolve_dotdot(&current_inode, &root_inode)?,
+            _ => {
                 let child_inum = current_inode.lookup(name).ok()??;
-                current_inode = resolve_inode(InodeId {
-                    device: current_inode.id.device,
-                    inode_number: child_inum,
-                });
+                current_inode = resolve_inode(InodeId::new(current_inode.id.device, child_inum));
             }
         }
     }
 
-    // Verify the parent is a searchable directory before returning it.
     if !basename.is_empty()
         && (current_inode.file_type() != InodeType::Directory
             || !check_permission(&current_inode, AccessMask::MAY_EXEC))
@@ -102,37 +107,6 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
     }
 
     Some((current_inode, basename))
-}
-
-/// Resolve one `..` step from `current_inode`.
-///
-/// Pathname rule: task root acts as a pseudo-root,
-/// and traversing `..` from a mounted filesystem root first moves back to the
-/// covered mount-point inode before reading that directory's `..` entry.
-fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
-    if current_inode.id == root_inode.id {
-        return Some(Arc::clone(root_inode));
-    }
-
-    let parent_lookup_base = MOUNT_TABLE
-        .lock()
-        .mount_point_for_root(current_inode.id)
-        .unwrap_or_else(|| Arc::clone(current_inode));
-
-    let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
-    Some(resolve_inode(InodeId {
-        device: parent_lookup_base.id.device,
-        inode_number: parent_inode_number,
-    }))
-}
-
-bitflags! {
-    /// Permission mask bits.
-    pub struct AccessMask: u16 {
-        const MAY_EXEC  = 1;
-        const MAY_WRITE = 2;
-        const MAY_READ  = 4;
-    }
 }
 
 /// Check whether the current task has `mask` access to `inode`.
@@ -160,107 +134,35 @@ pub fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) 
         return false;
     }
 
-    let mut mode = disk.mode.0;
-    if uid == disk.user_id {
-        mode >>= 6;
+    let mode = if uid == disk.user_id {
+        disk.mode.0 >> 6
     } else if gid == disk.group_id as u16 {
-        mode >>= 3;
-    }
+        disk.mode.0 >> 3
+    } else {
+        disk.mode.0
+    };
 
     (mode & mask.bits() & 0o7) == mask.bits() || uid == 0
 }
 
-/// One parsed pathname that preserves high-level path semantics.
+/// Resolve one `..` step from `current_inode`.
 ///
-/// The parser keeps the original borrowed string and exposes structural
-/// information through accessors and an iterator over path components.
-struct ParsedPath<'a> {
-    raw: &'a str,
-    is_absolute: bool,
-}
-
-/// One logical pathname component yielded during parsing.
-enum PathComponent<'a> {
-    /// One ordinary non-special directory entry name.
-    Name(&'a str),
-    /// The current-directory marker `.`.
-    CurrentDirectory,
-    /// The parent-directory marker `..`.
-    ParentDirectory,
-}
-
-/// Iterator over logical pathname components.
-///
-/// Empty components caused by repeated `/` are skipped so callers see the same
-/// hierarchy the filesystem traversal logic should observe.
-struct PathComponents<'a> {
-    remaining: &'a str,
-}
-
-impl<'a> ParsedPath<'a> {
-    /// Parse one pathname string into a reusable structured form.
-    ///
-    /// Returns `None` when `path` is empty, matching the original kernel's
-    /// treatment of an empty pathname as invalid input.
-    fn parse(path: &'a str) -> Option<Self> {
-        if path.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            raw: path,
-            is_absolute: path.starts_with('/'),
-        })
+/// Pathname rule: task root acts as a pseudo-root,
+/// and traversing `..` from a mounted filesystem root first moves back to the
+/// covered mount-point inode before reading that directory's `..` entry.
+fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
+    if current_inode.id == root_inode.id {
+        return Some(Arc::clone(root_inode));
     }
 
-    /// Return whether the pathname starts from the task root directory.
-    fn is_absolute(&self) -> bool {
-        self.is_absolute
-    }
+    let parent_lookup_base = MOUNT_TABLE
+        .lock()
+        .mount_point_for_root(current_inode.id)
+        .unwrap_or_else(|| Arc::clone(current_inode));
 
-    /// Iterate over logical pathname components.
-    fn components(&self) -> PathComponents<'a> {
-        PathComponents {
-            remaining: self.raw,
-        }
-    }
-}
-
-impl<'a> PathComponents<'a> {
-    /// Extract the next non-empty raw component and advance the iterator.
-    fn next_raw_component(&mut self) -> Option<&'a str> {
-        while let Some(stripped) = self.remaining.strip_prefix('/') {
-            self.remaining = stripped;
-        }
-
-        if self.remaining.is_empty() {
-            return None;
-        }
-
-        match self.remaining.find('/') {
-            Some(index) => {
-                let component = &self.remaining[..index];
-                self.remaining = &self.remaining[index + 1..];
-                Some(component)
-            }
-            None => {
-                let component = self.remaining;
-                self.remaining = "";
-                Some(component)
-            }
-        }
-    }
-}
-
-impl<'a> Iterator for PathComponents<'a> {
-    type Item = PathComponent<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let component = self.next_raw_component()?;
-        Some(match component {
-            "." => PathComponent::CurrentDirectory,
-            ".." => PathComponent::ParentDirectory,
-            name => PathComponent::Name(name),
-        })
-    }
+    let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
+    Some(resolve_inode(InodeId::new(
+        parent_lookup_base.id.device,
+        parent_inode_number,
+    )))
 }

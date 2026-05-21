@@ -61,10 +61,7 @@ define_syscall_handler!(
                     if open_options.contains(OpenOptions::EXCLUSIVE) {
                         return Err(Errno::EXIST);
                     }
-                    let inode = resolve_inode(InodeId {
-                        device: dir.id.device,
-                        inode_number: inum,
-                    });
+                    let inode = resolve_inode(InodeId::new(dir.id.device, inum));
                     let file_type = inode.file_type();
                     if file_type == InodeType::Directory
                         && effective_access_mode != AccessMode::ReadOnly

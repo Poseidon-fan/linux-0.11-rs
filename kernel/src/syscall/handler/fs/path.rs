@@ -88,10 +88,7 @@ define_syscall_handler!(
         }
 
         let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
-        let inode = resolve_inode(InodeId {
-            device: dir.id.device,
-            inode_number: inum,
-        });
+        let inode = resolve_inode(InodeId::new(dir.id.device, inum));
         if inode.file_type() == InodeType::Directory {
             return Err(Errno::ISDIR);
         }
@@ -210,10 +207,7 @@ define_syscall_handler!(
         }
 
         let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
-        let inode = resolve_inode(InodeId {
-            device: dir.id.device,
-            inode_number: inum,
-        });
+        let inode = resolve_inode(InodeId::new(dir.id.device, inum));
         if inode.file_type() != InodeType::Directory {
             return Err(Errno::NOTDIR);
         }

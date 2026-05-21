@@ -68,13 +68,9 @@ define_syscall_handler!(
         }
 
         let new_fs = MinixFileSystem::open(dev).ok_or(Errno::BUSY)?;
-        let root_inode = INODE_TABLE.lock().acquire_raw(
-            InodeId {
-                device: dev,
-                inode_number: ROOT_INODE_NUMBER,
-            },
-            &new_fs,
-        );
+        let root_inode = INODE_TABLE
+            .lock()
+            .acquire_raw(InodeId::new(dev, ROOT_INODE_NUMBER), &new_fs);
 
         mt.insert(Arc::new(Mount {
             device: dev,

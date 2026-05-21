@@ -50,13 +50,9 @@ pub fn mount_root() {
     // Bootstrap the root mount entry with one raw inode lookup first because
     // the generic `resolve_inode()` path relies on the mount table to resolve
     // devices.
-    let boot_root_inode = minix::INODE_TABLE.lock().acquire_raw(
-        InodeId {
-            device: dev,
-            inode_number: ROOT_INODE_NUMBER,
-        },
-        &root_fs,
-    );
+    let boot_root_inode = minix::INODE_TABLE
+        .lock()
+        .acquire_raw(InodeId::new(dev, ROOT_INODE_NUMBER), &root_fs);
 
     let mount_entry = Arc::new(Mount {
         device: dev,
@@ -70,10 +66,7 @@ pub fn mount_root() {
         .insert(mount_entry)
         .expect("No free mount table slot");
 
-    let root_inode = resolve_inode(InodeId {
-        device: dev,
-        inode_number: ROOT_INODE_NUMBER,
-    });
+    let root_inode = resolve_inode(InodeId::new(dev, ROOT_INODE_NUMBER));
 
     task::with_current(|inner| {
         inner.fs.root_directory = Some(Arc::clone(&root_inode));
