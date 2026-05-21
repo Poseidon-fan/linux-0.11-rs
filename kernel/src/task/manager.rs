@@ -76,14 +76,14 @@ impl TaskManager {
                 .iter()
                 .enumerate()
                 .skip(1)
-                .filter_map(|(idx, task)| {
+                .filter_map(|(slot, task)| {
                     let task = task.as_ref()?;
                     task.pcb.inner.exclusive(|inner| {
                         (inner.sched.state == TaskState::Running)
-                            .then_some((idx, inner.sched.counter))
+                            .then_some((slot, inner.sched.counter))
                     })
                 })
-                .max_by_key(|&(idx, counter)| (counter, idx));
+                .max_by_key(|&(slot, counter)| (counter, slot));
 
             match candidate {
                 Some((next, counter)) if counter > 0 => {

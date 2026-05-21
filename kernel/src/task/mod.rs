@@ -27,7 +27,7 @@ use user_lib::syscall::signal::Signal;
 pub use wait_queue::WaitQueue;
 
 use crate::{
-    driver::chr::tty::Tty,
+    driver::character::tty::Tty,
     pmio::{inb_p, outb, outb_p},
     segment,
     sync::assert_can_schedule,

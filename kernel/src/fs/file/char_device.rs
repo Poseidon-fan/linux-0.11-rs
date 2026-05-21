@@ -19,7 +19,7 @@ use user_lib::syscall::fs::Stat;
 
 use super::File;
 use crate::{
-    driver::{DevNum, chr::tty::Tty},
+    driver::{DevNum, character::tty::Tty},
     error::{Errno, Result},
     fs::minix::Inode,
     segment::uaccess,

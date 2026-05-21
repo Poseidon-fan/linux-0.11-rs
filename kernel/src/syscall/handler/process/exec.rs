@@ -78,37 +78,37 @@ impl AoutHeader {
 struct ArgumentPages {
     pages: [Option<PhysFrame>; MAX_ARG_PAGES],
     /// Write cursor, counts down from `MAX_ARG_PAGES * PAGE_SIZE`.
-    p: usize,
+    write_cursor: usize,
 }
 
 impl ArgumentPages {
     fn new() -> Self {
         Self {
             pages: [const { None }; MAX_ARG_PAGES],
-            p: MAX_ARG_PAGES * PAGE_SIZE - 4,
+            write_cursor: MAX_ARG_PAGES * PAGE_SIZE - 4,
         }
     }
 
-    /// Ensure the page for byte offset `off` is allocated; returns a raw
-    /// pointer into the page at that offset.
-    fn ensure_page(&mut self, off: usize) -> Result<*mut u8> {
-        let page_idx = off / PAGE_SIZE;
-        if self.pages[page_idx].is_none() {
-            self.pages[page_idx] = Some(frame::alloc().ok_or(Errno::NOMEM)?);
+    /// Ensure the page for byte `offset` is allocated; returns a raw pointer
+    /// into the page at that offset.
+    fn ensure_page(&mut self, offset: usize) -> Result<*mut u8> {
+        let page_index = offset / PAGE_SIZE;
+        if self.pages[page_index].is_none() {
+            self.pages[page_index] = Some(frame::alloc().ok_or(Errno::NOMEM)?);
         }
-        let frame = self.pages[page_idx].as_ref().unwrap();
+        let frame = self.pages[page_index].as_ref().unwrap();
         let phys = frame.ppn.addr();
-        let page_off = off % PAGE_SIZE;
-        Ok(phys.byte_add(page_off))
+        let page_offset = offset % PAGE_SIZE;
+        Ok(phys.byte_add(page_offset))
     }
 
     /// Write one byte at the current cursor and advance downward.
     fn push_byte(&mut self, byte: u8) -> Result<()> {
-        if self.p == 0 {
+        if self.write_cursor == 0 {
             return Err(Errno::NOMEM);
         }
-        self.p -= 1;
-        let ptr = self.ensure_page(self.p)?;
+        self.write_cursor -= 1;
+        let ptr = self.ensure_page(self.write_cursor)?;
         unsafe { *ptr = byte };
         Ok(())
     }
@@ -119,8 +119,8 @@ impl ArgumentPages {
         let len = user_strlen(user_ptr);
         self.push_byte(0)?;
         for i in (0..len).rev() {
-            let b = uaccess::read_u8(unsafe { (user_ptr as *const u8).add(i) });
-            self.push_byte(b)?;
+            let byte = uaccess::read_u8(unsafe { (user_ptr as *const u8).add(i) });
+            self.push_byte(byte)?;
         }
         Ok(())
     }
@@ -130,21 +130,21 @@ impl ArgumentPages {
     /// lowest address (matching the original semantics).
     fn copy_user_strings(&mut self, argv_ptr: *const u32, argc: usize) -> Result<()> {
         for i in (0..argc).rev() {
-            let str_ptr = uaccess::read_u32(unsafe { argv_ptr.add(i) });
-            if str_ptr == 0 {
+            let string_ptr = uaccess::read_u32(unsafe { argv_ptr.add(i) });
+            if string_ptr == 0 {
                 panic!("copy_user_strings: NULL pointer in argv at index {}", i);
             }
-            self.copy_one_user_string(str_ptr)?;
+            self.copy_one_user_string(string_ptr)?;
         }
         Ok(())
     }
 
     /// Copy one kernel-space byte slice (with appended NUL) into the argument
     /// pages. Used for #! interpreter name / argument.
-    fn copy_kernel_string(&mut self, s: &[u8]) -> Result<()> {
+    fn copy_kernel_string(&mut self, bytes: &[u8]) -> Result<()> {
         self.push_byte(0)?;
-        for &b in s.iter().rev() {
-            self.push_byte(b)?;
+        for &byte in bytes.iter().rev() {
+            self.push_byte(byte)?;
         }
         Ok(())
     }
@@ -177,23 +177,23 @@ fn count_user_ptrs(argv: *const u32) -> usize {
     if argv.is_null() {
         return 0;
     }
-    let mut n = 0;
+    let mut count = 0;
     loop {
-        let ptr = uaccess::read_u32(unsafe { argv.add(n) });
+        let ptr = uaccess::read_u32(unsafe { argv.add(count) });
         if ptr == 0 {
             break;
         }
-        n += 1;
+        count += 1;
     }
-    n
+    count
 }
 
 /// Measure a user-space NUL-terminated string's length (excluding NUL).
 fn user_strlen(addr: u32) -> usize {
     let mut len = 0usize;
     loop {
-        let b = uaccess::read_u8(unsafe { (addr as *const u8).add(len) });
-        if b == 0 {
+        let byte = uaccess::read_u8(unsafe { (addr as *const u8).add(len) });
+        if byte == 0 {
             break;
         }
         len += 1;
@@ -254,7 +254,7 @@ fn parse_shebang(block: &[u8]) -> Result<(String, String, Option<String>)> {
         return Err(Errno::NOEXEC);
     }
 
-    let (interp, i_arg) = match line.find([' ', '\t']) {
+    let (interp_path, interp_arg) = match line.find([' ', '\t']) {
         Some(pos) => {
             let arg = line[pos..].trim_start();
             (&line[..pos], if arg.is_empty() { None } else { Some(arg) })
@@ -262,21 +262,24 @@ fn parse_shebang(block: &[u8]) -> Result<(String, String, Option<String>)> {
         None => (line, None),
     };
 
-    let i_name = interp.rsplit('/').next().unwrap_or(interp);
+    let interp_name = interp_path.rsplit('/').next().unwrap_or(interp_path);
 
     Ok((
-        String::from(interp),
-        String::from(i_name),
-        i_arg.map(String::from),
+        String::from(interp_path),
+        String::from(interp_name),
+        interp_arg.map(String::from),
     ))
 }
 
 /// Build the `argc / argv[] / envp[]` pointer tables on the user stack.
 ///
-/// Writes through the FS segment (which must already point to the new data
-/// segment). Returns the new user stack pointer.
-fn create_user_tables(p: u32, argc: usize, envc: usize) -> u32 {
-    let mut sp = p & 0xFFFF_FFFC;
+/// `args_start` is the user-space address of the first argument-string byte
+/// (i.e. the bottom of the packed arg/env string region). Writes go through
+/// the FS segment, which must already point to the new data segment.
+///
+/// Returns the new user stack pointer.
+fn create_user_tables(args_start: u32, argc: usize, envc: usize) -> u32 {
+    let mut sp = args_start & 0xFFFF_FFFC;
 
     // Reserve space for envp[] array (envc + 1 NULL terminator).
     sp -= ((envc + 1) * 4) as u32;
@@ -293,7 +296,7 @@ fn create_user_tables(p: u32, argc: usize, envc: usize) -> u32 {
     sp -= 4;
     uaccess::write_u32(argc as u32, sp as *mut u32);
 
-    let mut scan = p;
+    let mut scan = args_start;
     scan = fill_ptr_table(scan, argv_base, argc);
     scan = fill_ptr_table(scan, envp_base, envc);
     let _ = scan;
@@ -402,7 +405,7 @@ define_syscall_handler!(
             arg_pages.copy_user_strings(argv_ptr as *const u32, argc)?;
         }
 
-        if arg_pages.p == 0 {
+        if arg_pages.write_cursor == 0 {
             return Err(Errno::NOMEM);
         }
 
@@ -447,9 +450,9 @@ define_syscall_handler!(
 
             inner.memory_space = Some(new_space);
 
-            let p_adj =
-                arg_pages.p as u32 + TASK_LINEAR_SIZE - (MAX_ARG_PAGES as u32 * PAGE_SIZE as u32);
-            let sp = create_user_tables(p_adj, final_argc, envc);
+            let args_start = arg_pages.write_cursor as u32 + TASK_LINEAR_SIZE
+                - (MAX_ARG_PAGES as u32 * PAGE_SIZE as u32);
+            let sp = create_user_tables(args_start, final_argc, envc);
 
             inner.mem_layout.end_code = header.a_text;
             inner.mem_layout.end_data = header.a_text + header.a_data;

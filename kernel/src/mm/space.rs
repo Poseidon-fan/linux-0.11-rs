@@ -71,7 +71,7 @@ impl MemorySpace {
     ///
     /// Returns `None` when the page is outside this memory space range or
     /// when the corresponding PDE is not present.
-    pub fn get_pte(&self, page: LinPageNum) -> Option<PageTableEntry> {
+    pub fn pte(&self, page: LinPageNum) -> Option<PageTableEntry> {
         self.find_pte(page).map(|ptr| {
             // SAFETY: `find_pte` only returns a pointer into a present page
             // table for this address space.
@@ -100,7 +100,7 @@ impl MemorySpace {
     /// page is already present, this is a no-op.
     pub fn map_page(&mut self, lin_page: LinPageNum, frame: Option<PhysFrame>) -> Result<()> {
         self.ensure_page_table(lin_page.pde_index())?;
-        let already_present = self.get_pte(lin_page).is_some_and(|pte| pte.is_present());
+        let already_present = self.pte(lin_page).is_some_and(|pte| pte.is_present());
         if frame.is_none() && already_present {
             return Ok(());
         }
@@ -124,7 +124,7 @@ impl MemorySpace {
     /// Panics if `lin_page` has no present page-table entry.
     pub fn ensure_page_writable(&mut self, lin_page: LinPageNum) -> Result<()> {
         let pte = self
-            .get_pte(lin_page)
+            .pte(lin_page)
             .expect("ensure_page_writable: PTE not found");
         let old_phys_addr = pte.phys_addr();
         let old_ppn: PhysPageNum = old_phys_addr.into();
@@ -178,7 +178,7 @@ impl MemorySpace {
             LinPageNum::from_indices(source_space.pde_base + local_pde_offset, pte_index);
         let target_page = LinPageNum::from_indices(self.pde_base + local_pde_offset, pte_index);
 
-        let Some(source_pte) = source_space.get_pte(source_page) else {
+        let Some(source_pte) = source_space.pte(source_page) else {
             return Ok(false);
         };
         if !source_pte.is_present() || source_pte.flags().contains(PageFlags::DIRTY) {
@@ -190,10 +190,7 @@ impl MemorySpace {
         }
 
         self.ensure_page_table(target_page.pde_index())?;
-        if self
-            .get_pte(target_page)
-            .is_some_and(|pte| pte.is_present())
-        {
+        if self.pte(target_page).is_some_and(|pte| pte.is_present()) {
             return Ok(false);
         }
 

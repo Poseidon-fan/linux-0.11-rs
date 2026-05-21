@@ -482,7 +482,7 @@ impl Inode {
         let fs = self.file_system.upgrade().ok_or(Errno::IO)?;
         let inode_number = fs.lock().alloc_inode().ok_or(Errno::NOSPC)?;
 
-        let inode = INODE_TABLE.lock().get_inode_raw(
+        let inode = INODE_TABLE.lock().acquire_raw(
             InodeId {
                 device: self.id.device,
                 inode_number,
@@ -761,7 +761,7 @@ impl InodeTable {
     /// Panics if `id.device` is zero.
     /// Panics if every slot is actively referenced by external code and no
     /// eviction candidate exists.
-    pub fn get_inode_raw(&mut self, id: InodeId, fs: &Arc<Mutex<MinixFileSystem>>) -> Arc<Inode> {
+    pub fn acquire_raw(&mut self, id: InodeId, fs: &Arc<Mutex<MinixFileSystem>>) -> Arc<Inode> {
         assert_ne!(id.device.0, 0, "iget with dev==0");
 
         if let Some(inode) = self.lookup(id) {
@@ -807,13 +807,13 @@ impl InodeTable {
             return;
         }
 
-        let idx = self
+        let victim_slot = self
             .find_victim()
             .expect("inode table full: all slots actively referenced");
 
-        self.flush_slot(idx);
-        self.slots[idx] = Some(inode);
-        self.clock = (idx + 1) % INODE_TABLE_CAPACITY;
+        self.flush_slot(victim_slot);
+        self.slots[victim_slot] = Some(inode);
+        self.clock = (victim_slot + 1) % INODE_TABLE_CAPACITY;
     }
 
     /// Clock-scan for an eviction candidate whose `strong_count` is 1
@@ -822,19 +822,19 @@ impl InodeTable {
     fn find_victim(&self) -> Option<usize> {
         let mut dirty_fallback = None;
 
-        for i in 0..INODE_TABLE_CAPACITY {
-            let idx = (self.clock + i) % INODE_TABLE_CAPACITY;
-            let Some(arc) = &self.slots[idx] else {
+        for offset in 0..INODE_TABLE_CAPACITY {
+            let slot_index = (self.clock + offset) % INODE_TABLE_CAPACITY;
+            let Some(arc) = &self.slots[slot_index] else {
                 continue;
             };
             if Arc::strong_count(arc) != 1 {
                 continue;
             }
             if !arc.inner.lock().is_dirty {
-                return Some(idx);
+                return Some(slot_index);
             }
             if dirty_fallback.is_none() {
-                dirty_fallback = Some(idx);
+                dirty_fallback = Some(slot_index);
             }
         }
 
@@ -852,24 +852,24 @@ impl InodeTable {
 
     /// Flush and remove every cached inode that belongs to `dev`.
     pub fn evict_device(&mut self, dev: DevNum) {
-        for idx in 0..INODE_TABLE_CAPACITY {
-            let belongs_to_dev = self.slots[idx]
+        for slot_index in 0..INODE_TABLE_CAPACITY {
+            let belongs_to_dev = self.slots[slot_index]
                 .as_ref()
                 .is_some_and(|arc| arc.id.device == dev);
             if belongs_to_dev {
-                self.flush_slot(idx);
+                self.flush_slot(slot_index);
             }
         }
     }
 
-    /// Write back and clean up the inode at `idx` before eviction.
+    /// Write back and clean up the inode at `slot_index` before eviction.
     ///
     /// Handles two cases:
     /// - **dirty**: writes the in-memory copy back to disk.
     /// - **zero link count**: the file has been fully unlinked while cached;
     ///   its data blocks and bitmap entry are freed.
-    fn flush_slot(&mut self, idx: usize) {
-        let victim = self.slots[idx].take().unwrap();
+    fn flush_slot(&mut self, slot_index: usize) {
+        let victim = self.slots[slot_index].take().unwrap();
         let inner = victim.inner.lock();
 
         if inner.disk_inode.link_count == 0 {

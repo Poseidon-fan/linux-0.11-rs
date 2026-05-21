@@ -42,52 +42,53 @@ impl LineDiscipline {
         let mut echoed = false;
 
         while !state.raw_rx.is_empty() && !state.cooked_rx.is_full() {
-            let Some(mut c) = state.raw_rx.pop() else {
+            let Some(mut byte) = state.raw_rx.pop() else {
                 break;
             };
 
             // --- Input mapping ---
-            c = Self::map_input(state, c);
-            if c == 0xff {
+            byte = Self::map_input(state, byte);
+            if byte == 0xff {
                 continue; // IGNCR consumed the byte
             }
 
             // --- Canonical-mode flow control ---
             if state.termios.local_mode.contains(LocalMode::ICANON) {
-                if c == state.termios.control_char(ControlChar::Stop) {
+                if byte == state.termios.control_char(ControlChar::Stop) {
                     state.stopped = true;
                     continue;
                 }
-                if c == state.termios.control_char(ControlChar::Start) {
+                if byte == state.termios.control_char(ControlChar::Start) {
                     state.stopped = false;
                     continue;
                 }
             }
 
             // --- Signal characters ---
-            if state.termios.local_mode.contains(LocalMode::ISIG) && Self::check_signal(state, c) {
+            if state.termios.local_mode.contains(LocalMode::ISIG) && Self::check_signal(state, byte)
+            {
                 continue;
             }
 
             // --- Canonical-mode line editing ---
             if state.termios.local_mode.contains(LocalMode::ICANON)
-                && Self::handle_editing(state, c, &mut echoed)
+                && Self::handle_editing(state, byte, &mut echoed)
             {
                 continue;
             }
 
             // --- Line counting ---
-            if c == b'\n' || c == state.termios.control_char(ControlChar::Eof) {
+            if byte == b'\n' || byte == state.termios.control_char(ControlChar::Eof) {
                 state.pending_lines += 1;
             }
 
             // --- Echo ---
             if state.termios.local_mode.contains(LocalMode::ECHO) {
-                echoed |= Self::echo(state, c);
+                echoed |= Self::echo(state, byte);
             }
 
             // --- Enqueue to cooked_rx ---
-            state.cooked_rx.push(c);
+            state.cooked_rx.push(byte);
         }
 
         echoed
@@ -95,40 +96,40 @@ impl LineDiscipline {
 
     /// Apply input-mode mappings (CR↔NL translation, case folding, parity stripping).
     /// Returns 0xff as a sentinel meaning "discard this byte".
-    fn map_input(state: &TtyState, mut c: u8) -> u8 {
+    fn map_input(state: &TtyState, mut byte: u8) -> u8 {
         if state.termios.input_mode.contains(InputMode::ISTRIP) {
-            c &= 0x7f;
+            byte &= 0x7f;
         }
 
-        if c == b'\r' {
+        if byte == b'\r' {
             if state.termios.input_mode.contains(InputMode::IGNCR) {
                 return 0xff;
             }
             if state.termios.input_mode.contains(InputMode::ICRNL) {
-                c = b'\n';
+                byte = b'\n';
             }
-        } else if c == b'\n' && state.termios.input_mode.contains(InputMode::INLCR) {
-            c = b'\r';
+        } else if byte == b'\n' && state.termios.input_mode.contains(InputMode::INLCR) {
+            byte = b'\r';
         }
 
-        if state.termios.input_mode.contains(InputMode::IUCLC) && c.is_ascii_uppercase() {
-            c = c.to_ascii_lowercase();
+        if state.termios.input_mode.contains(InputMode::IUCLC) && byte.is_ascii_uppercase() {
+            byte = byte.to_ascii_lowercase();
         }
 
-        c
+        byte
     }
 
-    /// Check if `c` is a signal character (INTR, QUIT). If so, deliver the
+    /// Check if `byte` is a signal character (INTR, QUIT). If so, deliver the
     /// signal and return `true` to discard the byte.
-    fn check_signal(state: &TtyState, c: u8) -> bool {
+    fn check_signal(state: &TtyState, byte: u8) -> bool {
         let intr_char = state.termios.control_char(ControlChar::Intr);
-        if c == intr_char {
+        if byte == intr_char {
             Tty::signal_foreground_group(state.foreground_group, 1u32 << (Signal::Int as u32 - 1));
             return true;
         }
 
         let quit_char = state.termios.control_char(ControlChar::Quit);
-        if c == quit_char {
+        if byte == quit_char {
             Tty::signal_foreground_group(state.foreground_group, 1u32 << (Signal::Quit as u32 - 1));
             return true;
         }
@@ -138,12 +139,12 @@ impl LineDiscipline {
 
     /// Handle ERASE and KILL characters in canonical mode. Returns `true` if
     /// the byte was consumed by editing.
-    fn handle_editing(state: &mut TtyState, c: u8, echoed: &mut bool) -> bool {
+    fn handle_editing(state: &mut TtyState, byte: u8, echoed: &mut bool) -> bool {
         let erase_char = state.termios.control_char(ControlChar::Erase);
         let kill_char = state.termios.control_char(ControlChar::Kill);
         let eof_char = state.termios.control_char(ControlChar::Eof);
 
-        if c == kill_char {
+        if byte == kill_char {
             // Delete the entire current line from cooked_rx.
             loop {
                 if state.cooked_rx.is_empty() {
@@ -168,7 +169,7 @@ impl LineDiscipline {
             return true;
         }
 
-        if c == erase_char {
+        if byte == erase_char {
             if state.cooked_rx.is_empty() {
                 return true;
             }
@@ -194,23 +195,23 @@ impl LineDiscipline {
 
     /// Echo a character to the `tx` queue. Returns `true` if anything was
     /// written.
-    fn echo(state: &mut TtyState, c: u8) -> bool {
-        if c == b'\n' {
+    fn echo(state: &mut TtyState, byte: u8) -> bool {
+        if byte == b'\n' {
             state.tx.push(b'\n');
             state.tx.push(b'\r');
             return true;
         }
 
-        if c < 32 {
+        if byte < 32 {
             if state.termios.local_mode.contains(LocalMode::ECHOCTL) {
                 state.tx.push(b'^');
-                state.tx.push(c + 64);
+                state.tx.push(byte + 64);
                 return true;
             }
             return false;
         }
 
-        state.tx.push(c);
+        state.tx.push(byte);
         true
     }
 }

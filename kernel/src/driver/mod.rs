@@ -3,13 +3,13 @@
 //! Provides the [`DevNum`] major/minor encoding shared by all drivers and
 //! the global root device selector read during boot.
 //!
-//! - [`blk`] — block device request layer and ATA hard disk driver.
-//! - [`chr`] — character device drivers (console, TTY).
+//! - [`block`] — block device request layer and ATA hard disk driver.
+//! - [`character`] — character device drivers (console, TTY).
 
 use core::sync::atomic::{AtomicU16, Ordering};
 
-pub mod blk;
-pub mod chr;
+pub mod block;
+pub mod character;
 
 static ROOT_DEV: AtomicU16 = AtomicU16::new(0);
 

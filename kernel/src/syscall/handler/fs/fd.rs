@@ -14,9 +14,9 @@ use crate::{
     fs::{
         InodeType,
         file::{BlockDeviceFile, CharDeviceFile, File, InodeFile, PipeFile},
-        get_inode,
         minix::InodeId,
         path::{self, AccessMask},
+        resolve_inode,
     },
     segment::uaccess,
     syscall::{SYSCALL_TABLE, context::SyscallContext},
@@ -61,7 +61,7 @@ define_syscall_handler!(
                     if open_options.contains(OpenOptions::EXCLUSIVE) {
                         return Err(Errno::EXIST);
                     }
-                    let inode = get_inode(InodeId {
+                    let inode = resolve_inode(InodeId {
                         device: dir.id.device,
                         inode_number: inum,
                     });
@@ -122,7 +122,7 @@ define_syscall_handler!(
     Syscall::Read = 3,
     fn sys_read(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
 
         let mut kernel_buf = vec![0u8; count as usize];
         let bytes_read = file.read(&mut kernel_buf)?;
@@ -136,7 +136,7 @@ define_syscall_handler!(
     Syscall::Write = 4,
     fn sys_write(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, count) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
 
         let mut kernel_buf = vec![0u8; count as usize];
         uaccess::read_bytes(buf_ptr as *const u8, &mut kernel_buf);
@@ -170,7 +170,7 @@ define_syscall_handler!(
     fn sys_lseek(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, offset, whence) = ctx.args();
         let whence = Whence::from_raw(whence).ok_or(Errno::INVAL)?;
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
         file.seek(offset as i32, whence).map(|pos| pos as u32)
     }
 );
@@ -179,7 +179,7 @@ define_syscall_handler!(
     Syscall::Dup = 41,
     fn sys_dup(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, _, _) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
         let new_fd = task::with_current(|inner| inner.fs.add_file(file)).ok_or(Errno::MFILE)?;
         Ok(new_fd as u32)
     }
@@ -191,10 +191,10 @@ define_syscall_handler!(
         let (oldfd, newfd, _) = ctx.args();
         if oldfd == newfd {
             // Verify oldfd is valid, then return it unchanged.
-            get_file(oldfd)?;
+            lookup_file(oldfd)?;
             return Ok(newfd);
         }
-        let file = get_file(oldfd)?;
+        let file = lookup_file(oldfd)?;
         task::with_current(|inner| {
             let slot = inner
                 .fs
@@ -211,7 +211,7 @@ define_syscall_handler!(
     Syscall::Fstat = 28,
     fn sys_fstat(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, buf_ptr, _) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
         let stat = file.stat()?;
         let bytes = unsafe {
             core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
@@ -225,7 +225,7 @@ define_syscall_handler!(
     Syscall::Ioctl = 54,
     fn sys_ioctl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
         file.ioctl(cmd, arg)
     }
 );
@@ -234,7 +234,7 @@ define_syscall_handler!(
     Syscall::Fcntl = 55,
     fn sys_fcntl(ctx: &mut SyscallContext) -> Result<u32> {
         let (fd, cmd, arg) = ctx.args();
-        let file = get_file(fd)?;
+        let file = lookup_file(fd)?;
 
         match cmd {
             x if x == FcntlCmd::DupFd as u32 => task::with_current(|inner| {
@@ -295,8 +295,9 @@ define_syscall_handler!(
     }
 );
 
-/// Retrieve the file object for a given fd, or `Err(Errno::BADF)`.
-fn get_file(fd: u32) -> crate::error::Result<Arc<dyn File>> {
+/// Look up the file object for a given fd, returning `Err(Errno::BADF)` when
+/// the descriptor is not currently open.
+fn lookup_file(fd: u32) -> crate::error::Result<Arc<dyn File>> {
     task::with_current(|inner| inner.fs.open_files.get(fd as usize).cloned().flatten())
         .ok_or(Errno::BADF)
 }

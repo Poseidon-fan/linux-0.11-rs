@@ -191,7 +191,7 @@ impl KeyboardState {
 
         // --- Cursor / numpad keys (0x47..0x53) ---
         if (0x47..=0x53).contains(&code) {
-            let idx = (code - 0x47) as usize;
+            let cursor_index = (code - 0x47) as usize;
             let shifted = self
                 .modifiers
                 .intersects(Modifiers::LEFT_SHIFT | Modifiers::RIGHT_SHIFT);
@@ -199,7 +199,7 @@ impl KeyboardState {
             let use_cursor_sequence = was_extended || !num_lock_enabled || shifted;
 
             if use_cursor_sequence {
-                let ch = CURSOR_TABLE[idx];
+                let ch = CURSOR_TABLE[cursor_index];
                 if ch != 0 {
                     out[0] = 0x1b;
                     out[1] = b'[';

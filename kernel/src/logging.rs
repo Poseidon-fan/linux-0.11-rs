@@ -20,7 +20,7 @@ use core::{
 
 use log::{LevelFilter, Log, Metadata};
 
-use crate::driver::chr::console::{ORIG_X, ORIG_Y};
+use crate::driver::character::console::{ORIG_X, ORIG_Y};
 
 /// Set to `true` after `console::init()` completes. Once set, all output
 /// is routed through the TTY layer instead of direct VGA.
@@ -33,7 +33,7 @@ const EARLY_VGA_CELLS: usize = EARLY_VGA_COLUMNS * EARLY_VGA_ROWS;
 const EARLY_VGA_ATTR: u8 = 0x07;
 
 /// Mark the TTY subsystem as ready for kernel output.
-/// Called at the end of `driver::chr::console::init()`.
+/// Called at the end of `driver::character::console::init()`.
 pub fn set_tty_ready() {
     TTY_READY.store(true, Ordering::Release);
 }
@@ -91,7 +91,7 @@ pub fn put_fmt(args: fmt::Arguments) {
         let buf_ptr = addr_of!(LOG_BUF) as *const u8;
 
         crate::segment::uaccess::with_kernel_fs(|| {
-            let _ = crate::driver::chr::tty::Tty::device(0).write(0, buf_ptr, len);
+            let _ = crate::driver::character::tty::Tty::device(0).write(0, buf_ptr, len);
         });
     }
 }

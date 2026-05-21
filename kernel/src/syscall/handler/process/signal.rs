@@ -43,31 +43,35 @@ define_syscall_handler!(
 define_syscall_handler!(
     Syscall::Kill = 37,
     fn sys_kill(ctx: &mut SyscallContext) -> Result<u32> {
-        let (pid_arg, sig_arg, _) = ctx.args();
-        let pid = pid_arg as i32;
-        let sig = sig_arg;
+        let (pid_raw, signal_number, _) = ctx.args();
+        let pid = pid_raw as i32;
 
         (1..=NSIG as u32)
-            .contains(&sig)
+            .contains(&signal_number)
             .then_some(())
             .ok_or(Errno::INVAL)?;
 
         let current_pid = task::current_pid();
         let current_euid = task::with_current(|inner| inner.identity.euid);
 
-        fn send_sig(sig: u32, task: &Task, priv_flag: bool, current_euid: u16) -> Result<()> {
-            let allowed = priv_flag
+        fn send_signal(
+            signal_number: u32,
+            task: &Task,
+            skip_permission_check: bool,
+            current_euid: u16,
+        ) -> Result<()> {
+            let allowed = skip_permission_check
                 || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_euid
                 || is_superuser();
             allowed.then_some(()).ok_or(Errno::PERM)?;
             task.pcb.inner.exclusive(|inner| {
-                inner.signal_info.raise(sig);
+                inner.signal_info.raise(signal_number);
                 inner.sched.wake_if_interruptible();
             });
             Ok(())
         }
 
-        let mut retval = Ok(0u32);
+        let mut result = Ok(0u32);
         TASK_MANAGER.exclusive(|manager| {
             for task in manager.tasks.iter().filter_map(|t| t.as_ref()) {
                 if task.pcb.slot == 0 {
@@ -80,31 +84,31 @@ define_syscall_handler!(
                     p => task.pcb.inner.exclusive(|i| i.relation.pgrp) == (-p) as u32,
                 };
                 if matches {
-                    if let Err(e) = send_sig(sig, task, pid == 0, current_euid) {
-                        retval = Err(e);
+                    if let Err(e) = send_signal(signal_number, task, pid == 0, current_euid) {
+                        result = Err(e);
                     }
                 }
             }
         });
-        retval
+        result
     }
 );
 
 define_syscall_handler!(
     Syscall::Signal = 48,
     fn sys_signal(ctx: &mut SyscallContext) -> Result<u32> {
-        let (signum, handler, restorer) = ctx.args();
+        let (signal_number, handler, restorer) = ctx.args();
 
         (1..=NSIG as u32)
-            .contains(&signum)
-            .then_some(signum)
-            .filter(|&s| s != Signal::Kill as u32)
+            .contains(&signal_number)
+            .then_some(signal_number)
+            .filter(|&n| n != Signal::Kill as u32)
             .ok_or(Errno::PERM)?;
 
-        let idx = (signum - 1) as usize;
+        let signal_index = (signal_number - 1) as usize;
         let old_handler = task::with_current(|inner| {
-            let old = inner.signal_info.sigaction[idx].sa_handler;
-            inner.signal_info.sigaction[idx] = SigAction {
+            let old = inner.signal_info.sigaction[signal_index].sa_handler;
+            inner.signal_info.sigaction[signal_index] = SigAction {
                 sa_handler: handler,
                 sa_mask: 0,
                 sa_flags: (SigFlags::ONE_SHOT | SigFlags::NO_MASK).bits(),
@@ -140,15 +144,15 @@ define_syscall_handler!(
 define_syscall_handler!(
     Syscall::Sigaction = 67,
     fn sys_sigaction(ctx: &mut SyscallContext) -> Result<u32> {
-        let (signum, action_ptr, oldaction_ptr) = ctx.args();
+        let (signal_number, action_ptr, old_action_ptr) = ctx.args();
 
         (1..=NSIG as u32)
-            .contains(&signum)
-            .then_some(signum)
-            .filter(|&s| s != Signal::Kill as u32)
+            .contains(&signal_number)
+            .then_some(signal_number)
+            .filter(|&n| n != Signal::Kill as u32)
             .ok_or(Errno::PERM)?;
 
-        let idx = (signum - 1) as usize;
+        let signal_index = (signal_number - 1) as usize;
 
         fn read_sigaction_from_user(ptr: u32) -> SigAction {
             let base = ptr as *const u8;
@@ -169,19 +173,19 @@ define_syscall_handler!(
         }
 
         let old_sa = task::with_current(|inner| {
-            let old = inner.signal_info.sigaction[idx];
+            let old = inner.signal_info.sigaction[signal_index];
             (action_ptr != 0).then(|| {
-                inner.signal_info.sigaction[idx] = read_sigaction_from_user(action_ptr);
+                inner.signal_info.sigaction[signal_index] = read_sigaction_from_user(action_ptr);
             });
-            let current = inner.signal_info.sigaction[idx];
-            inner.signal_info.sigaction[idx].sa_mask =
+            let current = inner.signal_info.sigaction[signal_index];
+            inner.signal_info.sigaction[signal_index].sa_mask =
                 ((current.sa_flags & SigFlags::NO_MASK.bits()) == 0)
-                    .then(|| current.sa_mask | (1u32 << idx))
+                    .then(|| current.sa_mask | (1u32 << signal_index))
                     .unwrap_or(0);
             old
         });
 
-        (oldaction_ptr != 0).then(|| write_sigaction_to_user(oldaction_ptr, &old_sa));
+        (old_action_ptr != 0).then(|| write_sigaction_to_user(old_action_ptr, &old_sa));
         Ok(0)
     }
 );

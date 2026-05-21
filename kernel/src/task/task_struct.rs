@@ -298,14 +298,14 @@ pub struct TaskSignalInfo {
 }
 
 impl TaskSignalInfo {
-    /// Set a pending signal. `signum` is 1-based (e.g. `SIGHUP = 1`).
-    pub fn raise(&mut self, signum: u32) {
-        self.signal |= 1u32 << (signum - 1);
+    /// Set a pending signal. `signal_number` is 1-based (e.g. `SIGHUP = 1`).
+    pub fn raise(&mut self, signal_number: u32) {
+        self.signal |= 1u32 << (signal_number - 1);
     }
 
-    /// Clear a pending signal. `signum` is 1-based (e.g. `SIGHUP = 1`).
-    pub fn clear(&mut self, signum: u32) {
-        self.signal &= !(1u32 << (signum - 1));
+    /// Clear a pending signal. `signal_number` is 1-based (e.g. `SIGHUP = 1`).
+    pub fn clear(&mut self, signal_number: u32) {
+        self.signal &= !(1u32 << (signal_number - 1));
     }
 }
 

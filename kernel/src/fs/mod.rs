@@ -39,7 +39,7 @@ pub fn sync() {
 /// Filesystem logical block size in bytes.
 pub const BLOCK_SIZE: usize = 1024;
 
-pub use mount::get_inode;
+pub use mount::resolve_inode;
 
 /// Mount the root filesystem from the configured root device and set up the
 /// initial process's filesystem context (root directory and working directory).
@@ -48,8 +48,9 @@ pub fn mount_root() {
     let root_fs = MinixFileSystem::open(dev).expect("Failed to open root filesystem");
 
     // Bootstrap the root mount entry with one raw inode lookup first because
-    // the generic `get_inode()` path relies on the mount table to resolve devices.
-    let boot_root_inode = minix::INODE_TABLE.lock().get_inode_raw(
+    // the generic `resolve_inode()` path relies on the mount table to resolve
+    // devices.
+    let boot_root_inode = minix::INODE_TABLE.lock().acquire_raw(
         InodeId {
             device: dev,
             inode_number: ROOT_INODE_NUMBER,
@@ -69,7 +70,7 @@ pub fn mount_root() {
         .insert(mount_entry)
         .expect("No free mount table slot");
 
-    let root_inode = get_inode(InodeId {
+    let root_inode = resolve_inode(InodeId {
         device: dev,
         inode_number: ROOT_INODE_NUMBER,
     });

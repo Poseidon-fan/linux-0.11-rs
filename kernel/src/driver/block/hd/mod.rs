@@ -6,7 +6,7 @@ mod interrupt;
 use log::info;
 
 use crate::{
-    driver::blk::hd::controller::{AtaTaskFile, ControllerCommand, StatusFlags},
+    driver::block::hd::controller::{AtaTaskFile, ControllerCommand, StatusFlags},
     fs::buffer::{self, BufferKey},
     pmio::{self, inb_p, outb, outb_p, port_write_words},
     println,

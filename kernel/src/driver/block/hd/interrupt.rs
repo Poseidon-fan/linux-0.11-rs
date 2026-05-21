@@ -4,7 +4,7 @@ use core::arch::naked_asm;
 
 use super::{HARD_DISK_MANAGER, InterruptPhase, handle_request, mark_request_error};
 use crate::{
-    driver::blk::{
+    driver::block::{
         self, BLOCK_MANAGER, SECTOR_SIZE,
         hd::{
             HARD_DISK_MAJOR, SECTOR_WORD_COUNT,
@@ -113,7 +113,7 @@ fn handle_read_interrupt() {
         return;
     }
 
-    blk::complete_current_request(HARD_DISK_MAJOR, true);
+    block::complete_current_request(HARD_DISK_MAJOR, true);
     handle_request();
 }
 
@@ -142,7 +142,7 @@ fn handle_write_interrupt() {
     });
 
     let Some(next_buffer) = next_buffer else {
-        blk::complete_current_request(HARD_DISK_MAJOR, true);
+        block::complete_current_request(HARD_DISK_MAJOR, true);
         handle_request();
         return;
     };

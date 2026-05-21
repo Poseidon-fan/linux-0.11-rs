@@ -169,7 +169,7 @@ fn try_load_page(inode: &Inode, fault_page: LinPageNum, addr_offset: u32, end_da
         let Some(ms) = inner.memory_space.as_mut() else {
             return false;
         };
-        if ms.get_pte(fault_page).is_some_and(|pte| pte.is_present()) {
+        if ms.pte(fault_page).is_some_and(|pte| pte.is_present()) {
             return true;
         }
         ms.map_page(fault_page, Some(frame)).is_ok()

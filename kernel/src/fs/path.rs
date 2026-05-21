@@ -9,10 +9,10 @@ use bitflags::bitflags;
 
 use crate::{
     fs::{
-        get_inode,
         layout::InodeType,
         minix::{Inode, InodeId},
         mount::MOUNT_TABLE,
+        resolve_inode,
     },
     task, time,
 };
@@ -25,7 +25,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
         dir
     } else {
         let inum = dir.lookup(basename).ok()??;
-        get_inode(InodeId {
+        resolve_inode(InodeId {
             device: dir.id.device,
             inode_number: inum,
         })
@@ -85,7 +85,7 @@ pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
             }
             PathComponent::Name(name) => {
                 let child_inum = current_inode.lookup(name).ok()??;
-                current_inode = get_inode(InodeId {
+                current_inode = resolve_inode(InodeId {
                     device: current_inode.id.device,
                     inode_number: child_inum,
                 });
@@ -116,11 +116,11 @@ fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option
 
     let parent_lookup_base = MOUNT_TABLE
         .lock()
-        .get_mount_point_by_root(current_inode.id)
+        .mount_point_for_root(current_inode.id)
         .unwrap_or_else(|| Arc::clone(current_inode));
 
     let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
-    Some(get_inode(InodeId {
+    Some(resolve_inode(InodeId {
         device: parent_lookup_base.id.device,
         inode_number: parent_inode_number,
     }))

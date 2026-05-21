@@ -194,27 +194,27 @@ impl VgaConsole {
     }
 
     /// Write one byte through the VT102 parser state machine.
-    pub fn write_byte(&mut self, c: u8) {
+    pub fn write_byte(&mut self, byte: u8) {
         match self.parser.state {
-            AnsiState::Normal => self.handle_normal(c),
-            AnsiState::Escape => self.handle_escape(c),
-            AnsiState::CsiEntry => self.handle_csi_entry(c),
-            AnsiState::CsiParam => self.handle_csi_param(c),
+            AnsiState::Normal => self.handle_normal(byte),
+            AnsiState::Escape => self.handle_escape(byte),
+            AnsiState::CsiEntry => self.handle_csi_entry(byte),
+            AnsiState::CsiParam => self.handle_csi_param(byte),
         }
     }
 
-    fn handle_normal(&mut self, c: u8) {
-        if c > 31 && c < 127 {
+    fn handle_normal(&mut self, byte: u8) {
+        if byte > 31 && byte < 127 {
             if self.cursor_x >= self.columns {
                 self.cursor_x -= self.columns;
                 self.cursor_pos -= self.row_bytes;
                 self.line_feed();
             }
-            self.put_char(c);
+            self.put_char(byte);
             self.cursor_pos += 2;
             self.cursor_x += 1;
         } else {
-            match c {
+            match byte {
                 0x1b => self.parser.state = AnsiState::Escape,
                 b'\n' | 11 | 12 => self.line_feed(),
                 b'\r' => self.carriage_return(),
@@ -227,9 +227,9 @@ impl VgaConsole {
         }
     }
 
-    fn handle_escape(&mut self, c: u8) {
+    fn handle_escape(&mut self, byte: u8) {
         self.parser.state = AnsiState::Normal;
-        match c {
+        match byte {
             b'[' => {
                 self.parser.reset_params();
                 self.parser.state = AnsiState::CsiEntry;
@@ -243,29 +243,30 @@ impl VgaConsole {
         }
     }
 
-    fn handle_csi_entry(&mut self, c: u8) {
-        if c == b'?' {
+    fn handle_csi_entry(&mut self, byte: u8) {
+        if byte == b'?' {
             self.parser.is_question_mark = true;
             self.parser.state = AnsiState::CsiParam;
             return;
         }
         self.parser.state = AnsiState::CsiParam;
-        self.handle_csi_param(c);
+        self.handle_csi_param(byte);
     }
 
-    fn handle_csi_param(&mut self, c: u8) {
-        if c == b';' && self.parser.param_count < MAX_ANSI_PARAMS - 1 {
+    fn handle_csi_param(&mut self, byte: u8) {
+        if byte == b';' && self.parser.param_count < MAX_ANSI_PARAMS - 1 {
             self.parser.param_count += 1;
             return;
         }
-        if c.is_ascii_digit() {
-            let idx = self.parser.param_count;
-            self.parser.params[idx] = self.parser.params[idx] * 10 + (c - b'0') as u32;
+        if byte.is_ascii_digit() {
+            let param_index = self.parser.param_count;
+            self.parser.params[param_index] =
+                self.parser.params[param_index] * 10 + (byte - b'0') as u32;
             return;
         }
         // Final character — dispatch CSI command.
         self.parser.state = AnsiState::Normal;
-        self.dispatch_csi(c);
+        self.dispatch_csi(byte);
     }
 
     /// Dispatch a completed CSI sequence based on the final character.
@@ -363,9 +364,9 @@ impl VgaConsole {
     // ---- Character output ----
 
     /// Write a character + current attribute to VGA memory at the cursor position.
-    fn put_char(&self, c: u8) {
+    fn put_char(&self, byte: u8) {
         let addr = self.cursor_pos as *mut u16;
-        let cell = ((self.attribute as u16) << 8) | c as u16;
+        let cell = ((self.attribute as u16) << 8) | byte as u16;
         unsafe { ptr::write_volatile(addr, cell) };
     }
 
@@ -578,14 +579,15 @@ impl VgaConsole {
     }
 
     fn insert_char_at_cursor(&mut self) {
-        let p = self.cursor_pos as *mut u16;
-        let mut i = self.cursor_x;
-        let mut old = self.erase_cell;
-        while i < self.columns {
-            let tmp = unsafe { ptr::read_volatile(p.wrapping_add(i - self.cursor_x)) };
-            unsafe { ptr::write_volatile(p.wrapping_add(i - self.cursor_x), old) };
-            old = tmp;
-            i += 1;
+        let row_base = self.cursor_pos as *mut u16;
+        let mut column = self.cursor_x;
+        let mut carry = self.erase_cell;
+        while column < self.columns {
+            let offset = column - self.cursor_x;
+            let displaced = unsafe { ptr::read_volatile(row_base.wrapping_add(offset)) };
+            unsafe { ptr::write_volatile(row_base.wrapping_add(offset), carry) };
+            carry = displaced;
+            column += 1;
         }
     }
 

@@ -26,7 +26,7 @@ use lazy_static::lazy_static;
 use crate::{
     driver::{
         DevNum,
-        blk::{self, BlockRequestType},
+        block::{self, BlockRequestType},
     },
     fs::BLOCK_SIZE,
     mm::frame::LOW_MEM,
@@ -56,7 +56,7 @@ pub fn read(key: BufferKey) -> Option<BufferHandle> {
     if block.slot.is_up_to_date() {
         return Some(block);
     }
-    blk::submit_request(BlockRequestType::Read, false, Arc::clone(&block.slot));
+    block::submit_request(BlockRequestType::Read, false, Arc::clone(&block.slot));
     block.slot.wait_io();
     if block.slot.is_up_to_date() {
         return Some(block);
@@ -82,7 +82,7 @@ pub fn sync_dirty(predicate: impl Fn(&BufferKey) -> bool) {
         .collect();
 
     for slot in slots {
-        blk::submit_request(BlockRequestType::Write, false, Arc::clone(&slot));
+        block::submit_request(BlockRequestType::Write, false, Arc::clone(&slot));
         slot.wait_io();
     }
 }
@@ -215,7 +215,7 @@ fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
     if !slot.is_dirty() {
         return;
     }
-    blk::submit_request(BlockRequestType::Write, false, Arc::clone(slot));
+    block::submit_request(BlockRequestType::Write, false, Arc::clone(slot));
     slot.wait_io();
 }
 

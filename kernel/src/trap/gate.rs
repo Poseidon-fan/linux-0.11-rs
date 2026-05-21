@@ -8,19 +8,37 @@ unsafe extern "C" {
 
 pub type TrapHandler = extern "C" fn();
 
+/// Install a kernel-only **interrupt gate** at IDT `vector`.
+///
+/// The CPU clears `IF` on entry, masking further maskable interrupts until
+/// the handler explicitly re-enables them. Use this for hardware IRQs that
+/// must not be preempted by another device interrupt during their critical
+/// prologue. `DPL = 0` rejects software `int N` from user space with `#GP`.
 #[inline]
-pub fn set_intr_gate(n: usize, handler: TrapHandler) {
-    set_gate(n, GateDescriptor::interrupt(handler, 0));
+pub fn set_intr_gate(vector: usize, handler: TrapHandler) {
+    set_gate(vector, GateDescriptor::interrupt(handler, 0));
 }
 
+/// Install a kernel-only **trap gate** at IDT `vector`.
+///
+/// Unlike an interrupt gate, `IF` is preserved on entry, so a handler that
+/// re-faults or services nested events can run with interrupts already
+/// enabled. Used for CPU exceptions (divide-by-zero, page fault, etc.).
+/// `DPL = 0` rejects software `int N` from user space with `#GP`.
 #[inline]
-pub fn set_trap_gate(n: usize, handler: TrapHandler) {
-    set_gate(n, GateDescriptor::trap(handler, 0));
+pub fn set_trap_gate(vector: usize, handler: TrapHandler) {
+    set_gate(vector, GateDescriptor::trap(handler, 0));
 }
 
+/// Install a **trap gate callable from user space** at IDT `vector`.
+///
+/// `DPL = 3` allows ring-3 code to enter via `int N`, which is how user
+/// programs invoke the syscall vector (`int 0x80`) and trigger the
+/// breakpoint vector (`int3`). `IF` is preserved on entry, matching
+/// [`set_trap_gate`].
 #[inline]
-pub fn set_system_gate(n: usize, handler: TrapHandler) {
-    set_gate(n, GateDescriptor::trap(handler, 3));
+pub fn set_system_gate(vector: usize, handler: TrapHandler) {
+    set_gate(vector, GateDescriptor::trap(handler, 3));
 }
 
 /// An i386 IDT gate descriptor (interrupt gate or trap gate).
@@ -44,9 +62,9 @@ struct GateDescriptor {
 }
 
 #[inline]
-fn set_gate(n: usize, desc: GateDescriptor) {
+fn set_gate(vector: usize, desc: GateDescriptor) {
     unsafe {
-        idt[n] = desc;
+        idt[vector] = desc;
     }
 }
 

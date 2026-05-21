@@ -6,7 +6,7 @@ use user_lib::syscall::Syscall;
 
 use crate::{
     define_syscall_handler,
-    driver::{self, blk::hd},
+    driver::{self, block::hd},
     error::{Errno, Result},
     fs::{
         self, InodeType, ROOT_INODE_NUMBER, buffer,
@@ -60,7 +60,7 @@ define_syscall_handler!(
         }
 
         let mut mt = MOUNT_TABLE.lock();
-        if mt.get_fs(dev).is_some() {
+        if mt.find_fs(dev).is_some() {
             return Err(Errno::BUSY);
         }
         if mt.is_mount_point(dir_inode.id) {
@@ -68,7 +68,7 @@ define_syscall_handler!(
         }
 
         let new_fs = MinixFileSystem::open(dev).ok_or(Errno::BUSY)?;
-        let root_inode = INODE_TABLE.lock().get_inode_raw(
+        let root_inode = INODE_TABLE.lock().acquire_raw(
             InodeId {
                 device: dev,
                 inode_number: ROOT_INODE_NUMBER,
@@ -106,7 +106,7 @@ define_syscall_handler!(
         if dev == driver::root_dev() {
             return Err(Errno::BUSY);
         }
-        if MOUNT_TABLE.lock().get_fs(dev).is_none() {
+        if MOUNT_TABLE.lock().find_fs(dev).is_none() {
             return Err(Errno::NOENT);
         }
 

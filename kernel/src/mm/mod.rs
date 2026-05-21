@@ -61,7 +61,7 @@ pub fn ensure_user_area_writable(addr: u32, size: usize) {
         while remaining > 0 {
             let lin_page = address::LinAddr(linear_addr).floor();
             let needs_cow = ms
-                .get_pte(lin_page)
+                .pte(lin_page)
                 .is_some_and(|pte| pte.is_present() && !pte.flags().contains(PageFlags::WRITABLE));
             if needs_cow && ms.ensure_page_writable(lin_page).is_err() {
                 return true;

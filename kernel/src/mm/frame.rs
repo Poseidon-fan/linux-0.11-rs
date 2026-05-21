@@ -138,14 +138,14 @@ impl PhysFrameRange {
 
 impl FrameAllocator {
     #[inline]
-    fn page_addr_from_idx(idx: usize) -> PhysAddr {
-        debug_assert!(idx < PAGING_PAGES);
-        let idx_u32 = idx as u32;
-        PhysAddr::from(LOW_MEM + (idx_u32 << PAGE_SHIFT))
+    fn page_addr_from_index(frame_index: usize) -> PhysAddr {
+        debug_assert!(frame_index < PAGING_PAGES);
+        let offset = (frame_index as u32) << PAGE_SHIFT;
+        PhysAddr::from(LOW_MEM + offset)
     }
 
     #[inline]
-    fn idx_for_ppn(ppn: PhysPageNum) -> usize {
+    fn index_for_ppn(ppn: PhysPageNum) -> usize {
         (ppn.0 - UNPAGED_PAGES) as usize
     }
 
@@ -177,14 +177,14 @@ impl FrameAllocator {
     }
 
     fn alloc(&mut self) -> Option<PhysFrame> {
-        let idx = self.mem_map.iter().rposition(|&count| count == 0)?;
-        let page_addr = Self::page_addr_from_idx(idx);
+        let frame_index = self.mem_map.iter().rposition(|&count| count == 0)?;
+        let page_addr = Self::page_addr_from_index(frame_index);
         // Safety: tracked frames are part of the kernel's writable physical
         // memory window, and this allocator has exclusive access here.
         unsafe {
             ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
         }
-        self.mem_map[idx] = 1;
+        self.mem_map[frame_index] = 1;
         Some(PhysFrame {
             ppn: page_addr.into(),
         })
@@ -195,19 +195,19 @@ impl FrameAllocator {
             return None;
         }
 
-        let start_idx = self
+        let start_index = self
             .mem_map
             .windows(page_count)
             .rposition(|run| run.iter().all(|&count| count == 0))?;
-        let start_addr = Self::page_addr_from_idx(start_idx);
-        for idx in start_idx..start_idx + page_count {
-            let page_addr = Self::page_addr_from_idx(idx);
+        let start_addr = Self::page_addr_from_index(start_index);
+        for frame_index in start_index..start_index + page_count {
+            let page_addr = Self::page_addr_from_index(frame_index);
             // Safety: tracked frames are part of the kernel's writable physical
             // memory window, and this allocator has exclusive access here.
             unsafe {
                 ptr::write_bytes(page_addr.as_mut_ptr::<u8>(), 0, PAGE_SIZE);
             }
-            self.mem_map[idx] = 1;
+            self.mem_map[frame_index] = 1;
         }
         Some(PhysFrameRange {
             start_ppn: start_addr.into(),
@@ -219,13 +219,13 @@ impl FrameAllocator {
         if ppn.0 < UNPAGED_PAGES {
             return;
         }
-        let idx = Self::idx_for_ppn(ppn);
+        let frame_index = Self::index_for_ppn(ppn);
         assert!(
-            self.mem_map[idx] > 0,
+            self.mem_map[frame_index] > 0,
             "Frame {} is not referenced, but dealloc is called",
             ppn.0
         );
-        self.mem_map[idx] -= 1;
+        self.mem_map[frame_index] -= 1;
     }
 
     fn dealloc_range(&mut self, start_ppn: PhysPageNum, page_count: usize) {
@@ -235,9 +235,13 @@ impl FrameAllocator {
     }
 
     fn share(&mut self, ppn: PhysPageNum) -> PhysFrame {
-        let idx = Self::idx_for_ppn(ppn);
-        assert!(self.mem_map[idx] > 0, "Sharing a free page (ppn {})", ppn.0);
-        self.mem_map[idx] += 1;
+        let frame_index = Self::index_for_ppn(ppn);
+        assert!(
+            self.mem_map[frame_index] > 0,
+            "Sharing a free page (ppn {})",
+            ppn.0
+        );
+        self.mem_map[frame_index] += 1;
         PhysFrame { ppn }
     }
 
@@ -245,6 +249,6 @@ impl FrameAllocator {
         if ppn.0 < UNPAGED_PAGES {
             return u8::MAX;
         }
-        self.mem_map[Self::idx_for_ppn(ppn)]
+        self.mem_map[Self::index_for_ppn(ppn)]
     }
 }

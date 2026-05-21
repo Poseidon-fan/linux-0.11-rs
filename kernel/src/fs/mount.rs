@@ -50,7 +50,7 @@ impl MountTable {
     }
 
     /// Return the filesystem mounted on `dev`, or `None` if no such mount exists.
-    pub fn get_fs(&self, dev: DevNum) -> Option<Arc<Mutex<MinixFileSystem>>> {
+    pub fn find_fs(&self, dev: DevNum) -> Option<Arc<Mutex<MinixFileSystem>>> {
         self.slots.iter().find_map(|slot| {
             let mount = slot.as_ref()?;
             (mount.device == dev).then(|| Arc::clone(&mount.file_system))
@@ -58,7 +58,7 @@ impl MountTable {
     }
 
     /// Return the root inode of the filesystem mounted on top of `id`.
-    pub fn get_mounted_root_by_mount_point(&self, id: InodeId) -> Option<Arc<Inode>> {
+    pub fn mounted_root_at(&self, id: InodeId) -> Option<Arc<Inode>> {
         self.slots.iter().find_map(|slot| {
             let mount = slot.as_ref()?;
             (mount.mount_point_inode.as_ref().map(|inode| inode.id) == Some(id))
@@ -67,7 +67,7 @@ impl MountTable {
     }
 
     /// Return the mount-point inode hidden beneath the mounted root `id`.
-    pub fn get_mount_point_by_root(&self, id: InodeId) -> Option<Arc<Inode>> {
+    pub fn mount_point_for_root(&self, id: InodeId) -> Option<Arc<Inode>> {
         self.slots.iter().find_map(|slot| {
             let mount = slot.as_ref()?;
             (mount.root_inode.id == id)
@@ -78,7 +78,7 @@ impl MountTable {
 
     /// Return `true` if some filesystem is already mounted on top of `id`.
     pub fn is_mount_point(&self, id: InodeId) -> bool {
-        self.get_mounted_root_by_mount_point(id).is_some()
+        self.mounted_root_at(id).is_some()
     }
 
     /// Remove the mount entry for `dev` and return it, or `None` if not mounted.
@@ -100,20 +100,25 @@ impl MountTable {
 ///
 /// Panics if `id.device` is zero.
 /// Panics if no mounted filesystem exists for `id.device`.
-pub fn get_inode(id: InodeId) -> Arc<Inode> {
-    assert_ne!(id.device.0, 0, "iget with dev==0");
+pub fn resolve_inode(id: InodeId) -> Arc<Inode> {
+    assert_ne!(id.device.0, 0, "resolve_inode with dev==0");
 
     let mut current_id = id;
 
     loop {
         let fs = MOUNT_TABLE
             .lock()
-            .get_fs(current_id.device)
-            .unwrap_or_else(|| panic!("get_inode on unmounted device {:04x}", current_id.device.0));
+            .find_fs(current_id.device)
+            .unwrap_or_else(|| {
+                panic!(
+                    "resolve_inode on unmounted device {:04x}",
+                    current_id.device.0
+                )
+            });
 
-        let inode = INODE_TABLE.lock().get_inode_raw(current_id, &fs);
+        let inode = INODE_TABLE.lock().acquire_raw(current_id, &fs);
 
-        let mounted_root = MOUNT_TABLE.lock().get_mounted_root_by_mount_point(inode.id);
+        let mounted_root = MOUNT_TABLE.lock().mounted_root_at(inode.id);
         let Some(root_inode) = mounted_root else {
             return inode;
         };

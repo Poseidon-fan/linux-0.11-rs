@@ -8,9 +8,10 @@ use crate::{
     define_syscall_handler,
     error::{Errno, Result},
     fs::{
-        InodeMode, InodeType, get_inode,
+        InodeMode, InodeType,
         minix::InodeId,
         path::{self, AccessMask},
+        resolve_inode,
     },
     segment::uaccess,
     syscall::context::SyscallContext,
@@ -87,7 +88,7 @@ define_syscall_handler!(
         }
 
         let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
-        let inode = get_inode(InodeId {
+        let inode = resolve_inode(InodeId {
             device: dir.id.device,
             inode_number: inum,
         });
@@ -209,7 +210,7 @@ define_syscall_handler!(
         }
 
         let inum = dir.lookup(basename)?.ok_or(Errno::NOENT)?;
-        let inode = get_inode(InodeId {
+        let inode = resolve_inode(InodeId {
             device: dir.id.device,
             inode_number: inum,
         });
