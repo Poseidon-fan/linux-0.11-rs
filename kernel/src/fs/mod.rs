@@ -20,6 +20,7 @@ use alloc::sync::Arc;
 
 pub use layout::{InodeMode, InodeModeFlags, InodeType, ROOT_INODE_NUMBER};
 use log::info;
+pub use mount::resolve_inode;
 
 use crate::{
     driver,
@@ -30,16 +31,14 @@ use crate::{
     task,
 };
 
+/// Filesystem logical block size in bytes.
+pub const BLOCK_SIZE: usize = 1024;
+
 /// Flush all dirty inode and buffer-cache state to disk.
 pub fn sync() {
     minix::INODE_TABLE.lock().sync_inodes();
     buffer::sync_dirty(|_| true);
 }
-
-/// Filesystem logical block size in bytes.
-pub const BLOCK_SIZE: usize = 1024;
-
-pub use mount::resolve_inode;
 
 /// Mount the root filesystem from the configured root device and set up the
 /// initial process's filesystem context (root directory and working directory).
