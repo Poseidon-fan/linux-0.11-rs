@@ -5,7 +5,7 @@ use core::hint::spin_loop;
 use bitflags::bitflags;
 use log::warn;
 
-use super::{DriveGeometry, HARD_DISK_MANAGER, InterruptPhase};
+use super::{ATA_DRIVER, DriveGeometry, InterruptPhase};
 use crate::pmio::{inb, inb_p, outb, outb_p};
 
 /// Primary ATA task-file data register.
@@ -182,8 +182,8 @@ pub fn issue_command(
         panic!("HD controller not ready");
     }
 
-    HARD_DISK_MANAGER.exclusive(|manager| {
-        manager.interrupt_phase = interrupt_phase;
+    ATA_DRIVER.exclusive(|driver| {
+        driver.phase = interrupt_phase;
     });
 
     outb_p(geometry.control, CONTROL_PORT);

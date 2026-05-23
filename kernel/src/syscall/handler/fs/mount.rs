@@ -21,7 +21,7 @@ define_syscall_handler!(
     Syscall::Setup = 0,
     fn sys_setup(ctx: &mut SyscallContext) -> Result<u32> {
         let (drive_info_addr, _, _) = ctx.args();
-        hd::setup_from_bios(drive_info_addr as *const u8).map_err(|()| Errno::PERM)?;
+        hd::setup_from_bios(drive_info_addr as *const u8)?;
         fs::mount_root();
         Ok(0)
     }
