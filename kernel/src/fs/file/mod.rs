@@ -34,10 +34,10 @@ pub trait File: Send + Sync {
         Err(Errno::SPIPE)
     }
 
-    /// Device-specific control operation.
+    /// Device- or file-specific control operation.
     ///
     /// The default implementation returns `Errno::NOTTY`, which is correct for
-    /// non-device file types (regular files, directories, etc.).
+    /// file types that do not provide ioctl commands.
     fn ioctl(&self, _cmd: u32, _arg: u32) -> Result<u32> {
         Err(Errno::NOTTY)
     }

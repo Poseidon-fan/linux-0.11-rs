@@ -30,8 +30,24 @@ use crate::{
     task::{self, WaitQueue},
 };
 
+/// An opened pipe endpoint.
+///
+/// When `is_write` is false this is the read end; when true, the write end.
+/// Dropping the last `Arc` to a given endpoint decrements the corresponding
+/// reader/writer count in `PipeState` and wakes any blocked peer.
+pub struct PipeFile {
+    shared: Arc<PipeShared>,
+    is_write: bool,
+}
+
 const PIPE_BUF_SIZE: usize = PAGE_SIZE;
 const WRAP_MASK: usize = PIPE_BUF_SIZE - 1;
+
+/// Shared state between the read and write ends of a pipe.
+struct PipeShared {
+    state: KernelCell<PipeState>,
+    wait: WaitQueue,
+}
 
 /// Mutable pipe state protected by `KernelCell`.
 ///
@@ -63,22 +79,6 @@ impl PipeState {
     fn space(&self) -> usize {
         (PIPE_BUF_SIZE - 1) - self.size()
     }
-}
-
-/// Shared state between the read and write ends of a pipe.
-struct PipeShared {
-    state: KernelCell<PipeState>,
-    wait: WaitQueue,
-}
-
-/// An opened pipe endpoint.
-///
-/// When `is_write` is false this is the read end; when true, the write end.
-/// Dropping the last `Arc` to a given endpoint decrements the corresponding
-/// reader/writer count in `PipeState` and wakes any blocked peer.
-pub struct PipeFile {
-    shared: Arc<PipeShared>,
-    is_write: bool,
 }
 
 impl PipeFile {
