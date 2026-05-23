@@ -1,7 +1,7 @@
 //! PS/2 keyboard interrupt handler and scan code translation.
 //!
 //! Reads scan codes from port 0x60, translates them via static US keymap
-//! tables, and pushes ASCII bytes into the console TTY's `raw_rx` queue.
+//! tables, and feeds ASCII bytes into the console TTY.
 //!
 //! Modifier tracking (Shift, Ctrl, Alt, CapsLock, NumLock) is maintained in a
 //! [`KeyboardState`] struct protected by `KernelCell`.
@@ -9,7 +9,7 @@
 //! Scan code → ASCII pipeline:
 //!
 //! ```text
-//!  IRQ1 ──► read 0x60 ──► translate(scancode) ──► raw_rx.push()
+//!  IRQ1 ──► read 0x60 ──► translate(scancode) ──► tty::receive_input()
 //!                                │
 //!                                ├─ modifier keys: update state only
 //!                                ├─ normal keys: select map, apply Ctrl/Caps
@@ -20,7 +20,7 @@ use core::arch::naked_asm;
 
 use bitflags::bitflags;
 
-use super::super::tty::Tty;
+use super::super::tty;
 use crate::{
     pmio::{inb, outb},
     sync::KernelCell,
@@ -299,8 +299,7 @@ pub extern "C" fn keyboard_interrupt() {
 /// Rust-side keyboard interrupt handler.
 ///
 /// Reads the scan code, acknowledges the keyboard controller and PIC,
-/// translates the scan code, pushes resulting bytes into the console TTY's
-/// `raw_rx`, then invokes the line discipline via `on_interrupt`.
+/// translates the scan code, and feeds resulting bytes into the console TTY.
 extern "C" fn keyboard_handler() {
     let scancode = inb(0x60);
 
@@ -313,22 +312,10 @@ extern "C" fn keyboard_handler() {
     let mut buf = [0u8; 8];
     let count = unsafe { KEYBOARD.exclusive_unchecked(|kb| kb.translate(scancode, &mut buf)) };
 
-    if count > 0 {
-        unsafe {
-            Tty::device(0).state.exclusive_unchecked(|state| {
-                for &b in &buf[..count] {
-                    let _ = state.raw_rx.push(b);
-                }
-            });
-        }
-    }
-
     // Send End-Of-Interrupt to master PIC.
     outb(0x20, 0x20);
 
-    // Process raw input through the line discipline.
-    // This is called outside all KernelCell borrows to avoid nesting.
-    // Safety: we are in IRQ context with interrupts masked by the interrupt gate.
-    // on_interrupt internally uses exclusive() which nests properly.
-    Tty::device(0).on_interrupt(0);
+    if count > 0 {
+        tty::receive_input(0, &buf[..count]);
+    }
 }

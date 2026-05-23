@@ -1,15 +1,15 @@
 //! TTY core layer.
 //!
-//! Provides the central TTY abstraction that sits between hardware backends
-//! (console, serial) and user-space read/write system calls. Each device is
-//! represented by a [`Tty`] slot in the fixed-size [`DEVICES`] table.
-//!
-//! Three ring buffers per device carry data through the pipeline:
+//! The TTY core owns the queues, line discipline, termios state, and wait
+//! queues for the fixed Linux 0.11-style terminal table:
 //!
 //! ```text
-//!   Hardware ISR ──► raw_rx ──► LineDiscipline ──► cooked_rx ──► user read
-//!   user write  ──► tx ──► flush_output() ──► hardware
+//!   hardware ISR ──► raw_input ──► line discipline ──► cooked_input ──► read()
+//!   write() / printk ──► output ──► backend flush ──► console / serial
 //! ```
+//!
+//! Hardware backends do not access queue fields directly. They feed input with
+//! [`receive_input`] and drain output with [`take_output`].
 
 mod line_discipline;
 mod ring_buffer;
@@ -24,117 +24,147 @@ use crate::{
     task::{self, WaitQueue},
 };
 
-/// Signature of the backend flush callback. Receives the channel index so the
-/// backend can locate the correct [`Tty`] in [`DEVICES`] and drain `tx`.
-pub type FlushOutputFn = fn(usize);
+/// Number of fixed TTY devices: console, serial port 1, and serial port 2.
+pub const DEVICE_COUNT: usize = 3;
 
-/// Per-device mutable state, protected by [`KernelCell`].
-pub struct TtyState {
-    pub termios: Termios,
-    /// Process group that receives signals (SIGINT, SIGQUIT, etc.).
-    pub foreground_group: i32,
-    /// Set by XOFF (STOP_CHAR), cleared by XON (START_CHAR).
-    pub stopped: bool,
-
-    /// Raw bytes received from hardware, not yet processed by the line discipline.
-    pub raw_rx: RingBuffer,
-    /// Bytes ready for transmission to the output device.
-    pub tx: RingBuffer,
-    /// Processed input bytes ready for user-space reads.
-    pub cooked_rx: RingBuffer,
-
-    /// Number of complete lines in `cooked_rx` (canonical mode).
-    pub pending_lines: usize,
-    /// Per-device flag for deferred CR insertion during NL → CR+NL expansion.
-    pub output_cr_pending: bool,
+/// Read cooked input from a TTY into a kernel-owned buffer.
+pub fn read(channel: usize, buffer: &mut [u8]) -> Result<usize> {
+    device(channel)?.read(buffer)
 }
 
-/// A single TTY device slot.
-pub struct Tty {
-    pub state: KernelCell<TtyState>,
-    /// Backend flush callback — NOT inside KernelCell so backends can
-    /// re-acquire `state` to drain `tx` without nesting borrows.
-    pub flush_output: FlushOutputFn,
-    /// Readers block here when `cooked_rx` is empty.
-    pub cooked_wait: WaitQueue,
-    /// Writers block here when `tx` is full.
-    pub output_wait: WaitQueue,
+/// Write kernel-owned bytes to a TTY.
+///
+/// This is the Rust equivalent of the Linux 0.11 `printk` path, which writes
+/// formatted kernel output through TTY channel 0 after making the buffer
+/// readable as kernel data.
+pub fn write(channel: usize, bytes: &[u8]) -> Result<usize> {
+    device(channel)?.write(channel, bytes)
 }
+
+/// Handle a TTY ioctl request.
+pub fn ioctl(channel: usize, cmd: u32, arg: u32) -> Result<u32> {
+    device(channel)?.ioctl(channel, cmd, arg)
+}
+
+/// Feed hardware input into a TTY and run the line discipline.
+pub fn receive_input(channel: usize, bytes: &[u8]) {
+    let Ok(tty) = device(channel) else {
+        return;
+    };
+    tty.receive_input(channel, bytes);
+}
+
+/// Ask a TTY backend to flush pending output.
+pub fn flush_output(channel: usize) {
+    if let Ok(tty) = device(channel) {
+        (tty.backend_flush)(channel);
+    }
+}
+
+/// Drain pending output bytes from a TTY into `out`.
+pub fn take_output(channel: usize, out: &mut [u8]) -> usize {
+    device(channel)
+        .map(|tty| tty.take_output(out))
+        .unwrap_or_default()
+}
+
+/// Wake writers waiting for output queue space.
+pub fn wake_output(channel: usize) {
+    if let Ok(tty) = device(channel) {
+        tty.output_wait.wake();
+    }
+}
+
+/// Clear the foreground process group for a TTY.
+pub fn clear_foreground_group(channel: usize) {
+    if let Ok(tty) = device(channel) {
+        tty.state
+            .exclusive(|state| state.foreground_group = NO_FOREGROUND_GROUP);
+    }
+}
+
+type FlushOutputFn = fn(usize);
+
+struct TtyDevice {
+    state: KernelCell<TtyState>,
+    backend_flush: FlushOutputFn,
+    cooked_wait: WaitQueue,
+    output_wait: WaitQueue,
+}
+
+struct TtyState {
+    termios: Termios,
+    foreground_group: i32,
+    stopped: bool,
+    raw_input: RingBuffer,
+    output: RingBuffer,
+    cooked_input: RingBuffer,
+    pending_lines: usize,
+    output_cr_pending: bool,
+}
+
+const NO_FOREGROUND_GROUP: i32 = 0;
+const WRITE_WAKE_THRESHOLD: usize = 128;
+const READ_CANONICAL_LOW_WATER: usize = 20;
+
+const TCFLSH: u32 = 0x540B;
+const TIOCOUTQ: u32 = 0x5411;
+const TIOCINQ: u32 = 0x541B;
+
+const FLUSH_INPUT: u32 = 0;
+const FLUSH_OUTPUT: u32 = 1;
+const FLUSH_BOTH: u32 = 2;
+
+static DEVICES: [TtyDevice; DEVICE_COUNT] = [
+    TtyDevice::new(Termios::console_default(), super::console::flush_output),
+    TtyDevice::new(Termios::serial_default(), nop_flush),
+    TtyDevice::new(Termios::serial_default(), nop_flush),
+];
 
 fn nop_flush(_channel: usize) {}
 
-pub const DEVICE_COUNT: usize = 3;
+fn device(channel: usize) -> Result<&'static TtyDevice> {
+    DEVICES.get(channel).ok_or(Errno::NODEV)
+}
 
-/// Fixed device table: channel 0 = console, channels 1–2 = serial ports.
-static DEVICES: [Tty; DEVICE_COUNT] = [
-    Tty::new(Termios::console_default(), super::console::flush_output),
-    Tty::new(Termios::serial_default(), nop_flush),
-    Tty::new(Termios::serial_default(), nop_flush),
-];
+fn signal_foreground_group(foreground_group: i32, signal_mask: u32) {
+    if foreground_group <= 0 {
+        return;
+    }
 
-impl Tty {
-    pub const DEVICE_COUNT: usize = DEVICE_COUNT;
+    let pgrp = foreground_group as u32;
+    task::TASK_MANAGER.exclusive(|manager| {
+        for slot in manager.tasks.iter().flatten() {
+            slot.pcb.inner.exclusive(|inner| {
+                if inner.relation.pgrp == pgrp {
+                    inner.signal_info.signal |= signal_mask;
+                }
+            });
+        }
+    });
+}
 
-    const fn new(termios: Termios, flush: FlushOutputFn) -> Self {
+impl TtyDevice {
+    const fn new(termios: Termios, backend_flush: FlushOutputFn) -> Self {
         Self {
             state: KernelCell::new(TtyState {
                 termios,
-                foreground_group: 0,
+                foreground_group: NO_FOREGROUND_GROUP,
                 stopped: false,
-                raw_rx: RingBuffer::new(),
-                tx: RingBuffer::new(),
-                cooked_rx: RingBuffer::new(),
+                raw_input: RingBuffer::new(),
+                output: RingBuffer::new(),
+                cooked_input: RingBuffer::new(),
                 pending_lines: 0,
                 output_cr_pending: false,
             }),
-            flush_output: flush,
+            backend_flush,
             cooked_wait: WaitQueue::new(),
             output_wait: WaitQueue::new(),
         }
     }
 
-    /// Get a device reference by channel index.
-    #[inline]
-    pub fn device(channel: usize) -> &'static Tty {
-        &DEVICES[channel]
-    }
-
-    /// Called from ISR context after hardware has pushed raw bytes into `raw_rx`.
-    /// Runs the line discipline, then flushes any echo output to the backend.
-    pub fn on_interrupt(&'static self, channel: usize) {
-        let has_echo = self
-            .state
-            .exclusive(line_discipline::LineDiscipline::process_raw_input);
-
-        self.cooked_wait.wake();
-
-        if has_echo {
-            (self.flush_output)(channel);
-        }
-    }
-
-    /// Send `signal_mask` to every process whose pgrp matches `foreground_group`.
-    pub fn signal_foreground_group(foreground_group: i32, signal_mask: u32) {
-        if foreground_group <= 0 {
-            return;
-        }
-        let pgrp = foreground_group as u32;
-        task::TASK_MANAGER.exclusive(|manager| {
-            for slot in manager.tasks.iter().flatten() {
-                slot.pcb.inner.exclusive(|inner| {
-                    if inner.relation.pgrp == pgrp {
-                        inner.signal_info.signal |= signal_mask;
-                    }
-                });
-            }
-        });
-    }
-
-    /// Read cooked input into a user-space buffer.
-    ///
-    /// In canonical mode, blocks until a complete line is available.
-    /// In non-canonical mode, honours VMIN / VTIME semantics.
-    pub fn read(&'static self, _channel: usize, user_buf: *mut u8, count: usize) -> Result<u32> {
+    fn read(&'static self, buffer: &mut [u8]) -> Result<usize> {
+        let count = buffer.len();
         if count == 0 {
             return Ok(0);
         }
@@ -142,46 +172,32 @@ impl Tty {
         let mut written = 0usize;
 
         loop {
-            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
-            if has_signal {
+            if task::with_current(|inner| inner.signal_info.signal != 0) {
                 break;
             }
 
-            let data_available = self.state.exclusive(|state| {
-                let canonical = state.termios.local_mode.contains(LocalMode::ICANON);
-
-                if canonical {
-                    state.pending_lines > 0 || state.cooked_rx.remaining() <= 20
-                } else {
-                    !state.cooked_rx.is_empty()
-                }
-            });
-
+            let data_available = self.state.exclusive(|state| state.has_readable_data());
             if !data_available {
                 self.cooked_wait.sleep_interruptible();
                 continue;
             }
 
-            // Drain cooked_rx into user buffer.
             self.state.exclusive(|state| {
-                let canonical = state.termios.local_mode.contains(LocalMode::ICANON);
-                let eof_char = state.termios.control_char(ControlChar::Eof);
-
                 while written < count {
-                    let Some(c) = state.cooked_rx.pop() else {
+                    let Some(byte) = state.cooked_input.pop() else {
                         break;
                     };
 
-                    if (c == 10 || c == eof_char) && state.pending_lines > 0 {
+                    if state.is_line_boundary(byte) && state.pending_lines > 0 {
                         state.pending_lines -= 1;
                     }
 
-                    if c == eof_char && canonical {
-                        // EOF itself is not delivered to user space.
+                    if byte == state.termios.control_char(ControlChar::Eof) && state.is_canonical()
+                    {
                         break;
                     }
 
-                    uaccess::write_u8(c, unsafe { user_buf.add(written) });
+                    buffer[written] = byte;
                     written += 1;
                 }
             });
@@ -189,90 +205,64 @@ impl Tty {
             break;
         }
 
-        if written == 0 {
-            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
-            if has_signal {
-                return Err(Errno::INTR);
-            }
+        if written == 0 && task::with_current(|inner| inner.signal_info.signal != 0) {
+            return Err(Errno::INTR);
         }
 
-        Ok(written as u32)
+        Ok(written)
     }
 
-    /// Write user data through output processing to `tx`, then flush.
-    pub fn write(&'static self, channel: usize, user_buf: *const u8, count: usize) -> Result<u32> {
+    fn write(&'static self, channel: usize, buffer: &[u8]) -> Result<usize> {
         let mut sent = 0usize;
+        let count = buffer.len();
 
         while sent < count {
-            let has_signal = task::with_current(|inner| inner.signal_info.signal != 0);
-            if has_signal {
+            if task::with_current(|inner| inner.signal_info.signal != 0) {
                 break;
             }
 
-            // Wait until tx has space.
-            let is_full = self.state.exclusive(|state| state.tx.is_full());
-            if is_full {
-                (self.flush_output)(channel);
+            if self.state.exclusive(|state| state.output.is_full()) {
+                flush_output(channel);
 
-                let still_full = self.state.exclusive(|state| state.tx.remaining() < 128);
-                if still_full {
+                if self
+                    .state
+                    .exclusive(|state| state.output.remaining() < WRITE_WAKE_THRESHOLD)
+                {
                     self.output_wait.sleep_interruptible();
                     continue;
                 }
             }
 
-            // Fill tx with output-processed bytes.
             self.state.exclusive(|state| {
-                let do_opost = state.termios.output_mode.contains(OutputMode::OPOST);
-                let do_nlcr = state.termios.output_mode.contains(OutputMode::ONLCR);
-                let do_crnl = state.termios.output_mode.contains(OutputMode::OCRNL);
-                let do_nlret = state.termios.output_mode.contains(OutputMode::ONLRET);
-                let do_lcuc = state.termios.output_mode.contains(OutputMode::OLCUC);
+                while sent < count && !state.output.is_full() {
+                    let mut byte = buffer[sent];
 
-                while sent < count && !state.tx.is_full() {
-                    let c = uaccess::read_u8(unsafe { user_buf.add(sent) });
-                    let mut c = c as char;
-
-                    if do_opost {
-                        if c == '\r' && do_crnl {
-                            c = '\n';
-                        } else if c == '\n' && do_nlret {
-                            c = '\r';
-                        }
-
-                        if c == '\n' && do_nlcr && !state.output_cr_pending {
+                    if state.termios.output_mode.contains(OutputMode::OPOST) {
+                        byte = state.map_output_byte(byte);
+                        if state.should_insert_output_cr(byte) {
                             state.output_cr_pending = true;
-                            state.tx.push(b'\r');
+                            state.output.push(b'\r');
                             continue;
-                        }
-
-                        if do_lcuc && c.is_ascii_lowercase() {
-                            c = c.to_ascii_uppercase();
                         }
                     }
 
                     state.output_cr_pending = false;
-                    state.tx.push(c as u8);
+                    state.output.push(byte);
                     sent += 1;
                 }
             });
 
-            (self.flush_output)(channel);
+            flush_output(channel);
 
             if sent < count {
                 task::schedule();
             }
         }
 
-        Ok(sent as u32)
+        Ok(sent)
     }
 
-    /// Handle TTY ioctl commands (TCGETS, TCSETS, TIOCGPGRP, etc.).
-    ///
-    /// `arg` is a user-space pointer whose meaning depends on `cmd`:
-    /// - TCGETS / TCSETS*: pointer to a `Termios` struct
-    /// - TIOCGPGRP / TIOCSPGRP: pointer to a `u32` process group ID
-    pub fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
+    fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
         match cmd {
             x if x == TtyRequest::GetTermios as u32 => {
                 let termios = self.state.exclusive(|state| state.termios);
@@ -286,16 +276,12 @@ impl Tty {
                 Ok(0)
             }
             x if x == TtyRequest::SetTermiosFlush as u32 => {
-                self.state.exclusive(|state| {
-                    state.raw_rx.flush();
-                    state.cooked_rx.flush();
-                    state.pending_lines = 0;
-                });
-                (self.flush_output)(channel);
+                self.state.exclusive(TtyState::flush_input);
+                flush_output(channel);
                 self.set_termios_from_user(arg)
             }
             x if x == TtyRequest::SetTermiosWait as u32 => {
-                (self.flush_output)(channel);
+                flush_output(channel);
                 self.set_termios_from_user(arg)
             }
             x if x == TtyRequest::SetTermios as u32 => self.set_termios_from_user(arg),
@@ -310,8 +296,48 @@ impl Tty {
                     .exclusive(|state| state.foreground_group = pgrp as i32);
                 Ok(0)
             }
+            TCFLSH => self.flush_for_ioctl(arg),
+            TIOCOUTQ => {
+                let count = self.state.exclusive(|state| state.output.len());
+                uaccess::write_u32(count as u32, arg as *mut u32);
+                Ok(0)
+            }
+            TIOCINQ => {
+                let count = self.state.exclusive(|state| state.cooked_input.len());
+                uaccess::write_u32(count as u32, arg as *mut u32);
+                Ok(0)
+            }
             _ => Err(Errno::INVAL),
         }
+    }
+
+    fn receive_input(&'static self, channel: usize, bytes: &[u8]) {
+        let has_echo = self.state.exclusive(|state| {
+            for &byte in bytes {
+                let _ = state.raw_input.push(byte);
+            }
+            line_discipline::process_raw_input(state)
+        });
+
+        self.cooked_wait.wake();
+
+        if has_echo {
+            flush_output(channel);
+        }
+    }
+
+    fn take_output(&'static self, out: &mut [u8]) -> usize {
+        self.state.exclusive(|state| {
+            let mut count = 0;
+            while count < out.len() {
+                let Some(byte) = state.output.pop() else {
+                    break;
+                };
+                out[count] = byte;
+                count += 1;
+            }
+            count
+        })
     }
 
     fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32> {
@@ -320,5 +346,64 @@ impl Tty {
         let termios = unsafe { core::ptr::read(buf.as_ptr() as *const Termios) };
         self.state.exclusive(|state| state.termios = termios);
         Ok(0)
+    }
+
+    fn flush_for_ioctl(&'static self, arg: u32) -> Result<u32> {
+        match arg {
+            FLUSH_INPUT => self.state.exclusive(TtyState::flush_input),
+            FLUSH_OUTPUT => self.state.exclusive(TtyState::flush_output),
+            FLUSH_BOTH => self.state.exclusive(|state| {
+                state.flush_input();
+                state.flush_output();
+            }),
+            _ => return Err(Errno::INVAL),
+        }
+        Ok(0)
+    }
+}
+
+impl TtyState {
+    fn is_canonical(&self) -> bool {
+        self.termios.local_mode.contains(LocalMode::ICANON)
+    }
+
+    fn has_readable_data(&self) -> bool {
+        if self.is_canonical() {
+            self.pending_lines > 0 || self.cooked_input.remaining() <= READ_CANONICAL_LOW_WATER
+        } else {
+            !self.cooked_input.is_empty()
+        }
+    }
+
+    fn is_line_boundary(&self, byte: u8) -> bool {
+        byte == b'\n' || byte == self.termios.control_char(ControlChar::Eof)
+    }
+
+    fn map_output_byte(&self, byte: u8) -> u8 {
+        if byte == b'\r' && self.termios.output_mode.contains(OutputMode::OCRNL) {
+            return b'\n';
+        }
+        if byte == b'\n' && self.termios.output_mode.contains(OutputMode::ONLRET) {
+            return b'\r';
+        }
+        if self.termios.output_mode.contains(OutputMode::OLCUC) && byte.is_ascii_lowercase() {
+            return byte.to_ascii_uppercase();
+        }
+        byte
+    }
+
+    fn should_insert_output_cr(&self, byte: u8) -> bool {
+        byte == b'\n'
+            && self.termios.output_mode.contains(OutputMode::ONLCR)
+            && !self.output_cr_pending
+    }
+
+    fn flush_input(&mut self) {
+        self.raw_input.flush();
+    }
+
+    fn flush_output(&mut self) {
+        self.output.flush();
+        self.output_cr_pending = false;
     }
 }

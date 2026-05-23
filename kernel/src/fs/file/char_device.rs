@@ -19,10 +19,9 @@ use user_lib::syscall::fs::Stat;
 
 use super::File;
 use crate::{
-    driver::{DevNum, character::tty::Tty},
+    driver::{DevNum, character::tty},
     error::{Errno, Result},
     fs::minix::Inode,
-    segment::uaccess,
     task,
 };
 
@@ -44,11 +43,21 @@ impl CharDeviceFile {
 
 impl File for CharDeviceFile {
     fn read(&self, buffer: &mut [u8]) -> Result<usize> {
-        rw_char(RwDir::Read, self.dev, buffer.as_mut_ptr(), buffer.len())
+        match self.dev.major() {
+            1 => read_memory(self.dev.minor(), buffer.len()),
+            4 => tty::read(self.dev.minor() as usize, buffer),
+            5 => tty::read(current_tty_channel()?, buffer),
+            _ => Err(Errno::NODEV),
+        }
     }
 
     fn write(&self, buffer: &[u8]) -> Result<usize> {
-        rw_char(RwDir::Write, self.dev, buffer.as_ptr(), buffer.len())
+        match self.dev.major() {
+            1 => write_memory(self.dev.minor(), buffer.len()),
+            4 => tty::write(self.dev.minor() as usize, buffer),
+            5 => tty::write(current_tty_channel()?, buffer),
+            _ => Err(Errno::NODEV),
+        }
     }
 
     fn stat(&self) -> Result<Stat> {
@@ -56,85 +65,43 @@ impl File for CharDeviceFile {
     }
 
     fn ioctl(&self, cmd: u32, arg: u32) -> Result<u32> {
-        ioctl_char(self.dev, cmd, arg)
-    }
-}
-
-/// Character device ioctl dispatcher — equivalent of `sys_ioctl`'s
-/// `ioctl_table[MAJOR(dev)]` lookup.
-fn ioctl_char(dev: DevNum, cmd: u32, arg: u32) -> Result<u32> {
-    let minor = dev.minor() as usize;
-    match dev.major() {
-        4 => {
-            if minor >= Tty::DEVICE_COUNT {
-                return Err(Errno::NODEV);
-            }
-            Tty::device(minor).ioctl(minor, cmd, arg)
+        match self.dev.major() {
+            4 => tty::ioctl(self.dev.minor() as usize, cmd, arg),
+            5 => tty::ioctl(current_tty_channel()?, cmd, arg),
+            _ => Err(Errno::NOTTY),
         }
-        5 => {
-            let tty_index = task::with_current(|inner| inner.tty);
-            if tty_index < 0 {
-                return Err(Errno::PERM);
-            }
-            let minor = tty_index as usize;
-            Tty::device(minor).ioctl(minor, cmd, arg)
-        }
-        _ => Err(Errno::NOTTY),
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RwDir {
-    Read,
-    Write,
-}
-
-/// Top-level character device dispatcher — equivalent of `rw_char()`.
-fn rw_char(dir: RwDir, dev: DevNum, buf: *const u8, count: usize) -> Result<usize> {
-    match dev.major() {
-        1 => rw_memory(dir, dev.minor(), buf, count),
-        4 => rw_ttyx(dir, dev.minor() as usize, buf, count),
-        5 => rw_tty(dir, buf, count),
-        _ => Err(Errno::NODEV),
-    }
-}
-
-/// Major 4 — read/write a specific TTY device by minor number.
-///
-/// The `File` layer has already copied user data into a kernel buffer, but
-/// `Tty::read/write` use `uaccess::read_u8/write_u8` (which go through
-/// `%fs`). We set `%fs` to the kernel data segment so those accessors
-/// operate on our kernel buffer.
-fn rw_ttyx(dir: RwDir, minor: usize, buf: *const u8, count: usize) -> Result<usize> {
-    if minor >= Tty::DEVICE_COUNT {
-        return Err(Errno::NODEV);
-    }
-    let tty = Tty::device(minor);
-    uaccess::with_kernel_fs(|| match dir {
-        RwDir::Read => tty.read(minor, buf as *mut u8, count).map(|n| n as usize),
-        RwDir::Write => tty.write(minor, buf, count).map(|n| n as usize),
-    })
-}
-
-/// Major 5 — read/write the calling process's controlling terminal.
-fn rw_tty(dir: RwDir, buf: *const u8, count: usize) -> Result<usize> {
+/// Return the current process's controlling terminal channel.
+fn current_tty_channel() -> Result<usize> {
     let tty_index = task::with_current(|inner| inner.tty);
     if tty_index < 0 {
         return Err(Errno::PERM);
     }
-    rw_ttyx(dir, tty_index as usize, buf, count)
+    Ok(tty_index as usize)
 }
 
-/// Major 1 — memory pseudo-devices dispatched by minor number.
-fn rw_memory(dir: RwDir, minor: u8, _buf: *const u8, count: usize) -> Result<usize> {
+/// Major 1 — memory pseudo-devices read by minor number.
+fn read_memory(minor: u8, _count: usize) -> Result<usize> {
     match minor {
         // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
         0..=2 => Err(Errno::IO),
-        // 3 = /dev/null — reads return 0 bytes, writes succeed silently
-        3 => match dir {
-            RwDir::Read => Ok(0),
-            RwDir::Write => Ok(count),
-        },
+        // 3 = /dev/null — reads return EOF
+        3 => Ok(0),
+        // 4 = /dev/port — stub Errno::IO
+        4 => Err(Errno::IO),
+        _ => Err(Errno::IO),
+    }
+}
+
+/// Major 1 — memory pseudo-devices written by minor number.
+fn write_memory(minor: u8, count: usize) -> Result<usize> {
+    match minor {
+        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
+        0..=2 => Err(Errno::IO),
+        // 3 = /dev/null — writes are discarded successfully
+        3 => Ok(count),
         // 4 = /dev/port — stub Errno::IO
         4 => Err(Errno::IO),
         _ => Err(Errno::IO),

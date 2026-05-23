@@ -1,8 +1,7 @@
 //! Kernel ↔ user-space data transfer via the FS segment register.
 //!
 //! All reads and writes go through `%fs`, which points to the current task's
-//! user data segment during system calls. [`with_kernel_fs`] temporarily
-//! redirects `%fs` to the kernel data segment for in-kernel consumers.
+//! user data segment during system calls.
 
 use alloc::string::String;
 use core::arch::asm;
@@ -113,36 +112,4 @@ pub fn write_bytes(buf: &[u8], addr: *mut u8) {
     for (i, &b) in buf.iter().enumerate() {
         write_u8(b, unsafe { addr.add(i) });
     }
-}
-
-/// Execute `f` with `%fs` temporarily set to the kernel data segment (0x10).
-///
-/// This makes `read_u8` / `write_u8` operate on kernel memory instead of
-/// user memory, using the classic `push %ds; pop %fs` trick for `printk`
-/// and device drivers.
-#[inline]
-pub fn with_kernel_fs<F, R>(f: F) -> R
-where F: FnOnce() -> R {
-    let saved_fs: u16;
-    unsafe {
-        asm!(
-            "movw %fs, {0:x}",
-            out(reg) saved_fs,
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
-        asm!(
-            "movw {0:x}, %fs",
-            in(reg) super::KERNEL_DS.as_u16(),
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
-    }
-    let result = f();
-    unsafe {
-        asm!(
-            "movw {0:x}, %fs",
-            in(reg) saved_fs,
-            options(att_syntax, nomem, nostack, preserves_flags),
-        );
-    }
-    result
 }

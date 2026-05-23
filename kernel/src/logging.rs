@@ -6,11 +6,9 @@
 //!   no scrolling, wraps to top. Used before `console::init()`.
 //!
 //! - **TTY mode** (`TTY_READY = true`): formats into a static 1024-byte
-//!   buffer, then calls `Tty::write(0, buf, len)` — the same path used by
-//!   user-space writes. To make `uaccess::read_u8` (which reads through
-//!   `%fs`) work on kernel memory, `%fs` is temporarily set to the kernel
-//!   data segment (0x10) before the call so the output path can read from
-//!   the kernel-owned format buffer.
+//!   buffer, then writes those kernel-owned bytes through TTY channel 0. This
+//!   preserves the Linux 0.11 `printk -> tty_write(0)` data flow without
+//!   pretending the kernel buffer is a user-space pointer.
 
 use core::{
     fmt::{self, Write},
@@ -88,11 +86,8 @@ pub fn put_fmt(args: fmt::Arguments) {
         LOG_LEN = 0;
         LogBufWriter.write_fmt(args).unwrap();
         let len = LOG_LEN;
-        let buf_ptr = addr_of!(LOG_BUF) as *const u8;
-
-        crate::segment::uaccess::with_kernel_fs(|| {
-            let _ = crate::driver::character::tty::Tty::device(0).write(0, buf_ptr, len);
-        });
+        let bytes = core::slice::from_raw_parts(addr_of!(LOG_BUF) as *const u8, len);
+        let _ = crate::driver::character::tty::write(0, bytes);
     }
 }
 

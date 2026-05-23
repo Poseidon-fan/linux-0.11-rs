@@ -58,6 +58,12 @@ impl RingBuffer {
         self.remaining() == 0
     }
 
+    /// Number of bytes currently stored in the buffer.
+    #[inline]
+    pub fn len(&self) -> usize {
+        (self.head.wrapping_sub(self.tail)) & MASK
+    }
+
     /// Append one byte. Returns `true` on success, `false` if full.
     #[inline]
     pub fn push(&mut self, byte: u8) -> bool {

@@ -27,7 +27,7 @@ use user_lib::syscall::signal::Signal;
 pub use wait_queue::WaitQueue;
 
 use crate::{
-    driver::character::tty::Tty,
+    driver::character::tty,
     pmio::{inb_p, outb, outb_p},
     segment,
     sync::assert_can_schedule,
@@ -137,11 +137,7 @@ pub fn exit_process(code: i32) -> ! {
         // Session leaders release their controlling terminal's foreground group.
         if is_leader && tty >= 0 {
             let tty_channel = tty as usize;
-            if tty_channel < Tty::DEVICE_COUNT {
-                Tty::device(tty_channel)
-                    .state
-                    .exclusive(|state| state.foreground_group = 0);
-            }
+            tty::clear_foreground_group(tty_channel);
         }
 
         // Session leader: send SIGHUP to all tasks in the same session.
