@@ -1,13 +1,20 @@
 [package]
 name = "miniximg-cli"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
+description = "A CLI for building, inspecting, validating, and editing Minix v1 filesystem images"
+license = "MIT"
 readme = "README.md"
+repository = "https://github.com/Poseidon-fan/linux-0.11-rs"
+homepage = "https://github.com/Poseidon-fan/linux-0.11-rs/tree/master/miniximg/miniximg-cli"
+documentation = "https://docs.rs/miniximg-cli"
+keywords = ["minix", "filesystem", "disk-image", "cli"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 clap = { version = "4.5.50", features = ["derive"] }
-miniximg = { path = "../miniximg-core" }
+miniximg = { version = "1.0.0", path = "../miniximg-core" }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "0.9.8"
 
