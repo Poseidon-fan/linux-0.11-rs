@@ -6,6 +6,15 @@ use bitflags::bitflags;
 
 use crate::fs::BLOCK_SIZE;
 
+/// One full block reinterpreted as 64-bit bitmap words.
+pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
+/// One full block of on-disk inodes, used when reading inode table blocks.
+pub type InodeBlock = [DiskInode; INODES_PER_BLOCK];
+/// One full block of raw bytes.
+pub type DataBlock = [u8; BLOCK_SIZE];
+/// One full block of directory entries, used when scanning a directory block.
+pub type DirectoryBlock = [DiskDirectoryEntry; DIRECTORY_ENTRIES_PER_BLOCK];
+
 /// Maximum file name length stored in one Minix directory entry.
 pub const MINIX_NAME_LENGTH: usize = 14;
 
@@ -154,15 +163,6 @@ pub struct DiskDirectoryEntry {
     /// NUL-padded filename; entries shorter than [`MINIX_NAME_LENGTH`] end at the first NUL.
     pub name: [u8; MINIX_NAME_LENGTH],
 }
-
-/// One full block reinterpreted as 64-bit bitmap words.
-pub type BitmapBlock = [u64; BLOCK_SIZE / size_of::<u64>()];
-/// One full block of on-disk inodes, used when reading inode table blocks.
-pub type InodeBlock = [DiskInode; INODES_PER_BLOCK];
-/// One full block of raw bytes.
-pub type DataBlock = [u8; BLOCK_SIZE];
-/// One full block of directory entries, used when scanning a directory block.
-pub type DirectoryBlock = [DiskDirectoryEntry; DIRECTORY_ENTRIES_PER_BLOCK];
 
 impl DiskInode {
     /// Return an all-zero inode suitable for a freshly allocated inode slot.

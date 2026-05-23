@@ -76,7 +76,7 @@ define_syscall_handler!(
                     if !path::check_permission(&inode, required) {
                         return Err(Errno::PERM);
                     }
-                    inode.inner.lock().access_time = time::current_time();
+                    inode.inner.lock().touch_access(time::current_time());
                     if open_options.contains(OpenOptions::TRUNCATE) {
                         inode.truncate();
                     }

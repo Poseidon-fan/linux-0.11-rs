@@ -117,6 +117,47 @@ impl InodeId {
     }
 }
 
+impl InodeInner {
+    /// Mark this inode as needing write-back to its inode-table slot.
+    pub fn mark_dirty(&mut self) {
+        self.is_dirty = true;
+    }
+
+    /// Update the last access time and mark the inode dirty.
+    pub fn touch_access(&mut self, timestamp: u32) {
+        self.access_time = timestamp;
+        self.mark_dirty();
+    }
+
+    /// Update the metadata-change time and mark the inode dirty.
+    pub fn touch_change(&mut self, timestamp: u32) {
+        self.change_time = timestamp;
+        self.mark_dirty();
+    }
+
+    /// Update file-data modification and metadata-change times together.
+    pub fn touch_modified(&mut self, timestamp: u32) {
+        self.disk_inode.modification_time = timestamp;
+        self.change_time = timestamp;
+        self.mark_dirty();
+    }
+
+    /// Initialize all inode timestamps for a newly allocated inode.
+    pub fn touch_created(&mut self, timestamp: u32) {
+        self.access_time = timestamp;
+        self.disk_inode.modification_time = timestamp;
+        self.change_time = timestamp;
+        self.mark_dirty();
+    }
+
+    /// Set caller-supplied access and modification times, then record metadata change.
+    pub fn set_access_and_modified(&mut self, access_time: u32, modification_time: u32, now: u32) {
+        self.access_time = access_time;
+        self.disk_inode.modification_time = modification_time;
+        self.touch_change(now);
+    }
+}
+
 impl Inode {
     /// Return the file type of this inode.
     ///
@@ -169,11 +210,9 @@ impl Inode {
         free_zone_tree(&fs, dev, core::mem::take(&mut disk.single_indirect_zone), 1);
         free_zone_tree(&fs, dev, core::mem::take(&mut disk.double_indirect_zone), 2);
 
-        disk.size = 0;
         let now = time::current_time();
-        disk.modification_time = now;
-        inner.change_time = now;
-        inner.is_dirty = true;
+        disk.size = 0;
+        inner.touch_modified(now);
     }
 
     /// Map one logical file block to its backing disk block.
@@ -229,8 +268,7 @@ impl Inode {
                 let (zone, allocated) = try_alloc(inner.disk_inode.direct_zones[logic_id]);
                 if allocated {
                     inner.disk_inode.direct_zones[logic_id] = zone;
-                    inner.is_dirty = true;
-                    inner.change_time = time::current_time();
+                    inner.touch_change(time::current_time());
                 }
                 zone
             }
@@ -238,8 +276,7 @@ impl Inode {
                 let (root_zone, allocated) = try_alloc(inner.disk_inode.single_indirect_zone);
                 if allocated {
                     inner.disk_inode.single_indirect_zone = root_zone;
-                    inner.is_dirty = true;
-                    inner.change_time = time::current_time();
+                    inner.touch_change(time::current_time());
                 }
                 resolve_indirect_entry(root_zone, logic_id - INDIRECT_ZONE_INDEX)?
             }
@@ -247,8 +284,7 @@ impl Inode {
                 let (root_zone, allocated) = try_alloc(inner.disk_inode.double_indirect_zone);
                 if allocated {
                     inner.disk_inode.double_indirect_zone = root_zone;
-                    inner.is_dirty = true;
-                    inner.change_time = time::current_time();
+                    inner.touch_change(time::current_time());
                 }
                 let double_indirect_start =
                     DOUBLE_INDIRECT_ZONE_INDEX + INDIRECT_ENTRIES_PER_BLOCK - 1;
@@ -307,7 +343,7 @@ impl Inode {
             left -= chunk_len;
         }
 
-        self.inner.lock().access_time = time::current_time();
+        self.inner.lock().touch_access(time::current_time());
         Ok(read)
     }
 
@@ -358,9 +394,7 @@ impl Inode {
         if pos > inner.disk_inode.size as usize {
             inner.disk_inode.size = pos as u32;
         }
-        inner.disk_inode.modification_time = now;
-        inner.change_time = now;
-        inner.is_dirty = true;
+        inner.touch_modified(now);
 
         match (written, outcome) {
             (0, Err(errno)) => Err(errno),
@@ -468,7 +502,7 @@ impl Inode {
         let inode = self.alloc_and_link(name, type_bits, mode, 1)?;
         let mut inner = inode.inner.lock();
         inner.disk_inode.direct_zones[0] = dev;
-        inner.is_dirty = true;
+        inner.touch_change(time::current_time());
         drop(inner);
         Ok(inode)
     }
@@ -484,8 +518,7 @@ impl Inode {
 
         let mut parent_inner = self.inner.lock();
         parent_inner.disk_inode.link_count += 1;
-        parent_inner.change_time = time::current_time();
-        parent_inner.is_dirty = true;
+        parent_inner.touch_change(time::current_time());
 
         Ok(inode)
     }
@@ -515,16 +548,13 @@ impl Inode {
             inner.disk_inode.user_id = euid;
             inner.disk_inode.group_id = egid as u8;
             inner.disk_inode.link_count = link_count;
-            inner.disk_inode.modification_time = now;
-            inner.access_time = now;
-            inner.change_time = now;
-            inner.is_dirty = true;
+            inner.touch_created(now);
         }
 
         if let Err(e) = self.add_entry(name, inode_number) {
             let mut inner = inode.inner.lock();
             inner.disk_inode.link_count = 0;
-            inner.is_dirty = true;
+            inner.touch_change(time::current_time());
             return Err(e);
         }
 
@@ -629,9 +659,7 @@ impl Inode {
         if end_offset > inner.disk_inode.size as usize {
             inner.disk_inode.size = end_offset as u32;
         }
-        inner.disk_inode.modification_time = time::current_time();
-        inner.change_time = inner.disk_inode.modification_time;
-        inner.is_dirty = true;
+        inner.touch_modified(time::current_time());
         Ok(())
     }
 }

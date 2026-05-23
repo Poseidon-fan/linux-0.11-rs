@@ -66,8 +66,7 @@ define_syscall_handler!(
 
         let mut inner = old_inode.inner.lock();
         inner.disk_inode.link_count += 1;
-        inner.change_time = time::current_time();
-        inner.is_dirty = true;
+        inner.touch_change(time::current_time());
 
         Ok(0)
     }
@@ -97,8 +96,7 @@ define_syscall_handler!(
 
         let mut inner = inode.inner.lock();
         inner.disk_inode.link_count -= 1;
-        inner.change_time = time::current_time();
-        inner.is_dirty = true;
+        inner.touch_change(time::current_time());
 
         Ok(0)
     }
@@ -221,14 +219,12 @@ define_syscall_handler!(
         {
             let mut inner = inode.inner.lock();
             inner.disk_inode.link_count = 0;
-            inner.change_time = now;
-            inner.is_dirty = true;
+            inner.touch_change(now);
         }
         {
             let mut inner = dir.inner.lock();
             inner.disk_inode.link_count -= 1;
-            inner.change_time = now;
-            inner.is_dirty = true;
+            inner.touch_modified(now);
         }
 
         Ok(0)
@@ -252,7 +248,7 @@ define_syscall_handler!(
             (mode as u16 & InodeMode::FLAGS_MASK)
                 | (inner.disk_inode.mode.0 & !InodeMode::FLAGS_MASK),
         );
-        inner.is_dirty = true;
+        inner.touch_change(time::current_time());
         Ok(0)
     }
 );
@@ -271,7 +267,7 @@ define_syscall_handler!(
         let mut inner = inode.inner.lock();
         inner.disk_inode.user_id = uid as u16;
         inner.disk_inode.group_id = gid as u8;
-        inner.is_dirty = true;
+        inner.touch_change(time::current_time());
         Ok(0)
     }
 );
@@ -314,9 +310,7 @@ define_syscall_handler!(
         };
 
         let mut inner = inode.inner.lock();
-        inner.access_time = actime;
-        inner.disk_inode.modification_time = modtime;
-        inner.is_dirty = true;
+        inner.set_access_and_modified(actime, modtime, time::current_time());
         Ok(0)
     }
 );

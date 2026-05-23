@@ -1,11 +1,12 @@
-//! Pathname-resolution helpers built on top of [`std`]-style string splitting.
+//! Pathname-resolution helpers built around borrowed path slices.
 //!
-//! Path components are obtained directly from `path.split('/')`, with `.` and
-//! `..` recognised as special cases during traversal. The final component is
-//! returned verbatim to the caller so name-based lookups see the raw bytes
-//! the user requested.
+//! Path parsing is represented by [`Pathname`], a zero-allocation wrapper over
+//! a raw string slice. It skips repeated separators while walking directory
+//! components, but keeps the final component as the caller supplied it so
+//! name-based lookups see the requested bytes.
 
 use alloc::sync::Arc;
+use core::str::Split;
 
 use bitflags::bitflags;
 
@@ -40,11 +41,7 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
         resolve_inode(InodeId::new(dir.id.device, inum))
     };
 
-    {
-        let mut inner = inode.inner.lock();
-        inner.access_time = time::current_time();
-        inner.is_dirty = true;
-    }
+    inode.inner.lock().touch_access(time::current_time());
 
     Some(inode)
 }
@@ -58,41 +55,29 @@ pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
 /// The returned parent directory is guaranteed to be a directory inode with
 /// search (execute) permission for the current task.
 pub fn resolve_parent(path: &str) -> Option<(Arc<Inode>, &str)> {
-    if path.is_empty() {
-        return None;
-    }
-
-    let ends_with_slash = path.ends_with('/');
+    let pathname = Pathname::new(path)?;
     let fs_ctx = task::with_current(|inner| inner.fs.clone());
     let root_inode = fs_ctx.root_directory.clone()?;
-
-    let mut current_inode = if path.starts_with('/') {
+    let mut current_inode = if pathname.is_absolute() {
         Arc::clone(&root_inode)
     } else {
         fs_ctx.current_directory.clone()?
     };
+    let (parent_components, basename) = pathname.parent_path();
 
-    let mut basename = "";
-    let mut components = path.split('/').filter(|c| !c.is_empty()).peekable();
-
-    while let Some(name) = components.next() {
-        // The final component is the basename unless the path ended with '/',
-        // in which case every component (including the last) is traversed.
-        if components.peek().is_none() && !ends_with_slash {
-            basename = name;
-            break;
-        }
-
+    for component in parent_components {
         if current_inode.file_type() != InodeType::Directory
             || !check_permission(&current_inode, AccessMask::MAY_EXEC)
         {
             return None;
         }
 
-        match name {
-            "." => {}
-            ".." => current_inode = resolve_dotdot(&current_inode, &root_inode)?,
-            _ => {
+        match component {
+            PathComponent::Current => {}
+            PathComponent::Parent => {
+                current_inode = resolve_dotdot(&current_inode, &root_inode)?;
+            }
+            PathComponent::Name(name) => {
                 let child_inum = current_inode.lookup(name).ok()??;
                 current_inode = resolve_inode(InodeId::new(current_inode.id.device, child_inum));
             }
@@ -143,6 +128,102 @@ pub fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) 
     };
 
     (mode & mask.bits() & 0o7) == mask.bits() || uid == 0
+}
+
+/// Borrowed pathname used to centralize parsing rules during resolution.
+#[derive(Clone, Copy)]
+struct Pathname<'a> {
+    /// Raw pathname string owned by the syscall or kernel caller.
+    raw: &'a str,
+}
+
+/// One meaningful component from a pathname.
+#[derive(Clone, Copy)]
+enum PathComponent<'a> {
+    /// The current directory component (`.`).
+    Current,
+    /// The parent directory component (`..`).
+    Parent,
+    /// A directory entry name that must be looked up as-is.
+    Name(&'a str),
+}
+
+/// Iterator over non-empty pathname components.
+struct PathComponents<'a> {
+    /// Raw separator-based splitter; empty pieces are skipped by [`Iterator::next`].
+    inner: Split<'a, char>,
+}
+
+impl<'a> Pathname<'a> {
+    /// Wrap a non-empty raw pathname.
+    fn new(raw: &'a str) -> Option<Self> {
+        (!raw.is_empty()).then_some(Self { raw })
+    }
+
+    /// Return true when lookup starts from the task root directory.
+    fn is_absolute(self) -> bool {
+        self.raw.starts_with('/')
+    }
+
+    /// Return true when the final component should be traversed as a directory.
+    fn has_trailing_slash(self) -> bool {
+        self.raw.ends_with('/')
+    }
+
+    /// Split this pathname into traversed parent components and the basename.
+    ///
+    /// The basename is empty for paths ending in `/`; otherwise it is the
+    /// final non-empty component exactly as name lookups should see it.
+    fn parent_path(self) -> (PathComponents<'a>, &'a str) {
+        if self.has_trailing_slash() {
+            return (PathComponents::new(self.raw), "");
+        }
+
+        let trimmed_end = self
+            .raw
+            .rfind(|byte| byte != '/')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let without_trailing_separators = &self.raw[..trimmed_end];
+        let basename_start = without_trailing_separators
+            .rfind('/')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+
+        let parent = &self.raw[..basename_start];
+        let basename = &without_trailing_separators[basename_start..];
+        (PathComponents::new(parent), basename)
+    }
+}
+
+impl<'a> PathComponent<'a> {
+    /// Classify a non-empty raw component.
+    fn from_raw(component: &'a str) -> Self {
+        match component {
+            "." => Self::Current,
+            ".." => Self::Parent,
+            name => Self::Name(name),
+        }
+    }
+}
+
+impl<'a> PathComponents<'a> {
+    /// Build a component iterator over `raw`.
+    fn new(raw: &'a str) -> Self {
+        Self {
+            inner: raw.split('/'),
+        }
+    }
+}
+
+impl<'a> Iterator for PathComponents<'a> {
+    type Item = PathComponent<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .find(|component| !component.is_empty())
+            .map(PathComponent::from_raw)
+    }
 }
 
 /// Resolve one `..` step from `current_inode`.
