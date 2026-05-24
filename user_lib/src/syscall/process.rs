@@ -21,6 +21,29 @@ pub struct Tms {
     pub child_system_time: u32,
 }
 
+/// System identity returned by `uname(2)`.
+///
+/// Each field is a fixed 9-byte array, matching the early Linux `struct
+/// utsname` ABI. The strings are copied as raw bytes and may omit a trailing
+/// NUL when they occupy all 9 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UtsName {
+    /// Operating system name.
+    pub sysname: [u8; UTS_FIELD_LEN],
+    /// Network node name.
+    pub nodename: [u8; UTS_FIELD_LEN],
+    /// Kernel release string.
+    pub release: [u8; UTS_FIELD_LEN],
+    /// Kernel version string.
+    pub version: [u8; UTS_FIELD_LEN],
+    /// Machine hardware identifier.
+    pub machine: [u8; UTS_FIELD_LEN],
+}
+
+/// Fixed byte length of one `uname(2)` identity field.
+pub const UTS_FIELD_LEN: usize = 9;
+
 use_syscall!(Syscall::Setup => setup(drive_info_addr: *const u8) -> u32);
 use_syscall!(Syscall::Exit => exit(status: u32) -> u32);
 use_syscall!(Syscall::Fork  => fork() -> u32);
@@ -51,7 +74,7 @@ use_syscall!(Syscall::Getgid => getgid() -> u32);
 use_syscall!(Syscall::Geteuid => geteuid() -> u32);
 use_syscall!(Syscall::Getegid => getegid() -> u32);
 use_syscall!(Syscall::Setpgid => setpgid(pid: u32, pgid: u32) -> u32);
-use_syscall!(Syscall::Uname => uname(buf: *mut u8) -> u32);
+use_syscall!(Syscall::Uname => uname(buf: *mut UtsName) -> u32);
 use_syscall!(Syscall::Setreuid => setreuid(ruid: u32, euid: u32) -> u32);
 use_syscall!(Syscall::Setregid => setregid(rgid: u32, egid: u32) -> u32);
 use_syscall!(Syscall::Getppid => getppid() -> u32);
@@ -63,3 +86,9 @@ const _: () = assert!(core::mem::offset_of!(Tms, user_time) == 0);
 const _: () = assert!(core::mem::offset_of!(Tms, system_time) == 4);
 const _: () = assert!(core::mem::offset_of!(Tms, child_user_time) == 8);
 const _: () = assert!(core::mem::offset_of!(Tms, child_system_time) == 12);
+const _: () = assert!(size_of::<UtsName>() == 45);
+const _: () = assert!(core::mem::offset_of!(UtsName, sysname) == 0);
+const _: () = assert!(core::mem::offset_of!(UtsName, nodename) == 9);
+const _: () = assert!(core::mem::offset_of!(UtsName, release) == 18);
+const _: () = assert!(core::mem::offset_of!(UtsName, version) == 27);
+const _: () = assert!(core::mem::offset_of!(UtsName, machine) == 36);

@@ -2,7 +2,10 @@
 
 use core::mem;
 
-use user_lib::syscall::{Syscall, process::Tms};
+use user_lib::syscall::{
+    Syscall,
+    process::{Tms, UtsName},
+};
 
 use crate::{
     define_syscall_handler,
@@ -72,28 +75,25 @@ define_syscall_handler!(
 define_syscall_handler!(
     Syscall::Uname = 59,
     fn sys_uname(ctx: &mut SyscallContext) -> Result<u32> {
-        // struct utsname (POSIX <sys/utsname.h>), 45 bytes total
-        //
-        //   offset  size  field      description
-        //   ------  ----  ---------  -----------------------------------------
-        //   0x00    9     sysname    Operating system name (e.g. "linux .0")
-        //   0x09    9     nodename   Network node name
-        //   0x12    9     release    Kernel release
-        //   0x1B    9     version    Kernel version
-        //   0x24    9     machine    Hardware identifier
-        //
-        // Each field is char[9], no null terminator in the struct.
         let (name, _, _) = ctx.args();
         if name == 0 {
             return Err(Errno::INVAL);
         }
-        // Match "linux .0", "nodename", "release ", "version ", "machine " (each char[9])
-        const UTSNAME: &[u8; 45] = b"linux .0\0nodename\0release \0version \0machine \0";
-        mm::ensure_user_area_writable(name, 45);
-        let base = name as *mut u8;
-        for (i, &b) in UTSNAME.iter().enumerate() {
-            uaccess::write_u8(b, unsafe { base.add(i) });
-        }
+        let uts_name = UtsName {
+            sysname: *b"linux .0\0",
+            nodename: *b"nodename\0",
+            release: *b"release \0",
+            version: *b"version \0",
+            machine: *b"machine \0",
+        };
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                &uts_name as *const UtsName as *const u8,
+                mem::size_of::<UtsName>(),
+            )
+        };
+        mm::ensure_user_area_writable(name, bytes.len());
+        uaccess::write_bytes(bytes, name as *mut u8);
         Ok(0)
     }
 );
