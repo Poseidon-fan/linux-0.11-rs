@@ -4,11 +4,8 @@
 //! Runtime startup records the raw `argc / argv / envp` pointers, while public
 //! functions expose owned [`String`] values backed by the user-space allocator.
 
-use alloc::string::{String, ToString};
-use core::{
-    ffi::{CStr, c_char},
-    ptr, str,
-};
+use alloc::string::String;
+use core::{ffi::CStr, ptr, str};
 
 /// Snapshot of the process argument and environment pointer tables.
 #[derive(Clone, Copy)]
@@ -112,8 +109,12 @@ impl Iterator for Args {
 
         let ptr = unsafe { *self.argv.add(self.index) };
         self.index += 1;
-        let arg = cstr_from_ptr(ptr)?;
-        Some(cstr_to_string(arg, "argument is not valid UTF-8"))
+        if ptr.is_null() {
+            return None;
+        }
+
+        let arg = unsafe { CStr::from_ptr(ptr.cast()) };
+        Some(arg.to_str().expect("argument is not valid UTF-8").into())
     }
 }
 
@@ -133,8 +134,12 @@ impl Iterator for Vars {
                 continue;
             };
 
-            let name = bytes_to_string(&bytes[..eq], "environment name is not valid UTF-8");
-            let value = bytes_to_string(&bytes[eq + 1..], "environment value is not valid UTF-8");
+            let name = str::from_utf8(&bytes[..eq])
+                .expect("environment name is not valid UTF-8")
+                .into();
+            let value = str::from_utf8(&bytes[eq + 1..])
+                .expect("environment value is not valid UTF-8")
+                .into();
             return Some((name, value));
         }
     }
@@ -173,27 +178,5 @@ fn next_env_entry<'a>(next: &mut *const *const u8) -> Option<&'a CStr> {
     }
 
     *next = unsafe { table.add(1) };
-    cstr_from_ptr(ptr)
-}
-
-/// Converts a raw user-stack string pointer into a [`CStr`] reference.
-#[inline]
-fn cstr_from_ptr<'a>(ptr: *const u8) -> Option<&'a CStr> {
-    if ptr.is_null() {
-        return None;
-    }
-
-    Some(unsafe { CStr::from_ptr(ptr.cast::<c_char>()) })
-}
-
-/// Converts one C string into an owned UTF-8 string.
-fn cstr_to_string(value: &CStr, panic_message: &str) -> String {
-    bytes_to_string(value.to_bytes(), panic_message)
-}
-
-/// Converts bytes into an owned UTF-8 string.
-fn bytes_to_string(bytes: &[u8], panic_message: &str) -> String {
-    str::from_utf8(bytes)
-        .unwrap_or_else(|_| panic!("{}", panic_message))
-        .to_string()
+    Some(unsafe { CStr::from_ptr(ptr.cast()) })
 }
