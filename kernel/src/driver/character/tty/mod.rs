@@ -15,7 +15,7 @@ mod line_discipline;
 mod ring_buffer;
 
 use ring_buffer::RingBuffer;
-use user_lib::syscall::tty::{ControlChar, LocalMode, OutputMode, Termios, TtyRequest};
+use user_lib::syscall::tty::{ControlChar, LocalMode, OutputMode, Termio, Termios, TtyRequest};
 
 use crate::{
     error::{Errno, Result},
@@ -264,17 +264,7 @@ impl TtyDevice {
 
     fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
         match cmd {
-            x if x == TtyRequest::GetTermios as u32 => {
-                let termios = self.state.exclusive(|state| state.termios);
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        &termios as *const Termios as *const u8,
-                        core::mem::size_of::<Termios>(),
-                    )
-                };
-                uaccess::write_bytes(bytes, arg as *mut u8);
-                Ok(0)
-            }
+            x if x == TtyRequest::GetTermios as u32 => self.get_termios_to_user(arg),
             x if x == TtyRequest::SetTermiosFlush as u32 => {
                 self.state.exclusive(TtyState::flush_input);
                 flush_output(channel);
@@ -285,6 +275,17 @@ impl TtyDevice {
                 self.set_termios_from_user(arg)
             }
             x if x == TtyRequest::SetTermios as u32 => self.set_termios_from_user(arg),
+            x if x == TtyRequest::GetTermio as u32 => self.get_termio_to_user(arg),
+            x if x == TtyRequest::SetTermioFlush as u32 => {
+                self.state.exclusive(TtyState::flush_input);
+                flush_output(channel);
+                self.set_termio_from_user(arg)
+            }
+            x if x == TtyRequest::SetTermioWait as u32 => {
+                flush_output(channel);
+                self.set_termio_from_user(arg)
+            }
+            x if x == TtyRequest::SetTermio as u32 => self.set_termio_from_user(arg),
             x if x == TtyRequest::GetPgrp as u32 => {
                 let pgrp = self.state.exclusive(|state| state.foreground_group);
                 uaccess::write_u32(pgrp as u32, arg as *mut u32);
@@ -340,11 +341,28 @@ impl TtyDevice {
         })
     }
 
+    fn get_termios_to_user(&'static self, user_ptr: u32) -> Result<u32> {
+        let termios = self.state.exclusive(|state| state.termios);
+        write_user_struct(&termios, user_ptr);
+        Ok(0)
+    }
+
     fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32> {
-        let mut buf = [0u8; core::mem::size_of::<Termios>()];
-        uaccess::read_bytes(user_ptr as *const u8, &mut buf);
-        let termios = unsafe { core::ptr::read(buf.as_ptr() as *const Termios) };
+        let termios = read_user_struct::<Termios>(user_ptr);
         self.state.exclusive(|state| state.termios = termios);
+        Ok(0)
+    }
+
+    fn get_termio_to_user(&'static self, user_ptr: u32) -> Result<u32> {
+        let termio = self.state.exclusive(|state| state.termios.to_termio());
+        write_user_struct(&termio, user_ptr);
+        Ok(0)
+    }
+
+    fn set_termio_from_user(&'static self, user_ptr: u32) -> Result<u32> {
+        let termio = read_user_struct::<Termio>(user_ptr);
+        self.state
+            .exclusive(|state| state.termios.apply_termio(termio));
         Ok(0)
     }
 
@@ -360,6 +378,22 @@ impl TtyDevice {
         }
         Ok(0)
     }
+}
+
+fn read_user_struct<T: Copy>(user_ptr: u32) -> T {
+    let mut value = core::mem::MaybeUninit::<T>::uninit();
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(value.as_mut_ptr() as *mut u8, core::mem::size_of::<T>())
+    };
+    uaccess::read_bytes(user_ptr as *const u8, bytes);
+    unsafe { value.assume_init() }
+}
+
+fn write_user_struct<T: Copy>(value: &T, user_ptr: u32) {
+    let bytes = unsafe {
+        core::slice::from_raw_parts(value as *const T as *const u8, core::mem::size_of::<T>())
+    };
+    uaccess::write_bytes(bytes, user_ptr as *mut u8);
 }
 
 impl TtyState {

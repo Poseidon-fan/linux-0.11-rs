@@ -21,6 +21,14 @@ pub enum TtyRequest {
     SetTermiosWait = 0x5403,
     /// Flush input, then set terminal attributes after output drains.
     SetTermiosFlush = 0x5404,
+    /// Get legacy terminal attributes.
+    GetTermio = 0x5405,
+    /// Set legacy terminal attributes immediately.
+    SetTermio = 0x5406,
+    /// Set legacy terminal attributes after output drains.
+    SetTermioWait = 0x5407,
+    /// Flush input, then set legacy terminal attributes after output drains.
+    SetTermioFlush = 0x5408,
     /// Get foreground process group ID.
     GetPgrp = 0x540F,
     /// Set foreground process group ID.
@@ -32,6 +40,9 @@ impl SyscallArg for TtyRequest {
         self as u32
     }
 }
+
+/// Number of control characters stored in [`Termio::control_chars`].
+pub const NCC: usize = 8;
 
 /// Number of control characters stored in [`Termios::control_chars`].
 pub const NCCS: usize = 17;
@@ -203,6 +214,31 @@ bitflags! {
     }
 }
 
+/// Legacy TTY settings with an ABI-compatible i386 C layout.
+///
+/// This is the old Linux 0.11 `struct termio` layout used by early user-space
+/// programs. The kernel converts it to and from [`Termios`] at ioctl boundaries.
+///
+/// ```text
+/// offset  0: input_mode      (u16)
+/// offset  2: output_mode     (u16)
+/// offset  4: control_mode    (u16)
+/// offset  6: local_mode      (u16)
+/// offset  8: line_discipline (u8)
+/// offset  9: control_chars   ([u8; 8])
+/// total size: 18 bytes
+/// ```
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Termio {
+    pub input_mode: u16,
+    pub output_mode: u16,
+    pub control_mode: u16,
+    pub local_mode: u16,
+    pub line_discipline: u8,
+    pub control_chars: [u8; NCC],
+}
+
 /// TTY settings with an ABI-compatible i386 C layout.
 ///
 /// The layout is fixed because user space passes pointers to this structure
@@ -268,6 +304,41 @@ impl Termios {
     pub fn set_control_char(&mut self, cc: ControlChar, value: u8) {
         self.control_chars[cc as usize] = value;
     }
+
+    /// Convert this modern termios value into the legacy termio ABI.
+    #[inline]
+    pub fn to_termio(&self) -> Termio {
+        let mut control_chars = [0u8; NCC];
+        control_chars.copy_from_slice(&self.control_chars[..NCC]);
+
+        Termio {
+            input_mode: self.input_mode.bits() as u16,
+            output_mode: self.output_mode.bits() as u16,
+            control_mode: self.control_mode.bits() as u16,
+            local_mode: self.local_mode.bits() as u16,
+            line_discipline: self.line_discipline,
+            control_chars,
+        }
+    }
+
+    /// Apply a legacy termio value, preserving fields that termio cannot carry.
+    #[inline]
+    pub fn apply_termio(&mut self, termio: Termio) {
+        self.input_mode = InputMode::from_bits_retain(
+            (self.input_mode.bits() & !0xffff) | u32::from(termio.input_mode),
+        );
+        self.output_mode = OutputMode::from_bits_retain(
+            (self.output_mode.bits() & !0xffff) | u32::from(termio.output_mode),
+        );
+        self.control_mode = ControlMode::from_bits_retain(
+            (self.control_mode.bits() & !0xffff) | u32::from(termio.control_mode),
+        );
+        self.local_mode = LocalMode::from_bits_retain(
+            (self.local_mode.bits() & !0xffff) | u32::from(termio.local_mode),
+        );
+        self.line_discipline = termio.line_discipline;
+        self.control_chars[..NCC].copy_from_slice(&termio.control_chars);
+    }
 }
 
 impl Default for Termios {
@@ -280,7 +351,14 @@ const _: () = assert!(size_of::<InputMode>() == size_of::<u32>());
 const _: () = assert!(size_of::<OutputMode>() == size_of::<u32>());
 const _: () = assert!(size_of::<ControlMode>() == size_of::<u32>());
 const _: () = assert!(size_of::<LocalMode>() == size_of::<u32>());
+const _: () = assert!(size_of::<Termio>() == 18);
 const _: () = assert!(size_of::<Termios>() == 36);
+const _: () = assert!(core::mem::offset_of!(Termio, input_mode) == 0);
+const _: () = assert!(core::mem::offset_of!(Termio, output_mode) == 2);
+const _: () = assert!(core::mem::offset_of!(Termio, control_mode) == 4);
+const _: () = assert!(core::mem::offset_of!(Termio, local_mode) == 6);
+const _: () = assert!(core::mem::offset_of!(Termio, line_discipline) == 8);
+const _: () = assert!(core::mem::offset_of!(Termio, control_chars) == 9);
 const _: () = assert!(core::mem::offset_of!(Termios, input_mode) == 0);
 const _: () = assert!(core::mem::offset_of!(Termios, output_mode) == 4);
 const _: () = assert!(core::mem::offset_of!(Termios, control_mode) == 8);
