@@ -9,7 +9,9 @@ test = false
 bench = false
 
 [features]
-runtime = ["dep:user_lib_macros"]
+default = ["alloc"]
+alloc = []
+runtime = ["alloc", "dep:user_lib_macros"]
 
 [dependencies]
 bitflags = "2.10.0"

@@ -1,14 +1,13 @@
 //! Process arguments and environment accessors.
 //!
-//! The runtime initializes this module from the initial user stack before it
-//! calls the program's `main` function. Public access mirrors Rust's standard
-//! library shape: programs call [`args`], [`vars`], or [`var`] instead of
-//! receiving `argv` and `envp` as direct `main` parameters.
+//! This module intentionally mirrors the high-level shape of [`std::env`].
+//! Runtime startup records the raw `argc / argv / envp` pointers, while public
+//! functions expose owned [`String`] values backed by the user-space allocator.
 
+use alloc::string::{String, ToString};
 use core::{
     ffi::{CStr, c_char},
-    marker::PhantomData,
-    ptr,
+    ptr, str,
 };
 
 /// Snapshot of the process argument and environment pointer tables.
@@ -48,26 +47,37 @@ pub unsafe fn init(argc: usize, argv: *const *const u8, envp: *const *const u8) 
     }
 }
 
-/// Returns the current process arguments.
-#[inline]
-pub fn args() -> Args<'static> {
-    let environment = snapshot();
-    unsafe { Args::from_raw(environment.argc, environment.argv) }
-}
-
-/// Returns the current process environment entries.
-#[inline]
-pub fn vars() -> Vars<'static> {
-    let environment = snapshot();
-    unsafe { Vars::from_raw(environment.envp) }
-}
-
-/// Looks up an environment variable by byte name.
+/// Returns an iterator over the current process arguments.
 ///
-/// The name must not contain `=`. The returned value excludes the `NAME=`
-/// prefix and is not NUL-terminated.
-pub fn var(name: &[u8]) -> Option<&'static [u8]> {
-    vars().get(name)
+/// This follows `std::env::args`: invalid UTF-8 causes a panic during
+/// iteration.
+#[inline]
+pub fn args() -> Args {
+    let environment = snapshot();
+    Args {
+        argc: environment.argc,
+        argv: environment.argv,
+        index: 0,
+    }
+}
+
+/// Returns an iterator over the current process environment.
+///
+/// This follows `std::env::vars`: invalid UTF-8 causes a panic during
+/// iteration, and malformed entries without `=` are skipped.
+#[inline]
+pub fn vars() -> Vars {
+    Vars {
+        next: snapshot().envp,
+    }
+}
+
+/// Looks up an environment variable by UTF-8 name.
+pub fn var(name: &str) -> Result<String, VarError> {
+    let value = find_var_value(name.as_bytes()).ok_or(VarError::NotPresent)?;
+    str::from_utf8(value)
+        .map(String::from)
+        .map_err(|_| VarError::NotUnicode)
 }
 
 /// Copies the global process environment pointers into a local value.
@@ -76,165 +86,94 @@ fn snapshot() -> ProcessEnvironment {
     unsafe { PROCESS_ENVIRONMENT }
 }
 
-/// Process argument vector view.
-///
-/// The pointed-to strings live on the initial user stack and remain valid until
-/// the process replaces its image with `execve` or exits.
-#[derive(Clone, Copy, Debug)]
-pub struct Args<'a> {
+/// Error returned by [`var`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarError {
+    /// The requested variable is not present.
+    NotPresent,
+    /// The variable exists but its value is not valid UTF-8.
+    NotUnicode,
+}
+
+/// Iterator over owned UTF-8 process arguments.
+pub struct Args {
     argc: usize,
     argv: *const *const u8,
-    lifetime: PhantomData<&'a CStr>,
-}
-
-impl<'a> Args<'a> {
-    /// Builds an argument view from raw process startup pointers.
-    ///
-    /// # Safety
-    ///
-    /// `argv` must point to an array containing at least `argc` valid
-    /// NUL-terminated string pointers followed by a NULL terminator.
-    pub unsafe fn from_raw(argc: usize, argv: *const *const u8) -> Self {
-        Self {
-            argc,
-            argv,
-            lifetime: PhantomData,
-        }
-    }
-
-    /// Returns the number of arguments.
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.argc
-    }
-
-    /// Returns true when no arguments were supplied.
-    #[inline]
-    pub const fn is_empty(self) -> bool {
-        self.argc == 0
-    }
-
-    /// Returns the argument at `index`, if it exists and is non-NULL.
-    #[inline]
-    pub fn get(self, index: usize) -> Option<&'a CStr> {
-        if index >= self.argc || self.argv.is_null() {
-            return None;
-        }
-
-        let ptr = unsafe { *self.argv.add(index) };
-        cstr_from_ptr(ptr)
-    }
-
-    /// Iterates over all argument strings.
-    #[inline]
-    pub const fn iter(self) -> ArgsIter<'a> {
-        ArgsIter {
-            args: self,
-            index: 0,
-        }
-    }
-}
-
-/// Iterator over process arguments.
-pub struct ArgsIter<'a> {
-    args: Args<'a>,
     index: usize,
 }
 
-impl<'a> Iterator for ArgsIter<'a> {
-    type Item = &'a CStr;
+impl Iterator for Args {
+    type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let item = self.args.get(self.index)?;
+        if self.index >= self.argc || self.argv.is_null() {
+            return None;
+        }
+
+        let ptr = unsafe { *self.argv.add(self.index) };
         self.index += 1;
-        Some(item)
+        let arg = cstr_from_ptr(ptr)?;
+        Some(cstr_to_string(arg, "argument is not valid UTF-8"))
     }
 }
 
-/// Process environment vector view.
-///
-/// Environment entries are stored as `NAME=value` C strings and terminated by a
-/// NULL pointer.
-#[derive(Clone, Copy, Debug)]
-pub struct Vars<'a> {
-    envp: *const *const u8,
-    lifetime: PhantomData<&'a CStr>,
-}
-
-impl<'a> Vars<'a> {
-    /// Builds an environment view from raw process startup pointers.
-    ///
-    /// # Safety
-    ///
-    /// `envp` must point to a NULL-terminated array of valid NUL-terminated
-    /// string pointers, or be NULL.
-    pub unsafe fn from_raw(envp: *const *const u8) -> Self {
-        Self {
-            envp,
-            lifetime: PhantomData,
-        }
-    }
-
-    /// Returns the raw environment pointer table.
-    #[inline]
-    pub const fn as_ptr(self) -> *const *const u8 {
-        self.envp
-    }
-
-    /// Iterates over all environment entries.
-    #[inline]
-    pub const fn iter(self) -> VarsIter<'a> {
-        VarsIter {
-            next: self.envp,
-            lifetime: PhantomData,
-        }
-    }
-
-    /// Looks up an environment variable by byte name.
-    ///
-    /// The name must not contain `=`. The returned value excludes the `NAME=`
-    /// prefix and is not NUL-terminated.
-    pub fn get(self, name: &[u8]) -> Option<&'a [u8]> {
-        if name.contains(&b'=') {
-            return None;
-        }
-
-        for entry in self.iter() {
-            let bytes = entry.to_bytes();
-            if bytes.len() > name.len()
-                && bytes[..name.len()] == *name
-                && bytes.get(name.len()) == Some(&b'=')
-            {
-                return Some(&bytes[name.len() + 1..]);
-            }
-        }
-
-        None
-    }
-}
-
-/// Iterator over process environment entries.
-pub struct VarsIter<'a> {
+/// Iterator over owned UTF-8 environment key/value pairs.
+pub struct Vars {
     next: *const *const u8,
-    lifetime: PhantomData<&'a CStr>,
 }
 
-impl<'a> Iterator for VarsIter<'a> {
-    type Item = &'a CStr;
+impl Iterator for Vars {
+    type Item = (String, String);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next.is_null() {
-            return None;
-        }
+        loop {
+            let entry = next_env_entry(&mut self.next)?;
+            let bytes = entry.to_bytes();
+            let Some(eq) = bytes.iter().position(|&byte| byte == b'=') else {
+                continue;
+            };
 
-        let ptr = unsafe { *self.next };
-        if ptr.is_null() {
-            return None;
+            let name = bytes_to_string(&bytes[..eq], "environment name is not valid UTF-8");
+            let value = bytes_to_string(&bytes[eq + 1..], "environment value is not valid UTF-8");
+            return Some((name, value));
         }
-
-        self.next = unsafe { self.next.add(1) };
-        cstr_from_ptr(ptr)
     }
+}
+
+/// Finds one environment variable value as raw bytes.
+fn find_var_value(name: &[u8]) -> Option<&'static [u8]> {
+    if name.contains(&b'=') {
+        return None;
+    }
+
+    let mut next = snapshot().envp;
+    while let Some(entry) = next_env_entry(&mut next) {
+        let bytes = entry.to_bytes();
+        if bytes.len() > name.len()
+            && bytes[..name.len()] == *name
+            && bytes.get(name.len()) == Some(&b'=')
+        {
+            return Some(&bytes[name.len() + 1..]);
+        }
+    }
+
+    None
+}
+
+/// Reads the next raw environment entry and advances `next`.
+fn next_env_entry<'a>(next: &mut *const *const u8) -> Option<&'a CStr> {
+    let table = *next;
+    if table.is_null() {
+        return None;
+    }
+
+    let ptr = unsafe { *table };
+    if ptr.is_null() {
+        return None;
+    }
+
+    *next = unsafe { table.add(1) };
+    cstr_from_ptr(ptr)
 }
 
 /// Converts a raw user-stack string pointer into a [`CStr`] reference.
@@ -245,4 +184,16 @@ fn cstr_from_ptr<'a>(ptr: *const u8) -> Option<&'a CStr> {
     }
 
     Some(unsafe { CStr::from_ptr(ptr.cast::<c_char>()) })
+}
+
+/// Converts one C string into an owned UTF-8 string.
+fn cstr_to_string(value: &CStr, panic_message: &str) -> String {
+    bytes_to_string(value.to_bytes(), panic_message)
+}
+
+/// Converts bytes into an owned UTF-8 string.
+fn bytes_to_string(bytes: &[u8], panic_message: &str) -> String {
+    str::from_utf8(bytes)
+        .unwrap_or_else(|_| panic!("{}", panic_message))
+        .to_string()
 }

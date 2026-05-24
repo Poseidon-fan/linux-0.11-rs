@@ -11,7 +11,7 @@ test = false
 bench = false
 
 [dependencies]
-user_lib = { path = "../user_lib" }
+user_lib = { path = "../user_lib", default-features = false }
 bitflags = "2.10.0"
 buddy_system_allocator = "0.12.0"
 hashbrown = "0.16.1"
