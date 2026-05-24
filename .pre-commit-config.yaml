@@ -18,13 +18,25 @@ repos:
         language: system
         entry: bash -c 'cd user_lib && cargo fmt'
         pass_filenames: false
-        files: ^user_lib/
+        files: ^(user_lib|user_lib_macros)/
       - id: user-lib-clippy
         name: user-lib-clippy
         language: system
         entry: bash -c 'cd user_lib && cargo clippy -- -D warnings'
         pass_filenames: false
-        files: ^user_lib/
+        files: ^(user_lib|user_lib_macros)/
+      - id: user-lib-macros-fmt
+        name: user-lib-macros-fmt
+        language: system
+        entry: bash -c 'cd user_lib_macros && cargo fmt'
+        pass_filenames: false
+        files: ^user_lib_macros/
+      - id: user-lib-macros-clippy
+        name: user-lib-macros-clippy
+        language: system
+        entry: bash -c 'cd user_lib_macros && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^user_lib_macros/
       - id: user-program-fmt
         name: user-program-fmt
         language: system

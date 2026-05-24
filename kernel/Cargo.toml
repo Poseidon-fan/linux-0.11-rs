@@ -4,6 +4,12 @@ version = "0.1.1"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 
+[[bin]]
+name = "linux_rs"
+path = "src/main.rs"
+test = false
+bench = false
+
 [dependencies]
 user_lib = { path = "../user_lib" }
 bitflags = "2.10.0"

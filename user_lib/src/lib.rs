@@ -5,7 +5,13 @@
 #![no_std]
 
 pub mod console;
+pub mod env;
+#[cfg(feature = "runtime")]
+pub mod rt;
 pub mod syscall;
+
+#[cfg(feature = "runtime")]
+pub use user_lib_macros::main;
 
 /// Terminate the current process with the given 8-bit exit status.
 ///
