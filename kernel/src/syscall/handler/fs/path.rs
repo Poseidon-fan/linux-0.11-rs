@@ -1,8 +1,9 @@
 //! Path and inode syscall handlers (stat, link, mkdir, chmod, chdir, etc.).
 
-use core::mem;
-
-use user_lib::syscall::{Syscall, fs::Stat};
+use user_lib::syscall::{
+    Syscall,
+    fs::{Stat, TimeUpdate},
+};
 
 use crate::{
     define_syscall_handler,
@@ -13,6 +14,7 @@ use crate::{
         path::{self, AccessMask},
         resolve_inode,
     },
+    mm,
     segment::uaccess,
     syscall::context::SyscallContext,
     task, time,
@@ -25,10 +27,8 @@ define_syscall_handler!(
         let pathname = uaccess::read_pathname(path_ptr);
         let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
         let stat = inode.stat();
-        let bytes = unsafe {
-            core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
-        };
-        uaccess::write_bytes(bytes, buf_ptr as *mut u8);
+        mm::ensure_user_area_writable(buf_ptr, core::mem::size_of::<Stat>());
+        uaccess::write_struct(&stat, buf_ptr as *mut Stat);
         Ok(0)
     }
 );
@@ -300,10 +300,8 @@ define_syscall_handler!(
         let inode = path::resolve_path(&pathname).ok_or(Errno::NOENT)?;
 
         let (actime, modtime) = if times_ptr != 0 {
-            let base = times_ptr as *const u32;
-            let actime = uaccess::read_u32(base);
-            let modtime = uaccess::read_u32(unsafe { base.add(1) });
-            (actime, modtime)
+            let times = uaccess::read_struct(times_ptr as *const TimeUpdate);
+            (times.access_time, times.modification_time)
         } else {
             let now = time::current_time();
             (now, now)

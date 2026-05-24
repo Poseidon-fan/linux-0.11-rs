@@ -1,7 +1,6 @@
 //! File descriptor syscall handlers (open, read, write, close, dup, fcntl, pipe, etc.).
 
 use alloc::{sync::Arc, vec};
-use core::mem;
 
 use user_lib::syscall::{
     Syscall,
@@ -18,6 +17,7 @@ use crate::{
         path::{self, AccessMask},
         resolve_inode,
     },
+    mm,
     segment::uaccess,
     syscall::{SYSCALL_TABLE, context::SyscallContext},
     task::{self, TASK_OPEN_FILES_LIMIT},
@@ -210,10 +210,8 @@ define_syscall_handler!(
         let (fd, buf_ptr, _) = ctx.args();
         let file = lookup_file(fd)?;
         let stat = file.stat()?;
-        let bytes = unsafe {
-            core::slice::from_raw_parts(&stat as *const Stat as *const u8, mem::size_of::<Stat>())
-        };
-        uaccess::write_bytes(bytes, buf_ptr as *mut u8);
+        mm::ensure_user_area_writable(buf_ptr, core::mem::size_of::<Stat>());
+        uaccess::write_struct(&stat, buf_ptr as *mut Stat);
         Ok(0)
     }
 );

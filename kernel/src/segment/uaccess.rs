@@ -4,7 +4,7 @@
 //! user data segment during system calls.
 
 use alloc::string::String;
-use core::arch::asm;
+use core::{arch::asm, mem};
 
 /// Reads a `u8` from `addr` through the FS segment.
 #[inline]
@@ -112,4 +112,22 @@ pub fn write_bytes(buf: &[u8], addr: *mut u8) {
     for (i, &b) in buf.iter().enumerate() {
         write_u8(b, unsafe { addr.add(i) });
     }
+}
+
+/// Copies one plain ABI value from user space.
+pub fn read_struct<T: Copy>(addr: *const T) -> T {
+    let mut value = mem::MaybeUninit::<T>::uninit();
+    let bytes = unsafe {
+        core::slice::from_raw_parts_mut(value.as_mut_ptr().cast::<u8>(), mem::size_of::<T>())
+    };
+    read_bytes(addr.cast::<u8>(), bytes);
+    unsafe { value.assume_init() }
+}
+
+/// Copies one plain ABI value to user space.
+pub fn write_struct<T: Copy>(value: &T, addr: *mut T) {
+    let bytes = unsafe {
+        core::slice::from_raw_parts((value as *const T).cast::<u8>(), mem::size_of::<T>())
+    };
+    write_bytes(bytes, addr.cast::<u8>());
 }

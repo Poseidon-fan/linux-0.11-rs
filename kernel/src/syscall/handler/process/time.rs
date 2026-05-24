@@ -1,7 +1,5 @@
 //! Time and system-info syscall handlers (time, stime, times, uname).
 
-use core::mem;
-
 use user_lib::syscall::{
     Syscall,
     process::{Tms, UtsName},
@@ -62,11 +60,8 @@ define_syscall_handler!(
                 child_user_time: cutime,
                 child_system_time: cstime,
             };
-            let bytes = unsafe {
-                core::slice::from_raw_parts(&tms as *const Tms as *const u8, mem::size_of::<Tms>())
-            };
-            mm::ensure_user_area_writable(tbuf, bytes.len());
-            uaccess::write_bytes(bytes, tbuf as *mut u8);
+            mm::ensure_user_area_writable(tbuf, core::mem::size_of::<Tms>());
+            uaccess::write_struct(&tms, tbuf as *mut Tms);
         }
         Ok(task::jiffies())
     }
@@ -86,14 +81,8 @@ define_syscall_handler!(
             version: *b"version \0",
             machine: *b"machine \0",
         };
-        let bytes = unsafe {
-            core::slice::from_raw_parts(
-                &uts_name as *const UtsName as *const u8,
-                mem::size_of::<UtsName>(),
-            )
-        };
-        mm::ensure_user_area_writable(name, bytes.len());
-        uaccess::write_bytes(bytes, name as *mut u8);
+        mm::ensure_user_area_writable(name, core::mem::size_of::<UtsName>());
+        uaccess::write_struct(&uts_name, name as *mut UtsName);
         Ok(0)
     }
 );
