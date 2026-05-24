@@ -1,6 +1,8 @@
 //! Time and system-info syscall handlers (time, stime, times, uname).
 
-use user_lib::syscall::Syscall;
+use core::mem;
+
+use user_lib::syscall::{Syscall, process::Tms};
 
 use crate::{
     define_syscall_handler,
@@ -41,14 +43,6 @@ define_syscall_handler!(
 define_syscall_handler!(
     Syscall::Times = 43,
     fn sys_times(ctx: &mut SyscallContext) -> Result<u32> {
-        // struct tms (POSIX <sys/times.h>), 16 bytes total, time_t = long (4 bytes)
-        //
-        //   offset  size  field       description
-        //   ------  ----  ----------  -----------------------------------------
-        //   0x00    4     tms_utime   User CPU time (clock ticks)
-        //   0x04    4     tms_stime   System CPU time (clock ticks)
-        //   0x08    4     tms_cutime  Child user CPU time (waited children)
-        //   0x0C    4     tms_cstime  Child system CPU time (waited children)
         let (tbuf, _, _) = ctx.args();
         if tbuf != 0 {
             let (utime, stime, cutime, cstime) = task::with_current(|inner| {
@@ -59,14 +53,17 @@ define_syscall_handler!(
                     inner.acct.cstime,
                 )
             });
-            mm::ensure_user_area_writable(tbuf, 16);
-            let base = tbuf as *mut u32;
-            unsafe {
-                uaccess::write_u32(utime, base);
-                uaccess::write_u32(stime, base.add(1));
-                uaccess::write_u32(cutime, base.add(2));
-                uaccess::write_u32(cstime, base.add(3));
-            }
+            let tms = Tms {
+                user_time: utime,
+                system_time: stime,
+                child_user_time: cutime,
+                child_system_time: cstime,
+            };
+            let bytes = unsafe {
+                core::slice::from_raw_parts(&tms as *const Tms as *const u8, mem::size_of::<Tms>())
+            };
+            mm::ensure_user_area_writable(tbuf, bytes.len());
+            uaccess::write_bytes(bytes, tbuf as *mut u8);
         }
         Ok(task::jiffies())
     }
