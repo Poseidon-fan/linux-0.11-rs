@@ -312,3 +312,129 @@ define_syscall_handler!(
         Ok(0)
     }
 );
+
+define_syscall_handler!(
+    Syscall::Rename = 38,
+    fn sys_rename(ctx: &mut SyscallContext) -> Result<u32> {
+        let (old_ptr, new_ptr, _) = ctx.args();
+        let oldname = uaccess::read_pathname(old_ptr);
+        let newname = uaccess::read_pathname(new_ptr);
+
+        let (old_dir, old_base) = path::resolve_parent(&oldname).ok_or(Errno::NOENT)?;
+        if old_base.is_empty() || old_base == "." || old_base == ".." {
+            return Err(Errno::INVAL);
+        }
+        let (new_dir, new_base) = path::resolve_parent(&newname).ok_or(Errno::NOENT)?;
+        if new_base.is_empty() || new_base == "." || new_base == ".." {
+            return Err(Errno::INVAL);
+        }
+
+        if old_dir.id.device != new_dir.id.device {
+            return Err(Errno::XDEV);
+        }
+        if !path::check_permission(&old_dir, AccessMask::MAY_WRITE) {
+            return Err(Errno::ACCESS);
+        }
+        if !path::check_permission(&new_dir, AccessMask::MAY_WRITE) {
+            return Err(Errno::ACCESS);
+        }
+
+        let old_inum = old_dir.lookup(old_base)?.ok_or(Errno::NOENT)?;
+        let old_inode = resolve_inode(InodeId::new(old_dir.id.device, old_inum));
+        let old_is_dir = old_inode.file_type() == InodeType::Directory;
+        let same_parent = old_dir.id.inode_number == new_dir.id.inode_number;
+
+        // POSIX: `rename(a, a)` where both names resolve to the same path is
+        // a successful no-op. Likewise when both names point at the same
+        // inode (hard-linked aliases).
+        if same_parent && old_base == new_base {
+            return Ok(0);
+        }
+        if let Some(existing) = new_dir.lookup(new_base)? {
+            if existing == old_inum {
+                return Ok(0);
+            }
+        }
+
+        // Refuse to move a directory into itself or any of its descendants.
+        if old_is_dir && !same_parent {
+            let mut cursor = new_dir.clone();
+            for _ in 0..MAX_PATH_DEPTH {
+                if cursor.id.device == old_inode.id.device && cursor.id.inode_number == old_inum {
+                    return Err(Errno::INVAL);
+                }
+                let parent_inum = cursor.lookup("..")?.ok_or(Errno::IO)?;
+                if parent_inum == cursor.id.inode_number {
+                    break;
+                }
+                cursor = resolve_inode(InodeId::new(cursor.id.device, parent_inum));
+            }
+        }
+
+        // If the destination exists, displace it first.
+        if let Some(new_inum) = new_dir.lookup(new_base)? {
+            let new_inode = resolve_inode(InodeId::new(new_dir.id.device, new_inum));
+            let new_is_dir = new_inode.file_type() == InodeType::Directory;
+
+            if old_is_dir && !new_is_dir {
+                return Err(Errno::NOTDIR);
+            }
+            if !old_is_dir && new_is_dir {
+                return Err(Errno::ISDIR);
+            }
+            if new_is_dir && !new_inode.is_empty_directory()? {
+                return Err(Errno::NOTEMPTY);
+            }
+
+            new_dir.remove_entry(new_base)?;
+
+            let now = time::current_time();
+            if new_is_dir {
+                {
+                    let mut inner = new_inode.inner.lock();
+                    inner.disk_inode.link_count = 0;
+                    inner.touch_change(now);
+                }
+                {
+                    let mut parent = new_dir.inner.lock();
+                    parent.disk_inode.link_count -= 1;
+                    parent.touch_modified(now);
+                }
+            } else {
+                let mut inner = new_inode.inner.lock();
+                inner.disk_inode.link_count -= 1;
+                inner.touch_change(now);
+            }
+        }
+
+        // Splice old into the new directory, then remove the old name.
+        new_dir.add_entry(new_base, old_inum)?;
+        old_dir.remove_entry(old_base)?;
+
+        let now = time::current_time();
+
+        // Cross-parent directory rename rewires `..` and shifts the
+        // per-directory link count from old parent to new.
+        if old_is_dir && !same_parent {
+            old_inode.remove_entry("..")?;
+            old_inode.add_entry("..", new_dir.id.inode_number)?;
+            {
+                let mut p = old_dir.inner.lock();
+                p.disk_inode.link_count -= 1;
+                p.touch_modified(now);
+            }
+            {
+                let mut p = new_dir.inner.lock();
+                p.disk_inode.link_count += 1;
+                p.touch_modified(now);
+            }
+        }
+
+        old_inode.inner.lock().touch_change(now);
+        Ok(0)
+    }
+);
+
+/// Upper bound used while walking `..` to detect rename loops on a
+/// malformed filesystem. 256 is well past any sensible nesting depth.
+const MAX_PATH_DEPTH: usize = 256;

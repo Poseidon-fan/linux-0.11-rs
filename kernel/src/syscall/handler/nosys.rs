@@ -80,9 +80,3 @@ define_syscall_handler!(
         Err(Errno::NOSYS)
     }
 );
-define_syscall_handler!(
-    Syscall::Rename = 38,
-    fn sys_rename(_ctx: &mut SyscallContext) -> Result<u32> {
-        Err(Errno::NOSYS)
-    }
-);

@@ -355,6 +355,17 @@ impl Metadata {
             mode: self.stat.st_mode & PERM_MASK,
         }
     }
+
+    /// Returns the inode number. Equivalent to `std::os::unix::fs::MetadataExt::ino`.
+    pub fn ino(&self) -> u64 {
+        u64::from(self.stat.st_ino)
+    }
+
+    /// Returns the device id holding this file. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::dev`.
+    pub fn dev(&self) -> u64 {
+        u64::from(self.stat.st_dev)
+    }
 }
 
 impl fmt::Debug for Metadata {
