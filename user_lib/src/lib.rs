@@ -5,13 +5,11 @@
 #![cfg_attr(feature = "alloc", feature(alloc_error_handler))]
 #![no_std]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
 #[cfg(feature = "alloc")]
 pub mod allocator;
 pub mod console;
-#[cfg(feature = "alloc")]
 pub mod env;
 #[cfg(feature = "runtime")]
 pub mod rt;
