@@ -253,6 +253,19 @@ impl Parser {
     pub fn last_flag_name(&self) -> String {
         self.last_flag.clone().unwrap_or_default()
     }
+
+    /// Consumes the parser and returns the unparsed raw arguments in their
+    /// original order.
+    ///
+    /// This is useful for commands such as `env`, where option parsing stops
+    /// at the first non-option operand and all following tokens belong to the
+    /// child command, even if they start with `-`.
+    pub fn into_remaining_values(mut self) -> Vec<String> {
+        self.short_cluster = None;
+        self.long_value = None;
+        self.remaining.reverse();
+        self.remaining
+    }
 }
 
 fn format_short(c: char) -> String {

@@ -618,6 +618,18 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
         .map_err(Error::from)
 }
 
+/// Changes the current working directory to the specified path.
+///
+/// This mirrors [`std::env::set_current_dir`], but lives in [`crate::fs`]
+/// because this library keeps process-environment helpers small and routes
+/// filesystem syscalls through this module.
+pub fn set_current_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path_c = path_cstring(path.as_ref())?;
+    syscall::fs::chdir(path_c.as_ptr().cast())
+        .map(|_| ())
+        .map_err(Error::from)
+}
+
 /// Creates a hard link from `original` to `link`.
 pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> Result<()> {
     let from_c = path_cstring(original.as_ref())?;
