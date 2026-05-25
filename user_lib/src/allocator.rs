@@ -1,8 +1,10 @@
-//! User-space heap allocator backed by the `brk` system call.
+//! Memory allocation APIs.
 //!
-//! The allocator implements Rust's [`GlobalAlloc`] interface. It asks the
-//! kernel to extend the process break in page-sized chunks, then serves
-//! allocations from an address-ordered free list.
+//! Counterpart to [`std::alloc`]: provides the program-wide heap that backs
+//! `Box`, `Vec`, `String`, and any other type that allocates through the
+//! [`GlobalAlloc`] trait. The crate ships a default allocator, [`System`],
+//! which is registered as the program's `#[global_allocator]`; user code
+//! does not need to do anything to obtain a working heap.
 
 use core::{
     alloc::{GlobalAlloc, Layout},
@@ -11,7 +13,7 @@ use core::{
     ptr,
 };
 
-use crate::{println, syscall::process};
+use crate::{println, syscall};
 
 /// Heap growth granularity. The kernel maps anonymous pages lazily on fault.
 const PAGE_SIZE: usize = 4096;
@@ -34,15 +36,31 @@ struct FreeBlock {
     next: *mut FreeBlock,
 }
 
-/// A single-core interior-mutable wrapper for the process heap.
-struct LockedAllocator {
+/// Process-wide heap allocator that mirrors [`std::alloc::System`].
+///
+/// `System` is a zero-sized handle to the single, shared user-space heap.
+/// Construct it as `System` to register it as the program's
+/// `#[global_allocator]`; this crate already does so by default.
+pub struct System;
+
+unsafe impl GlobalAlloc for System {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        HEAP.with(|allocator| allocator.alloc(layout))
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        HEAP.with(|allocator| allocator.dealloc(ptr, layout));
+    }
+}
+
+/// Single-core interior-mutable wrapper around the process heap state.
+struct ProcessHeap {
     inner: UnsafeCell<BrkAllocator>,
 }
 
-unsafe impl Sync for LockedAllocator {}
+unsafe impl Sync for ProcessHeap {}
 
-impl LockedAllocator {
-    /// Creates an empty allocator that will lazily query `brk` on first use.
+impl ProcessHeap {
     const fn new() -> Self {
         Self {
             inner: UnsafeCell::new(BrkAllocator::new()),
@@ -58,15 +76,7 @@ impl LockedAllocator {
     }
 }
 
-unsafe impl GlobalAlloc for LockedAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.with(|allocator| allocator.alloc(layout))
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.with(|allocator| allocator.dealloc(ptr, layout));
-    }
-}
+static HEAP: ProcessHeap = ProcessHeap::new();
 
 /// Process heap allocator state.
 struct BrkAllocator {
@@ -181,7 +191,7 @@ impl BrkAllocator {
         let current_break = if self.initialized {
             self.heap_end
         } else {
-            match process::brk(0) {
+            match syscall::process::brk(0) {
                 Ok(addr) => addr as usize,
                 Err(_) => return false,
             }
@@ -197,7 +207,7 @@ impl BrkAllocator {
             return false;
         };
 
-        let Ok(actual_break) = process::brk(new_break as u32) else {
+        let Ok(actual_break) = syscall::process::brk(new_break as u32) else {
             return false;
         };
         let actual_break = actual_break as usize;
@@ -377,7 +387,7 @@ const fn align_up(addr: usize, align: usize) -> usize {
 }
 
 #[global_allocator]
-static USER_ALLOCATOR: LockedAllocator = LockedAllocator::new();
+static GLOBAL: System = System;
 
 /// Handles allocation failure for user programs.
 #[alloc_error_handler]
@@ -387,5 +397,5 @@ fn alloc_error_handler(layout: Layout) -> ! {
         layout.size(),
         layout.align()
     );
-    crate::exit(101)
+    crate::process::exit(101)
 }

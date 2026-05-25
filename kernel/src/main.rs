@@ -110,7 +110,7 @@ fn user_init() -> ! {
         )
         .is_err()
         {
-            user_lib::exit(1);
+            user_lib::process::exit(1);
         }
         let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
         let envp_rc: [*const u8; 2] = [c"HOME=/".as_ptr().cast(), core::ptr::null()];
@@ -122,7 +122,7 @@ fn user_init() -> ! {
             Ok(code) => code,
             Err(e) => e.code(),
         };
-        user_lib::exit(status);
+        user_lib::process::exit(status as i32);
     }
 
     // Wait for the rc-shell to finish.
@@ -168,7 +168,7 @@ fn user_init() -> ! {
                     Ok(code) => code,
                     Err(e) => e.code(),
                 };
-            user_lib::exit(status);
+            user_lib::process::exit(status as i32);
         }
 
         // Parent: wait for the shell to exit, then report and restart.

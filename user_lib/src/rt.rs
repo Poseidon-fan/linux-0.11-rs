@@ -1,13 +1,18 @@
-//! Minimal user-space runtime support.
+//! User-space runtime services.
 //!
-//! This module is enabled by the `runtime` feature. It owns the process entry
-//! contract above the raw syscall layer: the `_start` shim decodes the initial
-//! stack, builds lightweight argument/environment views, runs `main`, and exits
-//! with its return status.
+//! Counterpart to [`std::rt`]: this module is the bridge between the
+//! kernel-provided process entry point and the user program's `main`
+//! function. It owns the assembly `_start` shim, decodes the initial
+//! argument and environment vectors off the stack, dispatches into `main`,
+//! and routes its return value through [`crate::process::Termination`] so
+//! the resulting [`crate::process::ExitCode`] terminates the process.
+//!
+//! What a program's exit *means* lives in [`crate::process`]; this module
+//! only orchestrates the entry call and the handoff back to the kernel.
 
 use core::panic::PanicInfo;
 
-use crate::println;
+use crate::{println, process};
 
 /// Defines the user-space process entry point.
 ///
@@ -27,12 +32,9 @@ use crate::println;
 /// ```
 ///
 /// This macro emits a small assembly `_start` shim that reads those stack
-/// words and then calls [`run`]. The provided function must have this
-/// signature:
-///
-/// ```rust,ignore
-/// fn main() -> i32
-/// ```
+/// words and then calls [`run`]. The provided function may have any return
+/// type that implements [`crate::process::Termination`], including `()`,
+/// [`crate::process::ExitCode`], and `Result<T, E>`.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __user_lib_entry {
@@ -69,10 +71,8 @@ macro_rules! __user_lib_entry {
     };
 }
 
-/// User program entry function accepted by [`crate::main`].
-pub type Main = fn() -> i32;
-
-/// Runs the user program and exits with the returned status code.
+/// Runs the user program and exits with the [`process::ExitCode`] produced by
+/// its return value.
 ///
 /// # Safety
 ///
@@ -81,12 +81,16 @@ pub type Main = fn() -> i32;
 /// point to a NULL-terminated array of valid NUL-terminated string pointers, or
 /// be NULL. These pointers must remain valid for the duration of `main`.
 #[inline]
-pub unsafe fn run(main: Main, argc: usize, argv: *const *const u8, envp: *const *const u8) -> ! {
+pub unsafe fn run<T: process::Termination>(
+    main: fn() -> T,
+    argc: usize,
+    argv: *const *const u8,
+    envp: *const *const u8,
+) -> ! {
     unsafe {
         crate::env::init(argc, argv, envp);
     }
-    let status = main();
-    crate::exit(status as u32)
+    main().report().exit_process()
 }
 
 /// Prints panic information and terminates the process with a conventional
@@ -94,5 +98,5 @@ pub unsafe fn run(main: Main, argc: usize, argv: *const *const u8, envp: *const 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("panic: {}", info);
-    crate::exit(101)
+    process::exit(101)
 }

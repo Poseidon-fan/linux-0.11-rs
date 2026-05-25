@@ -4,7 +4,7 @@
 use user_lib::{env, println};
 
 #[user_lib::main]
-fn main() -> i32 {
+fn main() {
     println!("runtime smoke test");
 
     match user_lib::syscall::misc::test() {
@@ -30,6 +30,4 @@ fn main() -> i32 {
         Ok(home) => println!("HOME = {}", home),
         Err(error) => println!("HOME lookup failed: {:?}", error),
     };
-
-    0
 }
