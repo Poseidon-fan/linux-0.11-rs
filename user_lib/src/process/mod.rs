@@ -183,7 +183,7 @@ impl<T: Termination, E: core::fmt::Debug> Termination for Result<T, E> {
         match self {
             Ok(value) => value.report(),
             Err(error) => {
-                crate::println!("Error: {:?}", error);
+                crate::eprintln!("Error: {:?}", error);
                 ExitCode::FAILURE
             }
         }

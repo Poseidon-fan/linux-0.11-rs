@@ -4,9 +4,20 @@ version = "0.1.0"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 
+[lib]
+name = "user_program"
+path = "src/lib.rs"
+test = false
+bench = false
+
 [[bin]]
 name = "test1"
 path = "src/bin/test1.rs"
 
+[[bin]]
+name = "cat"
+path = "src/bin/cat.rs"
+
 [dependencies]
 user_lib = { path = "../user_lib", features = ["runtime"] }
+anyhow = { version = "1", default-features = false }

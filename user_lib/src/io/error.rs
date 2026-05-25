@@ -6,7 +6,13 @@
 //! - a raw OS error code,
 //! - an [`ErrorKind`] alone,
 //! - an [`ErrorKind`] plus a static `&'static str` message, or
-//! - an [`ErrorKind`] plus an arbitrary boxed `core::error::Error`.
+//! - an [`ErrorKind`] plus an arbitrary boxed
+//!   `core::error::Error + Send + Sync`.
+//!
+//! The `Send + Sync` bounds on the boxed payload are kept (despite the
+//! kernel being single-threaded) for compatibility with ecosystem crates
+//! such as `anyhow` that require errors to be `Send + Sync` for storage
+//! in their universal error type.
 //!
 //! Construction goes through [`Error::new`], [`Error::other`],
 //! [`Error::from_raw_os_error`], or `Error::from(ErrorKind)`. Inspection goes
@@ -43,21 +49,24 @@ enum Repr {
 
 struct Custom {
     kind: ErrorKind,
-    error: Box<dyn error::Error>,
+    error: Box<dyn error::Error + Send + Sync>,
 }
 
 impl Error {
     /// Creates a new I/O error from a known kind and an arbitrary payload.
     ///
-    /// Accepts anything convertible into a `Box<dyn core::error::Error>`,
-    /// including `String`, `&'static str`, and any custom error type
-    /// implementing [`core::error::Error`].
+    /// Accepts anything convertible into a `Box<dyn core::error::Error +
+    /// Send + Sync>`, including `String`, `&'static str`, and any custom
+    /// error type implementing [`core::error::Error`] + `Send` + `Sync`.
+    /// The auto-trait bounds are kept (despite the kernel being
+    /// single-threaded) so that this type composes with ecosystem crates
+    /// such as `anyhow` that store errors in `Send + Sync` containers.
     pub fn new<E>(kind: ErrorKind, error: E) -> Self
-    where E: Into<Box<dyn error::Error>> {
+    where E: Into<Box<dyn error::Error + Send + Sync>> {
         Self::_new(kind, error.into())
     }
 
-    fn _new(kind: ErrorKind, error: Box<dyn error::Error>) -> Self {
+    fn _new(kind: ErrorKind, error: Box<dyn error::Error + Send + Sync>) -> Self {
         Self {
             repr: Repr::Custom(Box::new(Custom { kind, error })),
         }
@@ -66,7 +75,7 @@ impl Error {
     /// Creates a new I/O error of kind [`ErrorKind::Other`] from an arbitrary
     /// payload.
     pub fn other<E>(error: E) -> Self
-    where E: Into<Box<dyn error::Error>> {
+    where E: Into<Box<dyn error::Error + Send + Sync>> {
         Self::_new(ErrorKind::Other, error.into())
     }
 
@@ -118,7 +127,7 @@ impl Error {
     }
 
     /// Consumes the error and returns the boxed inner payload, if any.
-    pub fn into_inner(self) -> Option<Box<dyn error::Error>> {
+    pub fn into_inner(self) -> Option<Box<dyn error::Error + Send + Sync>> {
         match self.repr {
             Repr::Custom(custom) => Some(custom.error),
             _ => None,
