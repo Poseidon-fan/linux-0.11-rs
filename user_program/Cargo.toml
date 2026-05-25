@@ -10,14 +10,6 @@ path = "src/lib.rs"
 test = false
 bench = false
 
-[[bin]]
-name = "test1"
-path = "src/bin/test1.rs"
-
-[[bin]]
-name = "cat"
-path = "src/bin/cat.rs"
-
 [dependencies]
 user_lib = { path = "../user_lib", features = ["runtime"] }
 anyhow = { version = "1", default-features = false }
