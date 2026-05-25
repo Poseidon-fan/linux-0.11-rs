@@ -79,107 +79,71 @@ pub extern "C" fn rust_main() -> ! {
 ///
 /// 1. Call `setup()` to initialise the root filesystem.
 /// 2. Open `/dev/tty0` as stdin/stdout/stderr.
-/// 3. Fork a child to run `/bin/sh` with `/etc/rc` as stdin.
+/// 3. Run `/bin/sh` with `/etc/rc` as stdin (one-shot).
 /// 4. After the rc-shell exits, loop forever spawning interactive shells.
 fn user_init() -> ! {
-    use user_lib::syscall::{fs, process};
+    use user_lib::{
+        fs::{File, OpenOptions},
+        process::{Command, Stdio},
+        syscall,
+    };
 
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
-    process::setup(DRIVE_INFO_ADDR).unwrap();
+    syscall::process::setup(DRIVE_INFO_ADDR).unwrap();
 
     // Open /dev/tty0 as fd 0 (stdin), then dup to fd 1 (stdout) and fd 2 (stderr).
-    fs::open(
+    syscall::fs::open(
         c"/dev/tty0".as_ptr().cast(),
-        fs::OpenFlags::from_raw(fs::AccessMode::ReadWrite as u32),
+        syscall::fs::OpenFlags::from_raw(syscall::fs::AccessMode::ReadWrite as u32),
         0,
     )
     .unwrap();
-    fs::dup(0).unwrap();
-    fs::dup(0).unwrap();
+    syscall::fs::dup(0).unwrap();
+    syscall::fs::dup(0).unwrap();
 
     user_lib::println!("hello linux");
 
     // --- Phase 1: run /bin/sh with /etc/rc as stdin ---
-    let pid = process::fork().unwrap();
-    if pid == 0 {
-        fs::close(0).unwrap();
-        if fs::open(
-            c"/etc/rc".as_ptr().cast(),
-            fs::OpenFlags::from_raw(fs::AccessMode::ReadOnly as u32),
-            0,
-        )
-        .is_err()
-        {
-            user_lib::process::exit(1);
-        }
-        let argv_rc: [*const u8; 2] = [c"/bin/sh".as_ptr().cast(), core::ptr::null()];
-        let envp_rc: [*const u8; 2] = [c"HOME=/".as_ptr().cast(), core::ptr::null()];
-        let status = match process::execve(
-            c"/bin/sh".as_ptr().cast(),
-            argv_rc.as_ptr(),
-            envp_rc.as_ptr(),
-        ) {
-            Ok(code) => code,
-            Err(e) => e.code(),
-        };
-        user_lib::process::exit(status as i32);
-    }
-
-    // Wait for the rc-shell to finish.
-    if pid > 0 {
-        let mut status = 0u32;
-        loop {
-            let waited = process::waitpid(-1, &mut status as *mut u32, 0);
-            if waited == Ok(pid) {
-                break;
-            }
-        }
-    }
+    let rc = File::open("/etc/rc").expect("/etc/rc must be present");
+    let _ = Command::new("/bin/sh")
+        .env("HOME", "/")
+        .stdin(Stdio::from(rc))
+        .status();
 
     // --- Phase 2: respawn interactive shells forever ---
     loop {
-        let pid = match process::fork() {
-            Ok(p) => p,
+        let stdin = match File::open("/dev/tty0") {
+            Ok(f) => f,
             Err(_) => {
-                user_lib::println!("Fork failed in init");
+                user_lib::println!("Failed to open /dev/tty0 in init");
                 continue;
             }
         };
+        let stdout = match OpenOptions::new().write(true).open("/dev/tty0") {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let stderr = match OpenOptions::new().write(true).open("/dev/tty0") {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
 
-        if pid == 0 {
-            // Child: set up a new session with a fresh controlling terminal.
-            fs::close(0).unwrap();
-            fs::close(1).unwrap();
-            fs::close(2).unwrap();
-            process::setsid().unwrap();
-            fs::open(
-                c"/dev/tty0".as_ptr().cast(),
-                fs::OpenFlags::from_raw(fs::AccessMode::ReadWrite as u32),
-                0,
-            )
-            .unwrap();
-            fs::dup(0).unwrap();
-            fs::dup(0).unwrap();
+        let status = Command::new("/bin/sh")
+            .arg0("-/bin/sh")
+            .env("HOME", "/usr/root")
+            .stdin(Stdio::from(stdin))
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr))
+            .pre_exec(|| {
+                let _ = syscall::process::setsid();
+                Ok(())
+            })
+            .status();
 
-            let argv: [*const u8; 2] = [c"-/bin/sh".as_ptr().cast(), core::ptr::null()];
-            let envp: [*const u8; 2] = [c"HOME=/usr/root".as_ptr().cast(), core::ptr::null()];
-            let status =
-                match process::execve(c"/bin/sh".as_ptr().cast(), argv.as_ptr(), envp.as_ptr()) {
-                    Ok(code) => code,
-                    Err(e) => e.code(),
-                };
-            user_lib::process::exit(status as i32);
+        match status {
+            Ok(status) => user_lib::println!("\nshell exited: {}", status),
+            Err(_) => user_lib::println!("Fork failed in init"),
         }
-
-        // Parent: wait for the shell to exit, then report and restart.
-        let mut status = 0u32;
-        loop {
-            let waited = process::waitpid(-1, &mut status as *mut u32, 0);
-            if waited == Ok(pid) {
-                break;
-            }
-        }
-        user_lib::println!("\nchild {} died with code {:04x}", pid, status);
-        fs::sync().unwrap();
+        let _ = syscall::fs::sync();
     }
 }

@@ -92,6 +92,24 @@ impl File {
         syscall::fs::fstat(self.fd, &mut stat).map_err(Error::from)?;
         Ok(Metadata { stat })
     }
+
+    /// Returns the raw underlying file descriptor.
+    #[inline]
+    pub(crate) fn raw_fd(&self) -> u32 {
+        self.fd
+    }
+
+    /// Wraps a raw file descriptor as an owned [`File`].
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be a valid open file descriptor in the current process.
+    /// The returned [`File`] takes ownership and will close `fd` when
+    /// dropped.
+    #[inline]
+    pub(crate) unsafe fn from_raw_fd(fd: u32) -> Self {
+        File { fd }
+    }
 }
 
 impl Read for File {

@@ -11,7 +11,11 @@
 //! consumes them: when `main` returns, its value is fed through
 //! `Termination::report` and then handed to [`ExitCode::exit_process`].
 
-use core::convert::Infallible;
+mod command;
+
+use core::{convert::Infallible, fmt};
+
+pub use command::{Child, Command, Stdio};
 
 use crate::{io, syscall};
 
@@ -40,6 +44,19 @@ pub fn abort() -> ! {
     exit(134)
 }
 
+/// Returns the OS-assigned process identifier of the calling process.
+#[must_use]
+pub fn id() -> u32 {
+    syscall::process::getpid().unwrap_or(0)
+}
+
+/// Returns the OS-assigned process identifier of the calling process's
+/// parent.
+#[must_use]
+pub fn parent_id() -> u32 {
+    syscall::process::getppid().unwrap_or(0)
+}
+
 /// 8-bit status returned to the parent after the process exits.
 ///
 /// Constructed via [`ExitCode::SUCCESS`], [`ExitCode::FAILURE`], or
@@ -64,6 +81,69 @@ impl From<u8> for ExitCode {
     #[inline]
     fn from(code: u8) -> Self {
         ExitCode(code)
+    }
+}
+
+/// Describes the result of a process after it has terminated.
+///
+/// The value carried inside is the raw 16-bit "wait status" word filled in
+/// by `waitpid(2)`. On this kernel, normal `exit(code)` produces
+/// `(code & 0xff) << 8`, signal termination produces `signum & 0x7f`, and
+/// `WUNTRACED` reports `0x7f`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExitStatus(u32);
+
+impl ExitStatus {
+    /// Builds an [`ExitStatus`] from the raw wait status word.
+    pub(crate) const fn from_raw(status: u32) -> Self {
+        ExitStatus(status)
+    }
+
+    /// Returns `true` if the process terminated normally with a zero code.
+    #[must_use]
+    pub fn success(&self) -> bool {
+        self.code() == Some(0)
+    }
+
+    /// Returns the exit code of the process, if it exited normally.
+    ///
+    /// Returns `None` if the process was terminated by a signal.
+    #[must_use]
+    pub fn code(&self) -> Option<i32> {
+        if self.exited() {
+            Some(((self.0 >> 8) & 0xff) as i32)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the terminating signal, if the process was terminated by one.
+    #[must_use]
+    pub fn signal(&self) -> Option<i32> {
+        let signum = self.0 & 0x7f;
+        if signum != 0 && signum != 0x7f {
+            Some(signum as i32)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the process exited normally (was not terminated by
+    /// a signal and was not stopped).
+    fn exited(&self) -> bool {
+        (self.0 & 0x7f) == 0
+    }
+}
+
+impl fmt::Display for ExitStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.code() {
+            write!(f, "exit status: {}", code)
+        } else if let Some(signal) = self.signal() {
+            write!(f, "signal: {}", signal)
+        } else {
+            write!(f, "unknown status: {:#x}", self.0)
+        }
     }
 }
 
