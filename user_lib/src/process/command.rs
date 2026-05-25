@@ -15,7 +15,7 @@ use crate::{
     ffi::CString,
     fs::{File, OpenOptions},
     io::{Error, ErrorKind, Read, Result, Write},
-    process::ExitStatus,
+    process::{ExitStatus, GroupId, UserId},
     syscall,
 };
 
@@ -205,6 +205,8 @@ pub struct Command {
     stdin: Option<Stdio>,
     stdout: Option<Stdio>,
     stderr: Option<Stdio>,
+    uid: Option<UserId>,
+    gid: Option<GroupId>,
     pre_exec: Option<Box<dyn FnMut() -> Result<()>>>,
 }
 
@@ -220,6 +222,8 @@ impl Command {
             stdin: None,
             stdout: None,
             stderr: None,
+            uid: None,
+            gid: None,
             pre_exec: None,
         }
     }
@@ -300,6 +304,27 @@ impl Command {
     /// Configures the child's standard error.
     pub fn stderr<S: Into<Stdio>>(&mut self, cfg: S) -> &mut Self {
         self.stderr = Some(cfg.into());
+        self
+    }
+
+    /// Sets the child process's user ID.
+    ///
+    /// Mirrors `std::os::unix::process::CommandExt::uid`. The child calls
+    /// `setuid` after `fork` and before `execve`; a failure exits the child
+    /// with status 127.
+    pub fn uid(&mut self, id: UserId) -> &mut Self {
+        self.uid = Some(id);
+        self
+    }
+
+    /// Sets the child process's group ID.
+    ///
+    /// Mirrors `std::os::unix::process::CommandExt::gid`. The child calls
+    /// `setgid` after `fork` and before `execve`; a failure exits the child
+    /// with status 127. If both [`uid`](Self::uid) and [`gid`](Self::gid) are
+    /// configured, the group ID is set first.
+    pub fn gid(&mut self, id: GroupId) -> &mut Self {
+        self.gid = Some(id);
         self
     }
 
@@ -384,6 +409,17 @@ impl Command {
             apply_stdio_in_child(1, self.stdout.as_ref(), stdout_pipe.as_ref());
             apply_stdio_in_child(2, self.stderr.as_ref(), stderr_pipe.as_ref());
 
+            if let Some(gid) = self.gid {
+                if syscall::process::setgid(gid).is_err() {
+                    crate::process::exit(127);
+                }
+            }
+            if let Some(uid) = self.uid {
+                if syscall::process::setuid(uid).is_err() {
+                    crate::process::exit(127);
+                }
+            }
+
             if let Some(pre_exec) = self.pre_exec.as_mut() {
                 if pre_exec().is_err() {
                     crate::process::exit(127);
@@ -466,6 +502,8 @@ impl fmt::Debug for Command {
             .field("stdin", &self.stdin)
             .field("stdout", &self.stdout)
             .field("stderr", &self.stderr)
+            .field("uid", &self.uid)
+            .field("gid", &self.gid)
             .field("pre_exec", &self.pre_exec.as_ref().map(|_| "<closure>"))
             .finish()
     }

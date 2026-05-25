@@ -19,6 +19,18 @@ pub use command::{Child, Command, Stdio};
 
 use crate::{io, syscall};
 
+/// User identifier type used by this kernel's process APIs.
+///
+/// The kernel stores early Unix user IDs in narrower fields internally, but
+/// the public library surface uses 32-bit IDs like modern Unix Rust APIs.
+pub type UserId = u32;
+
+/// Group identifier type used by this kernel's process APIs.
+///
+/// The kernel stores early Unix group IDs in narrower fields internally, but
+/// the public library surface uses 32-bit IDs like modern Unix Rust APIs.
+pub type GroupId = u32;
+
 /// Terminates the current process with the given status code.
 ///
 /// Any data still buffered in [`io::Stdout`] is flushed before the kernel
@@ -55,6 +67,44 @@ pub fn id() -> u32 {
 #[must_use]
 pub fn parent_id() -> u32 {
     syscall::process::getppid().unwrap_or(0)
+}
+
+/// Returns the real user ID of the calling process.
+#[must_use]
+pub fn uid() -> UserId {
+    syscall::process::getuid().unwrap_or(0)
+}
+
+/// Returns the effective user ID of the calling process.
+#[must_use]
+pub fn euid() -> UserId {
+    syscall::process::geteuid().unwrap_or(0)
+}
+
+/// Returns the real group ID of the calling process.
+#[must_use]
+pub fn gid() -> GroupId {
+    syscall::process::getgid().unwrap_or(0)
+}
+
+/// Returns the effective group ID of the calling process.
+#[must_use]
+pub fn egid() -> GroupId {
+    syscall::process::getegid().unwrap_or(0)
+}
+
+/// Sets the real and effective user ID of the calling process.
+pub fn set_uid(uid: UserId) -> io::Result<()> {
+    syscall::process::setuid(uid)
+        .map(|_| ())
+        .map_err(io::Error::from)
+}
+
+/// Sets the real and effective group ID of the calling process.
+pub fn set_gid(gid: GroupId) -> io::Result<()> {
+    syscall::process::setgid(gid)
+        .map(|_| ())
+        .map_err(io::Error::from)
 }
 
 /// 8-bit status returned to the parent after the process exits.
