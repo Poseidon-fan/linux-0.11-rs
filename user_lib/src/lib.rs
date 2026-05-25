@@ -10,9 +10,12 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 pub mod allocator;
 pub mod env;
+pub mod ffi;
+pub mod fs;
 pub mod io;
 #[macro_use]
 mod macros;
+pub mod path;
 pub mod process;
 #[cfg(feature = "runtime")]
 pub mod rt;
