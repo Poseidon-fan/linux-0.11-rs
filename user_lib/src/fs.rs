@@ -457,6 +457,17 @@ pub struct Permissions {
 }
 
 impl Permissions {
+    /// Creates permissions from raw Unix mode bits.
+    ///
+    /// This is the local equivalent of `std::os::unix::fs::PermissionsExt`
+    /// for this single-platform library.
+    #[must_use]
+    pub fn from_mode(mode: u32) -> Self {
+        Self {
+            mode: mode as u16 & PERM_MASK,
+        }
+    }
+
     /// Returns `true` if these permissions describe a readonly file.
     ///
     /// On this kernel "readonly" mirrors std's POSIX mapping: any owner /
@@ -582,6 +593,17 @@ pub fn metadata<P: AsRef<Path>>(path: P) -> Result<Metadata> {
     let mut stat = empty_stat();
     syscall::fs::stat(path_c.as_ptr().cast(), &mut stat).map_err(Error::from)?;
     Ok(Metadata { stat })
+}
+
+/// Changes the permissions found on a file or directory.
+///
+/// Mirrors [`std::fs::set_permissions`]. The file type bits are preserved by
+/// the kernel; only the permission and special mode bits are changed.
+pub fn set_permissions<P: AsRef<Path>>(path: P, permissions: Permissions) -> Result<()> {
+    let path_c = path_cstring(path.as_ref())?;
+    syscall::fs::chmod(path_c.as_ptr().cast(), permissions.mode())
+        .map(|_| ())
+        .map_err(Error::from)
 }
 
 /// Removes a file from the filesystem.
