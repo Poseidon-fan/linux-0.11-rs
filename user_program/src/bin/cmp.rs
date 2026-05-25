@@ -24,7 +24,7 @@ cli_args! {
         /// Output byte numbers and differing byte values of every difference.
         pub list:    bool       = ["-l", "--verbose"],
         /// Compare at most NUM bytes.
-        pub limit:   u64        = ["-n", "--bytes"] @ "NUM" = u64::MAX,
+        pub limit:   u32        = ["-n", "--bytes"] @ "NUM" = u32::MAX,
         /// The two files (and optional skip offsets, ignored for now).
         pub files:   Vec<String> = [..] @ "FILE",
     }
@@ -79,26 +79,26 @@ fn main() -> ExitCode {
 enum Outcome {
     Same,
     Differ,
-    ShortFile { which: u8, byte: u64, line: u64 },
+    ShortFile { which: u8, byte: u32, line: u32 },
 }
 
 fn compare<A: Read, B: Read>(
     mut a: A,
     mut b: B,
-    limit: u64,
+    limit: u32,
     silent: bool,
     list: bool,
 ) -> Result<Outcome> {
     let mut buf_a = [0u8; 1024];
     let mut buf_b = [0u8; 1024];
-    let mut byte: u64 = 1; // POSIX byte counts are 1-based
-    let mut line: u64 = 1;
+    let mut byte: u32 = 1; // POSIX byte counts are 1-based
+    let mut line: u32 = 1;
     let mut remaining = limit;
     let mut printed_any = false;
     let mut out = io::stdout();
 
     while remaining > 0 {
-        let want = core::cmp::min(remaining, buf_a.len() as u64) as usize;
+        let want = core::cmp::min(remaining, buf_a.len() as u32) as usize;
         let na = read_at_most(&mut a, &mut buf_a[..want])?;
         let nb = read_at_most(&mut b, &mut buf_b[..want])?;
         let common = core::cmp::min(na, nb);
@@ -148,7 +148,7 @@ fn compare<A: Read, B: Read>(
         if na == 0 {
             break;
         }
-        remaining -= na as u64;
+        remaining -= na as u32;
     }
 
     if printed_any {

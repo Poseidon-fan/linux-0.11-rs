@@ -102,7 +102,7 @@ pub trait Read {
     }
 
     /// Returns an adapter that reads at most `limit` bytes from this reader.
-    fn take(self, limit: u64) -> Take<Self>
+    fn take(self, limit: u32) -> Take<Self>
     where Self: Sized {
         Take { inner: self, limit }
     }
@@ -188,13 +188,13 @@ pub trait Write {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SeekFrom {
     /// Sets the offset to the provided number of bytes.
-    Start(u64),
+    Start(u32),
     /// Sets the offset to the size of this object plus the specified number
     /// of bytes (which may be negative).
-    End(i64),
+    End(i32),
     /// Sets the offset to the current position plus the specified number of
     /// bytes (which may be negative).
-    Current(i64),
+    Current(i32),
 }
 
 /// The `Seek` trait provides a cursor which can be moved within a stream of
@@ -202,7 +202,7 @@ pub enum SeekFrom {
 pub trait Seek {
     /// Seeks to an offset in the stream and returns the new position from
     /// the start.
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64>;
+    fn seek(&mut self, pos: SeekFrom) -> Result<u32>;
 
     /// Rewinds to the beginning of the stream.
     fn rewind(&mut self) -> Result<()> {
@@ -211,7 +211,7 @@ pub trait Seek {
     }
 
     /// Returns the current position from the start of the stream.
-    fn stream_position(&mut self) -> Result<u64> {
+    fn stream_position(&mut self) -> Result<u32> {
         self.seek(SeekFrom::Current(0))
     }
 }
@@ -222,19 +222,19 @@ pub trait Seek {
 /// Returned by [`Read::take`].
 pub struct Take<T> {
     inner: T,
-    limit: u64,
+    limit: u32,
 }
 
 impl<T> Take<T> {
     /// Returns the remaining number of bytes that can be read.
     #[inline]
-    pub fn limit(&self) -> u64 {
+    pub fn limit(&self) -> u32 {
         self.limit
     }
 
     /// Sets a new byte limit on this adapter.
     #[inline]
-    pub fn set_limit(&mut self, limit: u64) {
+    pub fn set_limit(&mut self, limit: u32) {
         self.limit = limit;
     }
 
@@ -259,9 +259,9 @@ impl<T: Read> Read for Take<T> {
         if self.limit == 0 {
             return Ok(0);
         }
-        let max = cmp::min(buf.len() as u64, self.limit) as usize;
+        let max = cmp::min(buf.len() as u32, self.limit) as usize;
         let n = self.inner.read(&mut buf[..max])?;
-        self.limit -= n as u64;
+        self.limit -= n as u32;
         Ok(n)
     }
 }

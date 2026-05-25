@@ -36,9 +36,9 @@ cli_args! {
 
 #[derive(Clone, Copy, Default)]
 struct Counts {
-    lines: u64,
-    words: u64,
-    bytes: u64,
+    lines: u32,
+    words: u32,
+    bytes: u32,
 }
 
 impl Counts {
@@ -129,7 +129,7 @@ fn count_reader<R: Read>(reader: &mut R) -> Result<Counts> {
         if n == 0 {
             break;
         }
-        counts.bytes += n as u64;
+        counts.bytes += n as u32;
         for &b in &buf[..n] {
             if b == b'\n' {
                 counts.lines += 1;
@@ -170,7 +170,7 @@ fn print_row(mask: &Mask, counts: &Counts, label: &str) {
     let _ = io::stdout().write_all(line.as_bytes());
 }
 
-fn push_count(line: &mut String, value: u64) {
+fn push_count(line: &mut String, value: u32) {
     use core::fmt::Write as _;
     let _ = write!(line, "{:>7}", value);
 }

@@ -363,7 +363,7 @@ macro_rules! impl_fromcli_via_fromstr {
     };
 }
 
-impl_fromcli_via_fromstr!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+impl_fromcli_via_fromstr!(u8, u16, u32, usize, i8, i16, i32, isize);
 
 // ---------------------------------------------------------------------------
 // Help model + renderer

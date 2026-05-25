@@ -2,8 +2,8 @@
 //!
 //! Counterpart to [`std::fs`], adapted for this kernel:
 //!
-//! - File offsets and sizes are 32-bit on disk (Minix v1) but exposed as
-//!   `u64` to match the std signature.
+//! - File offsets and sizes are exposed as 32-bit values to match the
+//!   i386/Linux 0.11 ABI and the Minix v1 on-disk format.
 //! - Directory iteration is implemented in user space by reading the raw
 //!   Minix v1 directory bytes exposed by this kernel and decoding their fixed
 //!   16-byte directory entries.
@@ -145,14 +145,10 @@ impl Write for File {
 }
 
 impl Seek for File {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
-        let (offset, whence) = match pos {
-            SeekFrom::Start(p) => (p as i32, Whence::Set),
-            SeekFrom::Current(p) => (p as i32, Whence::Current),
-            SeekFrom::End(p) => (p as i32, Whence::End),
-        };
+    fn seek(&mut self, pos: SeekFrom) -> Result<u32> {
+        let (offset, whence) = seek_parts(pos)?;
         match syscall::fs::lseek(self.fd, offset, whence) {
-            Ok(n) => Ok(u64::from(n)),
+            Ok(n) => Ok(n),
             Err(errno) => Err(Error::from(errno)),
         }
     }
@@ -399,8 +395,8 @@ pub struct Metadata {
 
 impl Metadata {
     /// Returns the size of the file, in bytes.
-    pub fn len(&self) -> u64 {
-        u64::from(self.stat.st_size)
+    pub fn len(&self) -> u32 {
+        self.stat.st_size
     }
 
     /// Returns `true` if the file size is zero.
@@ -433,14 +429,14 @@ impl Metadata {
     }
 
     /// Returns the inode number. Equivalent to `std::os::unix::fs::MetadataExt::ino`.
-    pub fn ino(&self) -> u64 {
-        u64::from(self.stat.st_ino)
+    pub fn ino(&self) -> u32 {
+        u32::from(self.stat.st_ino)
     }
 
     /// Returns the device id holding this file. Equivalent to
     /// `std::os::unix::fs::MetadataExt::dev`.
-    pub fn dev(&self) -> u64 {
-        u64::from(self.stat.st_dev)
+    pub fn dev(&self) -> u32 {
+        u32::from(self.stat.st_dev)
     }
 }
 
@@ -649,6 +645,31 @@ fn empty_stat() -> Stat {
     // for which the all-zero bit pattern is a valid representation. The
     // value is overwritten by the kernel on successful return.
     unsafe { core::mem::zeroed() }
+}
+
+fn seek_parts(pos: SeekFrom) -> Result<(i32, Whence)> {
+    // This library mirrors `std::io::Seek` structurally, but exposes 32-bit
+    // offsets because the target kernel and filesystem are 32-bit. The
+    // syscall ABI itself uses a signed 32-bit offset word:
+    //
+    // +------------------+-----------------------------+
+    // | user_lib type    | kernel syscall word         |
+    // +------------------+-----------------------------+
+    // | SeekFrom::Start  | signed 32-bit absolute off  |
+    // | SeekFrom::End    | signed 32-bit relative off  |
+    // | SeekFrom::Current| signed 32-bit relative off  |
+    // +------------------+-----------------------------+
+    //
+    // Reject absolute offsets that cannot be represented by that signed ABI
+    // instead of letting an integer cast wrap into an unrelated position.
+    let invalid = || Error::new(ErrorKind::InvalidInput, "seek offset does not fit in i32");
+    match pos {
+        SeekFrom::Start(offset) => i32::try_from(offset)
+            .map(|offset| (offset, Whence::Set))
+            .map_err(|_| invalid()),
+        SeekFrom::Current(offset) => Ok((offset, Whence::Current)),
+        SeekFrom::End(offset) => Ok((offset, Whence::End)),
+    }
 }
 
 fn decode_directory_entries(

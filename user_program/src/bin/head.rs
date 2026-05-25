@@ -22,9 +22,9 @@ cli_args! {
     /// no FILE, read standard input.
     pub struct HeadArgs {
         /// Print the first NUM lines instead of the first 10.
-        pub lines: u64        = ["-n", "--lines"] @ "NUM" = 10,
+        pub lines: u32        = ["-n", "--lines"] @ "NUM" = 10,
         /// Print the first NUM bytes of each file.
-        pub bytes: u64        = ["-c", "--bytes"] @ "NUM" = 0,
+        pub bytes: u32        = ["-c", "--bytes"] @ "NUM" = 0,
         /// Never print headers giving file names.
         pub quiet: bool       = ["-q", "--quiet"],
         /// Always print headers giving file names.
@@ -99,8 +99,8 @@ fn main() -> ExitCode {
 
 #[derive(Clone, Copy)]
 enum Mode {
-    Lines(u64),
-    Bytes(u64),
+    Lines(u32),
+    Bytes(u32),
 }
 
 fn head_reader<R: Read>(reader: &mut R, mode: Mode) -> Result<()> {
@@ -110,20 +110,20 @@ fn head_reader<R: Read>(reader: &mut R, mode: Mode) -> Result<()> {
         Mode::Bytes(limit) => {
             let mut remaining = limit;
             while remaining > 0 {
-                let want = core::cmp::min(remaining, buf.len() as u64) as usize;
+                let want = core::cmp::min(remaining, buf.len() as u32) as usize;
                 let n = reader.read(&mut buf[..want])?;
                 if n == 0 {
                     break;
                 }
                 stdout.write_all(&buf[..n])?;
-                remaining -= n as u64;
+                remaining -= n as u32;
             }
         }
         Mode::Lines(limit) => {
             if limit == 0 {
                 return Ok(());
             }
-            let mut printed_lines: u64 = 0;
+            let mut printed_lines: u32 = 0;
             'outer: loop {
                 let n = reader.read(&mut buf)?;
                 if n == 0 {
