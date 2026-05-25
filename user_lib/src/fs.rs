@@ -4,8 +4,9 @@
 //!
 //! - File offsets and sizes are 32-bit on disk (Minix v1) but exposed as
 //!   `u64` to match the std signature.
-//! - There is no `read_dir` / `DirEntry` / `DirBuilder`: the kernel does not
-//!   yet expose a `getdents`-style syscall.
+//! - Directory iteration is implemented in user space by reading the raw
+//!   Minix v1 directory bytes exposed by this kernel and decoding their fixed
+//!   16-byte directory entries.
 //! - There is no `set_len`, `sync_all`, or `sync_data`: there is no
 //!   `ftruncate` and no per-inode `fsync`.
 //! - There are no symbolic links, so [`FileType::is_symlink`] always
@@ -37,6 +38,9 @@ const S_IFIFO: u16 = 0o010_000;
 
 const PERM_MASK: u16 = 0o7_777;
 const ALL_WRITE_BITS: u16 = 0o0_222;
+
+const MINIX_DIRECTORY_ENTRY_SIZE: usize = 16;
+const MINIX_DIRECTORY_NAME_LENGTH: usize = 14;
 
 /// Default mode for newly created files: `rw-rw-rw-` (the kernel will mask
 /// this with the process `umask`).
@@ -163,6 +167,78 @@ impl Drop for File {
 impl fmt::Debug for File {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("File").field("fd", &self.fd).finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReadDir and DirEntry
+// ---------------------------------------------------------------------------
+
+/// Iterator over the entries in a directory.
+///
+/// Returned by [`read_dir`]. Each yielded item is a [`Result<DirEntry>`] to
+/// match [`std::fs::ReadDir`]'s shape. This implementation reads and decodes
+/// the directory contents up front because this kernel exposes directory data
+/// as ordinary read-only inode bytes instead of a `getdents`-style cursor.
+pub struct ReadDir {
+    root: crate::path::PathBuf,
+    entries: alloc::vec::IntoIter<Result<DirEntry>>,
+}
+
+impl Iterator for ReadDir {
+    type Item = Result<DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next()
+    }
+}
+
+impl core::iter::FusedIterator for ReadDir {}
+
+impl fmt::Debug for ReadDir {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ReadDir").field(&self.root).finish()
+    }
+}
+
+/// An entry inside a directory.
+///
+/// `DirEntry` mirrors the high-level shape of [`std::fs::DirEntry`]. Because
+/// this kernel treats all paths as UTF-8, [`file_name`](Self::file_name)
+/// returns a [`String`] rather than an `OsString`.
+pub struct DirEntry {
+    root: crate::path::PathBuf,
+    file_name: String,
+}
+
+impl DirEntry {
+    /// Returns the full path to the file represented by this entry.
+    #[must_use]
+    pub fn path(&self) -> crate::path::PathBuf {
+        self.root.join(self.file_name.as_str())
+    }
+
+    /// Returns metadata for the file that this entry points at.
+    pub fn metadata(&self) -> Result<Metadata> {
+        metadata(self.path())
+    }
+
+    /// Returns the file type for the file that this entry points at.
+    pub fn file_type(&self) -> Result<FileType> {
+        self.metadata().map(|metadata| metadata.file_type())
+    }
+
+    /// Returns the file name of this directory entry without leading path
+    /// components.
+    #[must_use]
+    pub fn file_name(&self) -> String {
+        self.file_name.clone()
+    }
+}
+
+impl fmt::Debug for DirEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("DirEntry").field(&self.path()).finish()
     }
 }
 
@@ -470,6 +546,33 @@ pub fn read_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
     Ok(buf)
 }
 
+/// Returns an iterator over the entries within a directory.
+///
+/// Entries for the current and parent directories (`.` and `..`) are skipped,
+/// matching [`std::fs::read_dir`].
+///
+/// The order is the on-disk Minix directory-entry order. As with
+/// [`std::fs::read_dir`], callers that need reproducible ordering should
+/// collect and sort the returned paths explicitly.
+pub fn read_dir<P: AsRef<Path>>(path: P) -> Result<ReadDir> {
+    let path = path.as_ref();
+    let root = path.to_path_buf();
+    let mut file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_dir() {
+        return Err(Error::from(ErrorKind::NotADirectory));
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)?;
+    let entries = decode_directory_entries(root.clone(), &bytes)?;
+
+    Ok(ReadDir {
+        root,
+        entries: entries.into_iter(),
+    })
+}
+
 /// Writes a slice as the entire contents of a file, creating it (truncating
 /// any previous contents) if necessary.
 pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
@@ -546,4 +649,57 @@ fn empty_stat() -> Stat {
     // for which the all-zero bit pattern is a valid representation. The
     // value is overwritten by the kernel on successful return.
     unsafe { core::mem::zeroed() }
+}
+
+fn decode_directory_entries(
+    root: crate::path::PathBuf,
+    bytes: &[u8],
+) -> Result<Vec<Result<DirEntry>>> {
+    let mut chunks = bytes.chunks_exact(MINIX_DIRECTORY_ENTRY_SIZE);
+    if !chunks.remainder().is_empty() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "directory size is not aligned to Minix directory entries",
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for chunk in &mut chunks {
+        // Minix v1 directory entry layout:
+        //
+        // +----------------------+ byte offset
+        // | inode number: u16le  | 0..2
+        // +----------------------+
+        // | NUL-padded name      | 2..16
+        // | (14 bytes)           |
+        // +----------------------+
+        //
+        // An inode number of zero marks a deleted/free slot.
+        let inode_number = u16::from_le_bytes([chunk[0], chunk[1]]);
+        if inode_number == 0 {
+            continue;
+        }
+
+        let name_bytes = &chunk[2..2 + MINIX_DIRECTORY_NAME_LENGTH];
+        let name_len = name_bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(MINIX_DIRECTORY_NAME_LENGTH);
+        let name = core::str::from_utf8(&name_bytes[..name_len]).map_err(|_| {
+            Error::new(
+                ErrorKind::InvalidData,
+                "directory entry name is not valid UTF-8",
+            )
+        })?;
+        if name == "." || name == ".." {
+            continue;
+        }
+
+        entries.push(Ok(DirEntry {
+            root: root.clone(),
+            file_name: name.to_owned(),
+        }));
+    }
+
+    Ok(entries)
 }
