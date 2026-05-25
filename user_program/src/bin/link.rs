@@ -7,15 +7,6 @@ extern crate alloc;
 
 use anyhow::Result;
 use user_lib::{eprintln, fs};
-use user_program::cli::cli_args;
-
-cli_args! {
-    /// Create a hard link named FILE2 to FILE1.
-    pub struct LinkArgs {
-        /// Existing file the new link will point to.
-        pub file1: Option<alloc::string::String> = [..],
-    }
-}
 
 #[user_lib::main]
 fn main() -> Result<()> {
