@@ -13,13 +13,17 @@
 
 use core::convert::Infallible;
 
-use crate::syscall;
+use crate::{io, syscall};
 
 /// Terminates the current process with the given status code.
+///
+/// Any data still buffered in [`io::Stdout`] is flushed before the kernel
+/// is asked to terminate the process.
 ///
 /// The lower 8 bits of `code` are passed to the kernel as the exit status,
 /// matching the conventional Unix exit code range.
 pub fn exit(code: i32) -> ! {
+    io::flush_stdout();
     let _ = syscall::process::exit(code as u32);
     loop {
         core::hint::spin_loop();
