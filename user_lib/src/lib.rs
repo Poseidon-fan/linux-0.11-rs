@@ -20,6 +20,7 @@ pub mod process;
 #[cfg(feature = "runtime")]
 pub mod rt;
 pub mod syscall;
+pub mod time;
 
 #[cfg(feature = "runtime")]
 pub use user_lib_macros::main;
