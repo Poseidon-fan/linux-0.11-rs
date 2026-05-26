@@ -12,7 +12,7 @@ use alloc::{
 };
 
 use user_lib::{
-    env, fs,
+    env,
     io::{self, Write},
     process::{self, Command, ExitCode},
 };
@@ -59,7 +59,7 @@ fn run() -> Result<ExitCode, String> {
     let options = parse_env_or_exit();
 
     if let Some(dir) = options.args.chdir.as_deref() {
-        fs::set_current_dir(dir).map_err(|err| format!("{}: {}", dir, err))?;
+        env::set_current_dir(dir).map_err(|err| format!("{}: {}", dir, err))?;
     }
 
     if options.command_args.is_empty() {

@@ -4,8 +4,13 @@
 //! Runtime startup records the raw `argc / argv / envp` pointers, while public
 //! functions expose owned [`String`] values backed by the user-space allocator.
 
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use core::{ffi::CStr, ptr, str};
+
+use crate::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Snapshot of the process argument and environment pointer tables.
 #[derive(Clone, Copy)]
@@ -75,6 +80,47 @@ pub fn var(name: &str) -> Result<String, VarError> {
     str::from_utf8(value)
         .map(String::from)
         .map_err(|_| VarError::NotUnicode)
+}
+
+/// Returns the full filesystem path of the current working directory.
+///
+/// Mirrors [`std::env::current_dir`]. This kernel has no `getcwd` syscall,
+/// so the path is reconstructed by walking parent directories and matching
+/// directory entries by `(dev, ino)`.
+pub fn current_dir() -> crate::io::Result<PathBuf> {
+    let original = fs::metadata(".")?;
+    let mut names = Vec::new();
+
+    loop {
+        let current = fs::metadata(".")?;
+        let parent = fs::metadata("..")?;
+        if same_file(&current, &parent) {
+            break;
+        }
+
+        fs::set_current_dir("..")?;
+        names.push(find_child_name(&current)?);
+    }
+
+    let cwd = build_absolute_path(&names);
+    fs::set_current_dir(cwd.as_path())?;
+
+    let restored = fs::metadata(".")?;
+    if same_file(&original, &restored) {
+        Ok(cwd)
+    } else {
+        Err(crate::io::Error::new(
+            crate::io::ErrorKind::NotFound,
+            "current directory changed while resolving path",
+        ))
+    }
+}
+
+/// Changes the current working directory to the specified path.
+///
+/// Mirrors [`std::env::set_current_dir`].
+pub fn set_current_dir<P: AsRef<Path>>(path: P) -> crate::io::Result<()> {
+    fs::set_current_dir(path)
 }
 
 /// Copies the global process environment pointers into a local value.
@@ -179,4 +225,32 @@ fn next_env_entry<'a>(next: &mut *const *const u8) -> Option<&'a CStr> {
 
     *next = unsafe { table.add(1) };
     Some(unsafe { CStr::from_ptr(ptr.cast()) })
+}
+
+fn find_child_name(target: &fs::Metadata) -> crate::io::Result<String> {
+    for entry in fs::read_dir(".")? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if same_file(&metadata, target) {
+            return Ok(entry.file_name());
+        }
+    }
+
+    Err(crate::io::Error::new(
+        crate::io::ErrorKind::NotFound,
+        "current directory entry not found in parent",
+    ))
+}
+
+fn build_absolute_path(reversed_names: &[String]) -> PathBuf {
+    let mut path = PathBuf::new();
+    path.push("/");
+    for name in reversed_names.iter().rev() {
+        path.push(name.as_str());
+    }
+    path
+}
+
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev() && left.ino() == right.ino()
 }
