@@ -42,7 +42,7 @@ fn main() -> ExitCode {
     if edits.is_empty() {
         return ExitCode::SUCCESS;
     }
-    print_normal_diff(&lines_a, &lines_b, &edits, a, b);
+    print_normal_diff(&lines_a, &lines_b, &edits);
     ExitCode::from(1)
 }
 
@@ -70,15 +70,13 @@ enum Edit {
     Insert,
 }
 
-#[allow(clippy::needless_range_loop)]
 fn lcs_diff(a: &[String], b: &[String]) -> Vec<Edit> {
     let n = a.len();
     let m = b.len();
-    // DP table
     let mut dp = alloc::vec![alloc::vec![0usize; m + 1]; n + 1];
     for i in 0..n {
-        for j in 0..m {
-            if a[i] == b[j] {
+        for (j, b_item) in b.iter().enumerate() {
+            if a[i] == *b_item {
                 dp[i + 1][j + 1] = dp[i][j] + 1;
             } else {
                 dp[i + 1][j + 1] = dp[i + 1][j].max(dp[i][j + 1]);
@@ -105,7 +103,7 @@ fn lcs_diff(a: &[String], b: &[String]) -> Vec<Edit> {
     edits
 }
 
-fn print_normal_diff(a: &[String], b: &[String], edits: &[Edit], _fa: &str, _fb: &str) {
+fn print_normal_diff(a: &[String], b: &[String], edits: &[Edit]) {
     let mut out = io::stdout();
     let mut buf = String::new();
     use core::fmt::Write as _;
