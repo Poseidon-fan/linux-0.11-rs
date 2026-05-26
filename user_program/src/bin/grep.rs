@@ -32,6 +32,7 @@ cli_args! {
         pub quiet:        bool           = ["-q", "--quiet", "--silent"],
         pub word_regexp:  bool           = ["-w", "--word-regexp"],
         pub line_regexp:  bool           = ["-x", "--line-regexp"],
+        pub extended:     bool           = ["-E", "--extended-regexp"],
         pub after:        Option<String> = ["-A", "--after-context"] @ "NUM",
         pub before:       Option<String> = ["-B", "--before-context"] @ "NUM",
         pub context:      Option<String> = ["-C", "--context"] @ "NUM",
@@ -56,9 +57,11 @@ fn main() -> ExitCode {
     let (after, before) = compute_context(&cli);
     let show_name = cli.with_filename || (!cli.no_filename && (files.len() > 1 || cli.recursive));
     let mut matched_any = false;
+    let matcher = compile_regex(&pattern, &cli);
     let mut ctx = GrepCtx {
         cli: &cli,
         pattern: &pattern,
+        matcher,
         show_name,
         after,
         before,
@@ -85,6 +88,7 @@ fn main() -> ExitCode {
 struct GrepCtx<'a> {
     cli: &'a GrepArgs,
     pattern: &'a str,
+    matcher: Matcher,
     show_name: bool,
     after: usize,
     before: usize,
@@ -139,7 +143,7 @@ fn grep_reader<R: io::Read>(reader: R, name: &str, ctx: &mut GrepCtx<'_>) -> Res
         if line.ends_with('\n') {
             line.pop();
         }
-        let m = line_matches(&line, ctx.pattern, ctx.cli);
+        let m = line_matches(&line, ctx.pattern, ctx.cli, &ctx.matcher);
         if m {
             *ctx.matched_any = true;
             mc += 1;
@@ -190,18 +194,62 @@ fn grep_reader<R: io::Read>(reader: R, name: &str, ctx: &mut GrepCtx<'_>) -> Res
     Ok(())
 }
 
-fn line_matches(line: &str, pat: &str, cli: &GrepArgs) -> bool {
-    let m = if cli.line_regexp {
-        line == pat || (cli.ignore_case && line.eq_ignore_ascii_case(pat))
-    } else if cli.word_regexp {
-        word_match(line, pat, cli.ignore_case)
-    } else if cli.ignore_case {
-        line.to_ascii_lowercase()
-            .contains(&pat.to_ascii_lowercase())
+enum Matcher {
+    Fixed,
+    Regex(regex::Regex),
+}
+
+fn compile_regex(pat: &str, cli: &GrepArgs) -> Matcher {
+    if !cli.extended {
+        return Matcher::Fixed;
+    }
+    let mut p = if cli.word_regexp {
+        alloc::format!("\\b{}\\b", pat)
+    } else if cli.line_regexp {
+        alloc::format!("^{}$", pat)
     } else {
-        line.contains(pat)
+        String::from(pat)
     };
-    if cli.invert { !m } else { m }
+    if cli.ignore_case {
+        p = alloc::format!("(?i){}", p);
+    }
+    match regex::Regex::new(&p) {
+        Ok(re) => Matcher::Regex(re),
+        Err(_) => Matcher::Fixed,
+    }
+}
+
+fn line_matches(line: &str, pat: &str, cli: &GrepArgs, matcher: &Matcher) -> bool {
+    if cli.extended {
+        let m = match matcher {
+            Matcher::Regex(re) => re.is_match(line),
+            Matcher::Fixed => {
+                if cli.line_regexp {
+                    line == pat
+                } else if cli.word_regexp {
+                    word_match(line, pat, cli.ignore_case)
+                } else if cli.ignore_case {
+                    line.to_ascii_lowercase()
+                        .contains(&pat.to_ascii_lowercase())
+                } else {
+                    line.contains(pat)
+                }
+            }
+        };
+        if cli.invert { !m } else { m }
+    } else {
+        let m = if cli.line_regexp {
+            line == pat || (cli.ignore_case && line.eq_ignore_ascii_case(pat))
+        } else if cli.word_regexp {
+            word_match(line, pat, cli.ignore_case)
+        } else if cli.ignore_case {
+            line.to_ascii_lowercase()
+                .contains(&pat.to_ascii_lowercase())
+        } else {
+            line.contains(pat)
+        };
+        if cli.invert { !m } else { m }
+    }
 }
 
 fn word_match(haystack: &str, needle: &str, ic: bool) -> bool {

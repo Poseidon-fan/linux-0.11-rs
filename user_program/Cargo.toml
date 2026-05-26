@@ -13,3 +13,4 @@ bench = false
 [dependencies]
 user_lib = { path = "../user_lib", features = ["runtime"] }
 anyhow = { version = "1", default-features = false }
+regex = { version = "1", default-features = false }
