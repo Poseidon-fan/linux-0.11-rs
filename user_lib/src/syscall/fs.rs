@@ -148,6 +148,20 @@ pub struct TimeUpdate {
     pub modification_time: i32,
 }
 
+/// Filesystem usage information returned by `ustat(2)`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Ustat {
+    /// Total number of data blocks in the filesystem.
+    pub f_blocks: u32,
+    /// Number of free data blocks.
+    pub f_bfree: u32,
+    /// Total number of inodes.
+    pub f_files: u32,
+    /// Number of free inodes.
+    pub f_ffree: u32,
+}
+
 use_syscall!(Syscall::Open   => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
 use_syscall!(Syscall::Read   => read(fd: u32, buf: *mut u8, count: i32) -> u32);
 use_syscall!(Syscall::Write  => write(fd: u32, buf: *const u8, count: i32) -> u32);
@@ -176,7 +190,7 @@ use_syscall!(Syscall::Ioctl  => ioctl(fd: u32, request: u32, arg: u32) -> u32);
 use_syscall!(Syscall::Fcntl  => fcntl(fd: u32, command: FcntlCmd, arg: u32) -> u32);
 use_syscall!(Syscall::Umask  => umask(mask: u32) -> u32);
 use_syscall!(Syscall::Chroot => chroot(path: *const u8) -> u32);
-use_syscall!(Syscall::Ustat  => ustat(dev: u32, ubuf: *mut u8) -> u32);
+use_syscall!(Syscall::Ustat  => ustat(dev: u32, ubuf: *mut Ustat) -> u32);
 use_syscall!(Syscall::Dup2   => dup2(oldfd: u32, newfd: u32) -> u32);
 use_syscall!(Syscall::Rename => rename(old_path: *const u8, new_path: *const u8) -> u32);
 use_syscall!(Syscall::Mkdir  => mkdir(path: *const u8, mode: u32) -> u32);

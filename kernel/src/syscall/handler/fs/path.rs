@@ -2,7 +2,7 @@
 
 use user_lib::syscall::{
     Syscall,
-    fs::{Stat, TimeUpdate},
+    fs::{Stat, TimeUpdate, Ustat},
 };
 
 use crate::{
@@ -356,6 +356,10 @@ define_syscall_handler!(
             }
         }
 
+        /// Upper bound used while walking `..` to detect rename loops on a
+        /// malformed filesystem. 256 is well past any sensible nesting depth.
+        const MAX_PATH_DEPTH: usize = 256;
+
         // Refuse to move a directory into itself or any of its descendants.
         if old_is_dir && !same_parent {
             let mut cursor = new_dir.clone();
@@ -435,6 +439,27 @@ define_syscall_handler!(
     }
 );
 
-/// Upper bound used while walking `..` to detect rename loops on a
-/// malformed filesystem. 256 is well past any sensible nesting depth.
-const MAX_PATH_DEPTH: usize = 256;
+define_syscall_handler!(
+    Syscall::Ustat = 62,
+    fn sys_ustat(ctx: &mut SyscallContext) -> Result<u32> {
+        let (dev, ubuf, _) = ctx.args();
+
+        let fs = crate::fs::mount::MOUNT_TABLE
+            .lock()
+            .find_fs(crate::driver::DevNum(dev as u16))
+            .ok_or(Errno::NODEV)?;
+
+        let fs_locked = fs.lock();
+        let sb = &fs_locked.super_block;
+        let ustat = Ustat {
+            f_blocks: sb.zone_count as u32,
+            f_bfree: fs_locked.zone_bitmap.count_free() as u32,
+            f_files: sb.inode_count as u32,
+            f_ffree: fs_locked.inode_bitmap.count_free() as u32,
+        };
+
+        mm::ensure_user_area_writable(ubuf, core::mem::size_of::<Ustat>());
+        uaccess::write_struct(&ustat, ubuf as *mut Ustat);
+        Ok(0)
+    }
+);

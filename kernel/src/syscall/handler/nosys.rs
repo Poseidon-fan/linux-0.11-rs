@@ -74,9 +74,3 @@ define_syscall_handler!(
         Err(Errno::NOSYS)
     }
 );
-define_syscall_handler!(
-    Syscall::Ustat = 62,
-    fn sys_ustat(_ctx: &mut SyscallContext) -> Result<u32> {
-        Err(Errno::NOSYS)
-    }
-);
