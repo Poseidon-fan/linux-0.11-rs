@@ -46,10 +46,48 @@ define_syscall_handler!(
         let (pid_raw, signal_number, _) = ctx.args();
         let pid = pid_raw as i32;
 
-        (1..=NSIG as u32)
+        (0..=NSIG as u32)
             .contains(&signal_number)
             .then_some(())
             .ok_or(Errno::INVAL)?;
+
+        // Signal 0 is the null signal (POSIX): check existence / permission
+        // but do not actually deliver anything.
+        if signal_number == 0 {
+            if pid == 0 {
+                // Sending to self is always allowed.
+                return Ok(0);
+            }
+            // Check that at least one matching task exists and the caller has
+            // permission.
+            let current_uid = task::with_current(|inner| inner.identity.euid);
+            let mut found = false;
+            TASK_MANAGER.exclusive(|manager| {
+                for task in manager.tasks.iter().filter_map(|t| t.as_ref()) {
+                    if task.pcb.slot == 0 {
+                        continue;
+                    }
+                    let matches = match pid {
+                        p if p > 0 => task.pcb.pid == p as u32,
+                        -1 => true,
+                        p => task.pcb.inner.exclusive(|i| i.relation.pgrp) == (-p) as u32,
+                    };
+                    if !matches {
+                        continue;
+                    }
+                    found = true;
+                    let allowed = is_superuser()
+                        || task.pcb.inner.exclusive(|inner| inner.identity.euid) == current_uid;
+                    if !allowed {
+                        return;
+                    }
+                }
+            });
+            if !found {
+                return Err(Errno::SRCH);
+            }
+            return Ok(0);
+        }
 
         let current_pid = task::current_pid();
         let current_euid = task::with_current(|inner| inner.identity.euid);
