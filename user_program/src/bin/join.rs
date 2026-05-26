@@ -1,5 +1,4 @@
 //! `join` — join lines of two files on a common field.
-
 #![no_std]
 #![no_main]
 extern crate alloc;
@@ -19,11 +18,8 @@ use user_program::cli::cli_args;
 
 cli_args! {
     pub struct JoinArgs {
-        pub ignore_case: bool = ["-i", "--ignore-case"],
-        pub field1: Option<String> = ["-1"] @ "FIELD",
-        pub field2: Option<String> = ["-2"] @ "FIELD",
-        pub delim: Option<String>  = ["-t"] @ "CHAR",
-        pub files: Vec<String> = [..] @ "FILE",
+        pub ignore_case: bool = ["-i"], pub field1: Option<String> = ["-1"] @ "F", pub field2: Option<String> = ["-2"] @ "F",
+        pub delim: Option<String> = ["-t"] @ "C", pub files: Vec<String> = [..] @ "FILE",
     }
 }
 
@@ -49,14 +45,13 @@ fn main() -> ExitCode {
     let delim = cli.delim.as_ref().map(|s| s.as_bytes()[0]).unwrap_or(b' ');
     let a = read_lines(&cli.files[0]).unwrap_or_default();
     let b = read_lines(&cli.files[1]).unwrap_or_default();
-
-    let get_key = |line: &str, f: usize, d: u8| -> String {
-        let parts: Vec<&str> = if d == b' ' {
+    let key = |line: &str, f: usize| -> String {
+        let parts: Vec<&str> = if delim == b' ' {
             line.split(|c: char| c == ' ' || c == '\t')
                 .filter(|s| !s.is_empty())
                 .collect()
         } else {
-            line.split(d as char).collect()
+            line.split(delim as char).collect()
         };
         let k = parts.get(f.saturating_sub(1)).unwrap_or(&"");
         if cli.ignore_case {
@@ -65,14 +60,13 @@ fn main() -> ExitCode {
             k.to_string()
         }
     };
-
     let mut out = io::stdout();
     let mut buf = String::new();
     use core::fmt::Write as _;
     let (mut i, mut j) = (0usize, 0usize);
     while i < a.len() && j < b.len() {
-        let ka = get_key(&a[i], f1, delim);
-        let kb = get_key(&b[j], f2, delim);
+        let ka = key(&a[i], f1);
+        let kb = key(&b[j], f2);
         if ka < kb {
             i += 1;
         } else if kb < ka {
@@ -88,18 +82,26 @@ fn main() -> ExitCode {
 }
 
 fn read_lines(path: &str) -> Result<Vec<String>> {
-    let mut r = BufReader::new(File::open(path)?);
-    let mut ls = Vec::new();
-    let mut l = String::new();
-    loop {
-        l.clear();
-        if r.read_line(&mut l)? == 0 {
-            break;
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    if path == "-" {
+        let mut r = BufReader::new(io::stdin());
+        while r.read_line(&mut line)? > 0 {
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            lines.push(line.clone());
+            line.clear();
         }
-        if l.ends_with('\n') {
-            l.pop();
+    } else {
+        let mut r = BufReader::new(File::open(path)?);
+        while r.read_line(&mut line)? > 0 {
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            lines.push(line.clone());
+            line.clear();
         }
-        ls.push(l.clone());
     }
-    Ok(ls)
+    Ok(lines)
 }

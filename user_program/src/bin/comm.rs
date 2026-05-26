@@ -1,5 +1,4 @@
 //! `comm` — compare two sorted files line by line.
-
 #![no_std]
 #![no_main]
 extern crate alloc;
@@ -14,12 +13,7 @@ use user_lib::{
 };
 use user_program::cli::cli_args;
 
-cli_args! {
-    pub struct CommArgs {
-        pub suppress1: bool = ["-1"], pub suppress2: bool = ["-2"], pub suppress3: bool = ["-3"],
-        pub files: Vec<String> = [..] @ "FILE",
-    }
-}
+cli_args! { pub struct CommArgs { pub suppress1: bool = ["-1"], pub suppress2: bool = ["-2"], pub suppress3: bool = ["-3"], pub files: Vec<String> = [..] @ "FILE" } }
 
 #[user_lib::main]
 fn main() -> ExitCode {
@@ -58,18 +52,26 @@ fn main() -> ExitCode {
 }
 
 fn read_lines(path: &str) -> Result<Vec<String>> {
-    let mut reader = BufReader::new(File::open(path)?);
     let mut lines = Vec::new();
     let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
+    if path == "-" {
+        let mut r = BufReader::new(io::stdin());
+        while r.read_line(&mut line)? > 0 {
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            lines.push(line.clone());
+            line.clear();
         }
-        if line.ends_with('\n') {
-            line.pop();
+    } else {
+        let mut r = BufReader::new(File::open(path)?);
+        while r.read_line(&mut line)? > 0 {
+            if line.ends_with('\n') {
+                line.pop();
+            }
+            lines.push(line.clone());
+            line.clear();
         }
-        lines.push(line.clone());
     }
     Ok(lines)
 }
