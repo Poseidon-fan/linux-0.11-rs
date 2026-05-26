@@ -220,7 +220,11 @@ fn parse_number_with_suffix(raw: &str) -> Option<u32> {
 
 fn tail_file(path: &str, mode: Mode, show_header: bool, after_first: bool) -> io::Result<()> {
     let mut file = File::open(path)?;
-    let mut bytes = Vec::with_capacity(file.metadata().map(|m| m.len() as usize).unwrap_or(0));
+    let mut bytes = Vec::with_capacity(
+        file.metadata()
+            .map(|m| usize::try_from(m.len()).unwrap_or(0))
+            .unwrap_or(0),
+    );
     file.read_to_end(&mut bytes)?;
     write_tail(path, &bytes, mode, show_header, after_first)
 }

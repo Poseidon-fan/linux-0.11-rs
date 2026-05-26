@@ -68,7 +68,11 @@ fn remove_path(path: &str, args: &RmArgs) -> io::Result<()> {
         if !args.recursive {
             return Err(io::Error::from(ErrorKind::IsADirectory));
         }
-        remove_dir_recursive(path, args)?;
+        if args.verbose {
+            remove_dir_recursive(path, args)?;
+        } else {
+            fs::remove_dir_all(path)?;
+        }
     } else {
         fs::remove_file(path)?;
         if args.verbose {

@@ -7,12 +7,12 @@
 //!   mirroring `std`'s opaque-clock-tick model. The underlying source is
 //!   the jiffy counter returned by `times(2)` (10 ms granularity on a
 //!   100 Hz kernel), but the public arithmetic surface speaks in
-//!   `Duration`, so `Instant` itself isn't restricted to the kernel's u32
-//!   ABI for things like `checked_add`.
+//!   `Duration`, so `Instant` itself isn't restricted to the kernel's
+//!   signed 32-bit ABI for things like `checked_add`.
 //! - [`SystemTime`] stores `i64` seconds plus `u32` sub-second
 //!   nanoseconds, matching `std`'s `Timespec`. The `time(2)` syscall only
-//!   produces u32 seconds, so `now()` always returns a value with
-//!   `nanos == 0`; arithmetic that crosses 2106 or 1970 still works
+//!   produces signed 32-bit seconds, so `now()` always returns a value with
+//!   `nanos == 0`; arithmetic that crosses 2038 or 1970 still works
 //!   correctly inside the type.
 //! - [`sleep`] uses `alarm(2) + pause(2)` for the whole-second portion of
 //!   the requested delay and a jiffy-resolution busy-wait for any
@@ -43,6 +43,10 @@ const NANOS_PER_TICK: u64 = 1_000_000_000 / HZ as u64;
 /// Nanoseconds in one second.
 const NANOS_PER_SEC: u32 = 1_000_000_000;
 
+fn jiffies_to_u64(jiffies: i32) -> u64 {
+    u64::from(jiffies as u32)
+}
+
 // ---------------------------------------------------------------------------
 // Instant
 // ---------------------------------------------------------------------------
@@ -53,8 +57,8 @@ const NANOS_PER_SEC: u32 = 1_000_000_000;
 /// elapsed [`Duration`] since some unspecified epoch (boot, in our case),
 /// so all arithmetic uses the full `Duration` range. The clock source is
 /// the kernel's jiffy counter so observed resolution is 10 ms, and the
-/// underlying counter is a u32 that wraps in roughly 497 days — long
-/// enough that we don't model wraparound.
+/// underlying counter is a signed 32-bit value that wraps in roughly 248
+/// days, long enough that we don't model wraparound.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Instant {
     since_boot: Duration,
@@ -65,11 +69,11 @@ impl Instant {
     #[must_use]
     pub fn now() -> Instant {
         // `times(NULL)` returns the wall-clock tick count since boot as a
-        // u32 (kernel ABI). Widen at the boundary so internal arithmetic
-        // operates on a normal `Duration`.
+        // signed 32-bit time_t. Widen at the boundary so internal
+        // arithmetic operates on a normal `Duration`.
         let jiffies = syscall::process::times(core::ptr::null_mut()).unwrap_or(0);
         Instant {
-            since_boot: Duration::from_nanos(u64::from(jiffies) * NANOS_PER_TICK),
+            since_boot: Duration::from_nanos(jiffies_to_u64(jiffies) * NANOS_PER_TICK),
         }
     }
 
@@ -177,8 +181,8 @@ impl fmt::Debug for Instant {
 ///
 /// Stores `(secs: i64, nanos: u32)` like `std::time::SystemTime`'s
 /// underlying `Timespec`. The `time(2)` syscall used by [`Self::now`]
-/// only produces u32 seconds, so `now()` always returns `nanos == 0` and
-/// represents a moment between 1970 and 2106; arithmetic that crosses
+/// only produces signed 32-bit seconds, so `now()` always returns `nanos == 0` and
+/// represents a moment between 1901 and 2038; arithmetic that crosses
 /// those bounds still works correctly inside the type.
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SystemTime {
@@ -369,7 +373,7 @@ impl error::Error for SystemTimeError {}
 #[must_use]
 pub fn uptime() -> Duration {
     let jiffies = syscall::process::times(core::ptr::null_mut()).unwrap_or(0);
-    Duration::from_nanos(u64::from(jiffies) * NANOS_PER_TICK)
+    Duration::from_nanos(jiffies_to_u64(jiffies) * NANOS_PER_TICK)
 }
 
 /// Blocks the current process for at least `duration`.

@@ -132,10 +132,10 @@ fn real_to_centis(d: core::time::Duration) -> u64 {
     secs.saturating_mul(100).saturating_add(centis)
 }
 
-fn jiffies_to_centis(j: u32) -> u64 {
+fn jiffies_to_centis(j: i32) -> u64 {
     // 1 jiffy = 1 centisecond when HZ == 100. Keep the formula explicit
     // in case the kernel HZ changes.
-    (u64::from(j) * 100) / u64::from(HZ)
+    (u64::from(j as u32) * 100) / u64::from(HZ)
 }
 
 fn format_secs_centi(total_centis: u64) -> String {

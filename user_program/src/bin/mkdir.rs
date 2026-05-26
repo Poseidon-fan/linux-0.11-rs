@@ -37,7 +37,9 @@ fn main() -> ExitCode {
 
     let mut exit_code = ExitCode::SUCCESS;
     for dir in &cli.dirs {
-        let result = if cli.parents {
+        let result = if cli.parents && !cli.verbose {
+            fs::create_dir_all(dir.as_str()).with_context(|| dir.to_string())
+        } else if cli.parents {
             create_with_parents(dir, cli.verbose)
         } else {
             create_one(dir, cli.verbose, false)

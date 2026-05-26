@@ -318,19 +318,19 @@ impl<R: Read + ?Sized> BufRead for BufReader<R> {
 }
 
 impl<R: Seek + Read + ?Sized> Seek for BufReader<R> {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u32> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         // Optimisation: a small `Current(n)` seek that lands inside the
         // already-buffered region only needs to nudge `self.pos`.
         if let SeekFrom::Current(offset) = pos {
-            let buffered = (self.cap - self.pos) as i32;
-            let absorbed = -(self.pos as i32);
+            let buffered = (self.cap - self.pos) as i64;
+            let absorbed = -(self.pos as i64);
             if absorbed <= offset && offset <= buffered {
-                let new_pos = (self.pos as i32 + offset) as usize;
+                let new_pos = (self.pos as i64 + offset) as usize;
                 self.pos = new_pos;
                 // Best-effort: ask the inner reader for its current logical
                 // position so callers see a sensible value.
                 let inner_pos = self.inner.stream_position()?;
-                let buffered_remaining = (self.cap - self.pos) as u32;
+                let buffered_remaining = (self.cap - self.pos) as u64;
                 return Ok(inner_pos.saturating_sub(buffered_remaining));
             }
         }

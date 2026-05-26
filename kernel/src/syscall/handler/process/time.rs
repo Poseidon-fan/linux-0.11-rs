@@ -55,10 +55,10 @@ define_syscall_handler!(
                 )
             });
             let tms = Tms {
-                user_time: utime,
-                system_time: stime,
-                child_user_time: cutime,
-                child_system_time: cstime,
+                user_time: utime as i32,
+                system_time: stime as i32,
+                child_user_time: cutime as i32,
+                child_system_time: cstime as i32,
             };
             mm::ensure_user_area_writable(tbuf, core::mem::size_of::<Tms>());
             uaccess::write_struct(&tms, tbuf as *mut Tms);

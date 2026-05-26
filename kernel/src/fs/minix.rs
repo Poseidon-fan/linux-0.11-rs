@@ -186,10 +186,10 @@ impl Inode {
             st_uid: disk.user_id,
             st_gid: disk.group_id,
             st_rdev,
-            st_size: disk.size,
-            st_atime: inner.access_time,
-            st_mtime: disk.modification_time,
-            st_ctime: inner.change_time,
+            st_size: disk.size as i32,
+            st_atime: inner.access_time as i32,
+            st_mtime: disk.modification_time as i32,
+            st_ctime: inner.change_time as i32,
         }
     }
 

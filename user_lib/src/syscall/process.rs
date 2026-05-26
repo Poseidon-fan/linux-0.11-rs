@@ -6,19 +6,19 @@ use crate::{syscall::Syscall, use_syscall};
 
 /// Process CPU accounting returned by `times(2)`.
 ///
-/// All fields are measured in scheduler clock ticks and match the i386
-/// `struct tms` ABI used by early Linux user space.
+/// All fields are signed `time_t` values measured in scheduler clock ticks,
+/// matching the i386 `struct tms` ABI used by early Linux user space.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tms {
     /// User CPU time consumed by this process.
-    pub user_time: u32,
+    pub user_time: i32,
     /// Kernel CPU time consumed by this process.
-    pub system_time: u32,
+    pub system_time: i32,
     /// User CPU time consumed by waited-for children.
-    pub child_user_time: u32,
+    pub child_user_time: i32,
     /// Kernel CPU time consumed by waited-for children.
-    pub child_system_time: u32,
+    pub child_system_time: i32,
 }
 
 /// System identity returned by `uname(2)`.
@@ -59,11 +59,11 @@ use_syscall!(Syscall::Execve => execve(
     envp: *const *const u8
 ) -> u32);
 
-use_syscall!(Syscall::Time => time(tloc: *mut u32) -> u32);
-use_syscall!(Syscall::Stime => stime(tptr: *const u32) -> u32);
+use_syscall!(Syscall::Time => time(tloc: *mut i32) -> i32);
+use_syscall!(Syscall::Stime => stime(tptr: *const i32) -> u32);
 use_syscall!(Syscall::Alarm => alarm(seconds: u32) -> u32);
 use_syscall!(Syscall::Pause => pause() -> u32);
-use_syscall!(Syscall::Times => times(tbuf: *mut Tms) -> u32);
+use_syscall!(Syscall::Times => times(tbuf: *mut Tms) -> i32);
 use_syscall!(Syscall::Brk => brk(end_data_segment: u32) -> u32);
 use_syscall!(Syscall::Getpid => getpid() -> u32);
 use_syscall!(Syscall::Setuid => setuid(uid: u32) -> u32);

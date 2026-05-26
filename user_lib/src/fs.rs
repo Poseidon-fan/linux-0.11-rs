@@ -2,8 +2,9 @@
 //!
 //! Counterpart to [`std::fs`], adapted for this kernel:
 //!
-//! - File offsets and sizes are exposed as 32-bit values to match the
-//!   i386/Linux 0.11 ABI and the Minix v1 on-disk format.
+//! - Kernel file offsets and sizes are 32-bit, but std-compatible public
+//!   methods expose Rust's normal `u64` sizes and seek positions. Values that
+//!   do not fit the kernel ABI are rejected at the syscall boundary.
 //! - Directory iteration is implemented in user space by reading the raw
 //!   Minix v1 directory bytes exposed by this kernel and decoding their fixed
 //!   16-byte directory entries.
@@ -27,6 +28,7 @@ use crate::{
         self,
         fs::{AccessMode, OpenFlags, Stat, Whence},
     },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const S_IFMT: u16 = 0o170_000;
@@ -41,6 +43,9 @@ const ALL_WRITE_BITS: u16 = 0o0_222;
 
 const MINIX_DIRECTORY_ENTRY_SIZE: usize = 16;
 const MINIX_DIRECTORY_NAME_LENGTH: usize = 14;
+const MINIX_BLOCK_SIZE: u64 = 1024;
+const POSIX_BLOCK_SIZE: u64 = 512;
+const MAX_RW_COUNT: usize = i32::MAX as usize;
 
 /// Default mode for newly created files: `rw-rw-rw-` (the kernel will mask
 /// this with the process `umask`).
@@ -121,7 +126,8 @@ impl Read for File {
         if buf.is_empty() {
             return Ok(0);
         }
-        match syscall::fs::read(self.fd, buf.as_mut_ptr(), buf.len() as u32) {
+        let count = core::cmp::min(buf.len(), MAX_RW_COUNT) as i32;
+        match syscall::fs::read(self.fd, buf.as_mut_ptr(), count) {
             Ok(count) => Ok(count as usize),
             Err(errno) => Err(Error::from(errno)),
         }
@@ -133,7 +139,8 @@ impl Write for File {
         if buf.is_empty() {
             return Ok(0);
         }
-        match syscall::fs::write(self.fd, buf.as_ptr(), buf.len() as u32) {
+        let count = core::cmp::min(buf.len(), MAX_RW_COUNT) as i32;
+        match syscall::fs::write(self.fd, buf.as_ptr(), count) {
             Ok(count) => Ok(count as usize),
             Err(errno) => Err(Error::from(errno)),
         }
@@ -145,10 +152,10 @@ impl Write for File {
 }
 
 impl Seek for File {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u32> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         let (offset, whence) = seek_parts(pos)?;
         match syscall::fs::lseek(self.fd, offset, whence) {
-            Ok(n) => Ok(n),
+            Ok(n) => Ok(u64::from(n)),
             Err(errno) => Err(Error::from(errno)),
         }
     }
@@ -395,8 +402,8 @@ pub struct Metadata {
 
 impl Metadata {
     /// Returns the size of the file, in bytes.
-    pub fn len(&self) -> u32 {
-        self.stat.st_size
+    pub fn len(&self) -> u64 {
+        self.stat.st_size as u64
     }
 
     /// Returns `true` if the file size is zero.
@@ -429,14 +436,127 @@ impl Metadata {
     }
 
     /// Returns the inode number. Equivalent to `std::os::unix::fs::MetadataExt::ino`.
-    pub fn ino(&self) -> u32 {
-        u32::from(self.stat.st_ino)
+    pub fn ino(&self) -> u64 {
+        u64::from(self.stat.st_ino)
+    }
+
+    /// Returns the raw mode bits. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::mode`.
+    pub fn mode(&self) -> u32 {
+        u32::from(self.stat.st_mode)
+    }
+
+    /// Returns the number of hard links. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::nlink`.
+    pub fn nlink(&self) -> u64 {
+        u64::from(self.stat.st_nlink)
+    }
+
+    /// Returns the user ID of the owner. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::uid`.
+    pub fn uid(&self) -> u32 {
+        u32::from(self.stat.st_uid)
+    }
+
+    /// Returns the group ID of the owner. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::gid`.
+    pub fn gid(&self) -> u32 {
+        u32::from(self.stat.st_gid)
     }
 
     /// Returns the device id holding this file. Equivalent to
     /// `std::os::unix::fs::MetadataExt::dev`.
-    pub fn dev(&self) -> u32 {
-        u32::from(self.stat.st_dev)
+    pub fn dev(&self) -> u64 {
+        u64::from(self.stat.st_dev)
+    }
+
+    /// Returns the device ID for special files. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::rdev`.
+    pub fn rdev(&self) -> u64 {
+        u64::from(self.stat.st_rdev)
+    }
+
+    /// Returns the total size of this file in bytes. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::size`.
+    pub fn size(&self) -> u64 {
+        self.len()
+    }
+
+    /// Returns the last access time as seconds since the Unix epoch.
+    /// Equivalent to `std::os::unix::fs::MetadataExt::atime`.
+    pub fn atime(&self) -> i64 {
+        i64::from(self.stat.st_atime)
+    }
+
+    /// Returns the last modification time as seconds since the Unix epoch.
+    /// Equivalent to `std::os::unix::fs::MetadataExt::mtime`.
+    pub fn mtime(&self) -> i64 {
+        i64::from(self.stat.st_mtime)
+    }
+
+    /// Returns the last metadata-change time as seconds since the Unix
+    /// epoch. Equivalent to `std::os::unix::fs::MetadataExt::ctime`.
+    pub fn ctime(&self) -> i64 {
+        i64::from(self.stat.st_ctime)
+    }
+
+    /// Returns the nanosecond portion of the last access time.
+    ///
+    /// Minix v1 stores timestamps with one-second precision, so this is
+    /// always zero.
+    pub fn atime_nsec(&self) -> i64 {
+        0
+    }
+
+    /// Returns the nanosecond portion of the last modification time.
+    ///
+    /// Minix v1 stores timestamps with one-second precision, so this is
+    /// always zero.
+    pub fn mtime_nsec(&self) -> i64 {
+        0
+    }
+
+    /// Returns the nanosecond portion of the last metadata-change time.
+    ///
+    /// Minix v1 stores timestamps with one-second precision, so this is
+    /// always zero.
+    pub fn ctime_nsec(&self) -> i64 {
+        0
+    }
+
+    /// Returns the preferred block size for filesystem I/O. Equivalent to
+    /// `std::os::unix::fs::MetadataExt::blksize`.
+    pub fn blksize(&self) -> u64 {
+        MINIX_BLOCK_SIZE
+    }
+
+    /// Returns the number of 512-byte blocks allocated to this file.
+    /// Equivalent to `std::os::unix::fs::MetadataExt::blocks`.
+    pub fn blocks(&self) -> u64 {
+        self.size().div_ceil(POSIX_BLOCK_SIZE)
+    }
+
+    /// Returns the last modification time.
+    ///
+    /// Mirrors [`std::fs::Metadata::modified`].
+    pub fn modified(&self) -> Result<SystemTime> {
+        Ok(system_time_from_unix_seconds(self.stat.st_mtime))
+    }
+
+    /// Returns the last access time.
+    ///
+    /// Mirrors [`std::fs::Metadata::accessed`].
+    pub fn accessed(&self) -> Result<SystemTime> {
+        Ok(system_time_from_unix_seconds(self.stat.st_atime))
+    }
+
+    /// Returns the creation time listed in this metadata.
+    ///
+    /// This filesystem does not store a birth time. The Unix `ctime` field
+    /// is a metadata-change time, not a creation time, so this returns
+    /// [`ErrorKind::Unsupported`] instead of reporting misleading data.
+    pub fn created(&self) -> Result<SystemTime> {
+        Err(Error::from(ErrorKind::Unsupported))
     }
 }
 
@@ -529,6 +649,11 @@ impl FileType {
     pub fn is_fifo(&self) -> bool {
         self.mode == S_IFIFO
     }
+
+    /// Always returns `false`; this kernel has no Unix-domain sockets.
+    pub fn is_socket(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +663,7 @@ impl FileType {
 /// Reads the entire contents of a file into a bytes vector.
 pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
     let mut file = File::open(path)?;
-    let initial = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+    let initial = file.metadata().map(|m| len_capacity(m.len())).unwrap_or(0);
     let mut bytes = Vec::with_capacity(initial);
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
@@ -547,10 +672,39 @@ pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>> {
 /// Reads the entire contents of a file into a string.
 pub fn read_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
     let mut file = File::open(path)?;
-    let initial = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+    let initial = file.metadata().map(|m| len_capacity(m.len())).unwrap_or(0);
     let mut buf = String::with_capacity(initial);
     file.read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+/// Copies the contents and permissions of one regular file to another.
+///
+/// Mirrors [`std::fs::copy`].
+pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> Result<u64> {
+    let metadata = metadata(from.as_ref())?;
+    if metadata.is_dir() {
+        return Err(Error::from(ErrorKind::IsADirectory));
+    }
+
+    let mut reader = File::open(from.as_ref())?;
+    let mut writer = File::create(to.as_ref())?;
+    let mut buf = [0u8; 8 * 1024];
+    let mut written_total = 0u64;
+
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n])?;
+        written_total = written_total
+            .checked_add(n as u64)
+            .ok_or_else(|| Error::new(ErrorKind::Other, "copied byte count overflowed"))?;
+    }
+    writer.flush()?;
+    set_permissions(to, metadata.permissions())?;
+    Ok(written_total)
 }
 
 /// Returns an iterator over the entries within a directory.
@@ -570,7 +724,7 @@ pub fn read_dir<P: AsRef<Path>>(path: P) -> Result<ReadDir> {
         return Err(Error::from(ErrorKind::NotADirectory));
     }
 
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    let mut bytes = Vec::with_capacity(len_capacity(metadata.len()));
     file.read_to_end(&mut bytes)?;
     let entries = decode_directory_entries(root.clone(), &bytes)?;
 
@@ -640,6 +794,70 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
         .map_err(Error::from)
 }
 
+/// Recursively creates a directory and all of its missing parents.
+///
+/// Mirrors [`std::fs::create_dir_all`]. Existing directory components are
+/// accepted.
+pub fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path = path.as_ref();
+    if path.is_empty() {
+        return Ok(());
+    }
+    if metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+        return Ok(());
+    }
+
+    let mut current = crate::path::PathBuf::new();
+    for component in path.components() {
+        let raw = component.as_str();
+        if raw == "." {
+            continue;
+        }
+        current.push(raw);
+        match create_dir(current.as_path()) {
+            Ok(()) => {}
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                if !metadata(current.as_path())
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
+                    return Err(Error::from(ErrorKind::AlreadyExists));
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+/// Recursively removes a directory and all of its contents.
+///
+/// Mirrors [`std::fs::remove_dir_all`].
+pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path = path.as_ref();
+    let root_metadata = metadata(path)?;
+    if !root_metadata.is_dir() {
+        return Err(Error::from(ErrorKind::NotADirectory));
+    }
+
+    let mut children = Vec::new();
+    for item in read_dir(path)? {
+        children.push(item?.path());
+    }
+    children.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
+    for child in children {
+        let child_metadata = metadata(child.as_path())?;
+        if child_metadata.is_dir() {
+            remove_dir_all(child.as_path())?;
+        } else {
+            remove_file(child.as_path())?;
+        }
+    }
+
+    remove_dir(path)
+}
+
 /// Changes the current working directory to the specified path.
 ///
 /// This mirrors [`std::env::set_current_dir`], but lives in [`crate::fs`]
@@ -681,9 +899,20 @@ fn empty_stat() -> Stat {
     unsafe { core::mem::zeroed() }
 }
 
+fn system_time_from_unix_seconds(secs: i32) -> SystemTime {
+    if secs >= 0 {
+        UNIX_EPOCH + Duration::from_secs(secs as u64)
+    } else {
+        UNIX_EPOCH - Duration::from_secs(u64::from(secs.unsigned_abs()))
+    }
+}
+
+fn len_capacity(len: u64) -> usize {
+    usize::try_from(len).unwrap_or(0)
+}
+
 fn seek_parts(pos: SeekFrom) -> Result<(i32, Whence)> {
-    // This library mirrors `std::io::Seek` structurally, but exposes 32-bit
-    // offsets because the target kernel and filesystem are 32-bit. The
+    // This library mirrors `std::io::Seek` publicly, while the kernel
     // syscall ABI itself uses a signed 32-bit offset word:
     //
     // +------------------+-----------------------------+
@@ -701,8 +930,12 @@ fn seek_parts(pos: SeekFrom) -> Result<(i32, Whence)> {
         SeekFrom::Start(offset) => i32::try_from(offset)
             .map(|offset| (offset, Whence::Set))
             .map_err(|_| invalid()),
-        SeekFrom::Current(offset) => Ok((offset, Whence::Current)),
-        SeekFrom::End(offset) => Ok((offset, Whence::End)),
+        SeekFrom::Current(offset) => i32::try_from(offset)
+            .map(|offset| (offset, Whence::Current))
+            .map_err(|_| invalid()),
+        SeekFrom::End(offset) => i32::try_from(offset)
+            .map(|offset| (offset, Whence::End))
+            .map_err(|_| invalid()),
     }
 }
 

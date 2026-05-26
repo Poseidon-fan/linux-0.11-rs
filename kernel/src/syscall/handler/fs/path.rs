@@ -301,7 +301,7 @@ define_syscall_handler!(
 
         let (actime, modtime) = if times_ptr != 0 {
             let times = uaccess::read_struct(times_ptr as *const TimeUpdate);
-            (times.access_time, times.modification_time)
+            (times.access_time as u32, times.modification_time as u32)
         } else {
             let now = time::current_time();
             (now, now)

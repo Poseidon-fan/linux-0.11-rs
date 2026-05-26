@@ -24,6 +24,8 @@ use core::{cell::UnsafeCell, fmt};
 use super::{Error, ErrorKind, LineWriter, Read, Result, Write};
 use crate::syscall;
 
+const MAX_RW_COUNT: usize = i32::MAX as usize;
+
 /// A handle to the standard input of the current process.
 ///
 /// Construct with [`stdin`].
@@ -197,7 +199,8 @@ fn read_fd(fd: u32, buf: &mut [u8]) -> Result<usize> {
     if buf.is_empty() {
         return Ok(0);
     }
-    match syscall::fs::read(fd, buf.as_mut_ptr(), buf.len() as u32) {
+    let count = core::cmp::min(buf.len(), MAX_RW_COUNT) as i32;
+    match syscall::fs::read(fd, buf.as_mut_ptr(), count) {
         Ok(count) => Ok(count as usize),
         Err(errno) => Err(Error::from(errno)),
     }
@@ -207,7 +210,8 @@ fn write_fd(fd: u32, buf: &[u8]) -> Result<usize> {
     if buf.is_empty() {
         return Ok(0);
     }
-    match syscall::fs::write(fd, buf.as_ptr(), buf.len() as u32) {
+    let count = core::cmp::min(buf.len(), MAX_RW_COUNT) as i32;
+    match syscall::fs::write(fd, buf.as_ptr(), count) {
         Ok(count) => Ok(count as usize),
         Err(errno) => Err(Error::from(errno)),
     }

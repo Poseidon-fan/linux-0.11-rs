@@ -326,7 +326,7 @@ fn write_padding(out: &mut impl Write, mut count: usize) -> user_lib::io::Result
 }
 
 /// Estimates the block count used by `ls -l`'s total line.
-fn total_blocks(entries: &[ListingEntry]) -> u32 {
+fn total_blocks(entries: &[ListingEntry]) -> u64 {
     entries
         .iter()
         .map(|entry| (entry.metadata.len() + 1023) / 1024)
@@ -334,7 +334,7 @@ fn total_blocks(entries: &[ListingEntry]) -> u32 {
 }
 
 /// Returns the number of decimal digits needed to print `value`.
-fn decimal_width(mut value: u32) -> usize {
+fn decimal_width(mut value: u64) -> usize {
     let mut width = 1;
     while value >= 10 {
         value /= 10;

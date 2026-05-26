@@ -134,23 +134,23 @@ pub struct Stat {
     pub st_uid: u16,
     pub st_gid: u8,
     pub st_rdev: u16,
-    pub st_size: u32,
-    pub st_atime: u32,
-    pub st_mtime: u32,
-    pub st_ctime: u32,
+    pub st_size: i32,
+    pub st_atime: i32,
+    pub st_mtime: i32,
+    pub st_ctime: i32,
 }
 
 /// Time values for `utime`, matching the POSIX `struct utimbuf` ABI.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TimeUpdate {
-    pub access_time: u32,
-    pub modification_time: u32,
+    pub access_time: i32,
+    pub modification_time: i32,
 }
 
 use_syscall!(Syscall::Open   => open(path: *const u8, flags: OpenFlags, mode: u32) -> u32);
-use_syscall!(Syscall::Read   => read(fd: u32, buf: *mut u8, count: u32) -> u32);
-use_syscall!(Syscall::Write  => write(fd: u32, buf: *const u8, count: u32) -> u32);
+use_syscall!(Syscall::Read   => read(fd: u32, buf: *mut u8, count: i32) -> u32);
+use_syscall!(Syscall::Write  => write(fd: u32, buf: *const u8, count: i32) -> u32);
 use_syscall!(Syscall::Close  => close(fd: u32) -> u32);
 use_syscall!(Syscall::Creat  => creat(path: *const u8, mode: u32) -> u32);
 use_syscall!(Syscall::Link   => link(old_path: *const u8, new_path: *const u8) -> u32);
