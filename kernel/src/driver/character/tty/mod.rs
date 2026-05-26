@@ -84,7 +84,15 @@ pub fn clear_foreground_group(channel: usize) {
     }
 }
 
+/// Return whether a TTY has pending output for its hardware backend.
+pub fn has_output(channel: usize) -> bool {
+    device(channel)
+        .map(|tty| tty.state.exclusive(|state| !state.output.is_empty()))
+        .unwrap_or(false)
+}
+
 type FlushOutputFn = fn(usize);
+type ConfigureFn = fn(usize, Termios);
 
 const NO_FOREGROUND_GROUP: i32 = 0;
 const WRITE_WAKE_THRESHOLD: usize = 128;
@@ -98,15 +106,49 @@ const FLUSH_INPUT: u32 = 0;
 const FLUSH_OUTPUT: u32 = 1;
 const FLUSH_BOTH: u32 = 2;
 
+#[cfg(feature = "serial-console")]
+const COM1_TERMIOS: Termios = {
+    use user_lib::syscall::tty::LocalMode;
+    let mut t = Termios::serial_default();
+    t.local_mode = LocalMode::ISIG
+        .union(LocalMode::ICANON)
+        .union(LocalMode::ECHO)
+        .union(LocalMode::ECHOCTL)
+        .union(LocalMode::ECHOKE);
+    t
+};
+
 static DEVICES: [TtyDevice; DEVICE_COUNT] = [
-    TtyDevice::new(Termios::console_default(), super::console::flush_output),
-    TtyDevice::new(Termios::serial_default(), nop_flush),
-    TtyDevice::new(Termios::serial_default(), nop_flush),
+    TtyDevice::new(
+        Termios::console_default(),
+        super::console::flush_output,
+        nop_configure,
+    ),
+    TtyDevice::new(
+        {
+            #[cfg(feature = "serial-console")]
+            {
+                COM1_TERMIOS
+            }
+            #[cfg(not(feature = "serial-console"))]
+            {
+                Termios::serial_default()
+            }
+        },
+        super::serial::flush_output,
+        super::serial::configure,
+    ),
+    TtyDevice::new(
+        Termios::serial_default(),
+        super::serial::flush_output,
+        super::serial::configure,
+    ),
 ];
 
 struct TtyDevice {
     state: KernelCell<TtyState>,
     backend_flush: FlushOutputFn,
+    backend_configure: ConfigureFn,
     cooked_wait: WaitQueue,
     output_wait: WaitQueue,
 }
@@ -122,7 +164,7 @@ struct TtyState {
     output_cr_pending: bool,
 }
 
-fn nop_flush(_channel: usize) {}
+fn nop_configure(_channel: usize, _termios: Termios) {}
 
 fn device(channel: usize) -> Result<&'static TtyDevice> {
     DEVICES.get(channel).ok_or(Errno::NODEV)
@@ -146,7 +188,11 @@ fn signal_foreground_group(foreground_group: i32, signal_mask: u32) {
 }
 
 impl TtyDevice {
-    const fn new(termios: Termios, backend_flush: FlushOutputFn) -> Self {
+    const fn new(
+        termios: Termios,
+        backend_flush: FlushOutputFn,
+        backend_configure: ConfigureFn,
+    ) -> Self {
         Self {
             state: KernelCell::new(TtyState {
                 termios,
@@ -159,6 +205,7 @@ impl TtyDevice {
                 output_cr_pending: false,
             }),
             backend_flush,
+            backend_configure,
             cooked_wait: WaitQueue::new(),
             output_wait: WaitQueue::new(),
         }
@@ -355,6 +402,7 @@ impl TtyDevice {
     fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termios = uaccess::read_struct(user_ptr as *const Termios);
         self.state.exclusive(|state| state.termios = termios);
+        (self.backend_configure)(self.channel(), termios);
         Ok(0)
     }
 
@@ -367,9 +415,19 @@ impl TtyDevice {
 
     fn set_termio_from_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termio = uaccess::read_struct(user_ptr as *const Termio);
-        self.state
-            .exclusive(|state| state.termios.apply_termio(termio));
+        let termios = self.state.exclusive(|state| {
+            state.termios.apply_termio(termio);
+            state.termios
+        });
+        (self.backend_configure)(self.channel(), termios);
         Ok(0)
+    }
+
+    fn channel(&'static self) -> usize {
+        DEVICES
+            .iter()
+            .position(|device| core::ptr::addr_eq(device, self))
+            .unwrap_or(0)
     }
 
     fn flush_for_ioctl(&'static self, arg: u32) -> Result<u32> {

@@ -26,7 +26,7 @@ mod task;
 mod time;
 mod trap;
 
-use core::arch::global_asm;
+use core::{arch::global_asm, ffi::CStr};
 
 use crate::driver::DevNum;
 
@@ -61,6 +61,7 @@ pub extern "C" fn rust_main() -> ! {
     trap::init();
     time::init();
     task::init();
+    driver::character::serial::init();
     driver::character::console::init();
     driver::block::hd::init();
     fs::buffer::init(buffer_memory_end);
@@ -91,9 +92,15 @@ fn user_init() -> ! {
     const DRIVE_INFO_ADDR: *const u8 = 0x90080 as *const u8;
     syscall::process::setup(DRIVE_INFO_ADDR).unwrap();
 
-    // Open /dev/tty0 as fd 0 (stdin), then dup to fd 1 (stdout) and fd 2 (stderr).
+    // Which TTY device acts as the system console.
+    #[cfg(not(feature = "serial-console"))]
+    const CONSOLE_TTY: &CStr = c"/dev/tty0";
+    #[cfg(feature = "serial-console")]
+    const CONSOLE_TTY: &CStr = c"/dev/tty1";
+
+    // Open console TTY as fd 0 (stdin), then dup to fd 1 (stdout) and fd 2 (stderr).
     syscall::fs::open(
-        c"/dev/tty0".as_ptr().cast(),
+        CONSOLE_TTY.as_ptr().cast(),
         syscall::fs::OpenFlags::from_raw(syscall::fs::AccessMode::ReadWrite as u32),
         0,
     )
@@ -112,18 +119,24 @@ fn user_init() -> ! {
 
     // --- Phase 2: respawn interactive shells forever ---
     loop {
-        let stdin = match File::open("/dev/tty0") {
+        let stdin = match File::open(CONSOLE_TTY.to_str().unwrap()) {
             Ok(f) => f,
             Err(_) => {
-                user_lib::println!("Failed to open /dev/tty0 in init");
+                user_lib::println!("Failed to open {} in init", CONSOLE_TTY.to_str().unwrap());
                 continue;
             }
         };
-        let stdout = match OpenOptions::new().write(true).open("/dev/tty0") {
+        let stdout = match OpenOptions::new()
+            .write(true)
+            .open(CONSOLE_TTY.to_str().unwrap())
+        {
             Ok(f) => f,
             Err(_) => continue,
         };
-        let stderr = match OpenOptions::new().write(true).open("/dev/tty0") {
+        let stderr = match OpenOptions::new()
+            .write(true)
+            .open(CONSOLE_TTY.to_str().unwrap())
+        {
             Ok(f) => f,
             Err(_) => continue,
         };

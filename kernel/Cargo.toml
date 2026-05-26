@@ -10,6 +10,10 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+default = []
+serial-console = []
+
 [dependencies]
 user_lib = { path = "../user_lib", default-features = false }
 bitflags = "2.10.0"

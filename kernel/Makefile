@@ -50,6 +50,14 @@ Image-%: $(BOOT_DIR)/bootsect $(BOOT_DIR)/setup
 	@$(OBJCOPY) $(OBJCOPY_KERNEL_FLAGS) $(SYSTEM_BINARY) $(KERNEL_IMAGE)
 	@bash $(BUILD_SCRIPT) $(BOOTSECT_BINARY) $(SETUP_BINARY) $(KERNEL_IMAGE) Image-$*
 
+Image-console-%: $(BOOT_DIR)/bootsect $(BOOT_DIR)/setup
+	@echo "Building kernel ($* + serial-console)..."
+	@cargo build $(if $(filter $*,release),--release,) --features serial-console
+	@cp $(KERNEL_BINARY_$*) $(SYSTEM_BINARY)
+	@$(STRIP) $(SYSTEM_BINARY)
+	@$(OBJCOPY) $(OBJCOPY_KERNEL_FLAGS) $(SYSTEM_BINARY) $(KERNEL_IMAGE)
+	@bash $(BUILD_SCRIPT) $(BOOTSECT_BINARY) $(SETUP_BINARY) $(KERNEL_IMAGE) Image-console-$*
+
 $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 	@echo "Building $@..."
 	@mkdir -p $(TARGET_DIR)
@@ -60,8 +68,17 @@ $(BOOT_DIR)/%: $(SRC_DIR)/boot/%.s
 run: Image-$(RUN_MODE)
 	@qemu-system-i386 -m 16M -boot a -drive file=Image-$(RUN_MODE),format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -display curses
 
+# Headless: serial console over stdio.  Built with --features serial-console
+# so init opens /dev/tty1 (COM1) instead of /dev/tty0 (VGA).
+run-console: Image-console-$(RUN_MODE)
+	@qemu-system-i386 -m 16M -boot a -drive file=Image-console-$(RUN_MODE),format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -nographic
+
 dbg: Image-debug
 	@echo "Starting QEMU"&qemu-system-i386 -m 16M -boot a -drive file=Image-debug,format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -display curses -s -S
+
+# Headless debug: serial console over stdio + GDB stub on :1234.
+dbg-console: Image-console-debug
+	@echo "Starting QEMU (waiting for GDB on :1234)"&qemu-system-i386 -m 16M -boot a -drive file=Image-console-debug,format=raw,if=floppy -drive file=$(HDA_IMG),format=raw,if=ide,index=0 -nographic -s -S
 
 clean:
 	@echo "Cleaning..."

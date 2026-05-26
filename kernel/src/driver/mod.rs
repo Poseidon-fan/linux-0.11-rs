@@ -4,7 +4,7 @@
 //! the global root device selector read during boot.
 //!
 //! - [`block`] — block device request layer and ATA hard disk driver.
-//! - [`character`] — character device drivers (console, TTY).
+//! - [`character`] — character device drivers (console, serial, TTY).
 
 use core::sync::atomic::{AtomicU16, Ordering};
 
