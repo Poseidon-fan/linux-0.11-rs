@@ -194,6 +194,13 @@ impl Inode {
     }
 
     /// Release all data blocks and set size to 0.
+    ///
+    /// Only meaningful for regular files and directories: their
+    /// `direct_zones` actually point at data blocks. For special files
+    /// (block/char device, FIFO, ...) `direct_zones[0]` carries the
+    /// device number rather than a zone index, so freeing those entries
+    /// would corrupt the zone bitmap (or trip its range assertion).
+    /// Symlinks under this implementation have no data blocks either.
     pub fn truncate(&self) {
         let Some(fs) = self.file_system.upgrade() else {
             return;
@@ -202,6 +209,13 @@ impl Inode {
         let dev = self.id.device;
         let mut inner = self.inner.lock();
         let disk = &mut inner.disk_inode;
+
+        if !matches!(
+            disk.mode.file_type(),
+            InodeType::Regular | InodeType::Directory
+        ) {
+            return;
+        }
 
         for zone in &mut disk.direct_zones {
             fs.free_zone(*zone);

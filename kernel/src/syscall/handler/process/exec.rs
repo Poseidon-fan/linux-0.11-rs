@@ -413,7 +413,13 @@ define_syscall_handler!(
 
         let slot = task::current_slot();
 
-        let sp = task::with_current(|inner| {
+        // Install the new address space and per-task fields under a
+        // `with_current` borrow. Do **not** write user memory inside this
+        // closure: a not-present page in the fresh stack would trap into
+        // the page-fault handler, which may call `buffer::read` →
+        // `Mutex::lock` and that's forbidden while a `KernelCell` borrow
+        // is held.
+        let args_start = task::with_current(|inner| {
             // Replace executable inode.
             inner.fs.executable_inode = Some(inode);
 
@@ -450,21 +456,27 @@ define_syscall_handler!(
 
             inner.memory_space = Some(new_space);
 
-            let args_start = arg_pages.write_cursor as u32 + TASK_LINEAR_SIZE
-                - (MAX_ARG_PAGES as u32 * PAGE_SIZE as u32);
-            let sp = create_user_tables(args_start, final_argc, envc);
-
             inner.mem_layout.end_code = header.a_text;
             inner.mem_layout.end_data = header.a_text + header.a_data;
             inner.mem_layout.brk = header.a_text + header.a_data + header.a_bss;
-            inner.mem_layout.start_stack = sp & 0xFFFFF000;
 
             inner.identity.euid = e_uid;
             inner.identity.egid = e_gid;
             inner.identity.suid = e_uid;
             inner.identity.sgid = e_gid;
 
-            sp
+            arg_pages.write_cursor as u32 + TASK_LINEAR_SIZE
+                - (MAX_ARG_PAGES as u32 * PAGE_SIZE as u32)
+        });
+
+        // Build argv/envp on the user stack. `uaccess::write_u32` may
+        // demand-page user memory, which must happen *outside* any
+        // `KernelCell` borrow (see comment above).
+        let sp = create_user_tables(args_start, final_argc, envc);
+
+        // Record the resulting stack pointer in the task's mm layout.
+        task::with_current(|inner| {
+            inner.mem_layout.start_stack = sp & 0xFFFFF000;
         });
 
         // Zero the partial page at the end of text+data (BSS alignment).

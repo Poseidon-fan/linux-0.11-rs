@@ -1,13 +1,30 @@
 //! Kernel panic handler and unknown-interrupt fallback.
 
-use core::{hint::spin_loop, panic::PanicInfo};
+use core::{
+    hint::spin_loop,
+    panic::PanicInfo,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use log::error;
 
 use crate::{fs, println, task};
 
+/// Set to `true` the first time the panic handler runs, so a panic raised
+/// while the handler itself is unwinding does not spiral into infinite
+/// recursion.
+static IN_PANIC: AtomicBool = AtomicBool::new(false);
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // If we're already inside the panic handler, don't try to print again
+    // (the inner panic was triggered by the cleanup code). Just halt.
+    if IN_PANIC.swap(true, Ordering::Relaxed) {
+        loop {
+            spin_loop();
+        }
+    }
+
     match info.location() {
         Some(location) => {
             println!(
@@ -21,6 +38,7 @@ fn panic(info: &PanicInfo) -> ! {
             println!("Kernel panic: {}", info.message());
         }
     }
+
     match task::try_current_slot() {
         Some(0) => {
             println!("In swapper task - not syncing");

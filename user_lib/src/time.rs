@@ -357,8 +357,20 @@ impl fmt::Display for SystemTimeError {
 impl error::Error for SystemTimeError {}
 
 // ---------------------------------------------------------------------------
-// sleep
+// Free functions
 // ---------------------------------------------------------------------------
+
+/// Returns the time elapsed since the kernel booted.
+///
+/// This is project-specific — `std` does not provide a direct accessor
+/// since it cannot assume the underlying monotonic clock has a
+/// well-defined epoch. We can, because the kernel's `times(2)` jiffy
+/// counter is reset to zero at boot.
+#[must_use]
+pub fn uptime() -> Duration {
+    let jiffies = syscall::process::times(core::ptr::null_mut()).unwrap_or(0);
+    Duration::from_nanos(u64::from(jiffies) * NANOS_PER_TICK)
+}
 
 /// Blocks the current process for at least `duration`.
 ///
