@@ -82,6 +82,9 @@ impl CatState {
     }
 
     fn cat_reader<R: Read>(&mut self, reader: &mut R) -> io::Result<()> {
+        if !self.number_lines {
+            return io::copy(reader, &mut io::stdout()).map(|_| ());
+        }
         let mut buf = [0u8; 1024];
         let mut stdout = io::stdout();
         loop {
@@ -89,11 +92,7 @@ impl CatState {
             if n == 0 {
                 return Ok(());
             }
-            if self.number_lines {
-                self.write_numbered(&mut stdout, &buf[..n])?;
-            } else {
-                stdout.write_all(&buf[..n])?;
-            }
+            self.write_numbered(&mut stdout, &buf[..n])?;
         }
     }
 

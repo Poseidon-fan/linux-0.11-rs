@@ -931,6 +931,30 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> Result
         .map_err(Error::from)
 }
 
+/// Changes the owner and group of a file or directory.
+///
+/// `None` values for `uid` or `gid` leave that field unchanged.
+///
+/// This is the local equivalent of [`std::os::unix::fs::chown`]; because
+/// this library targets a single Unix-like kernel, it lives directly in
+/// [`crate::fs`] rather than in a platform-specific module.
+///
+/// # Notes
+///
+/// - The caller must hold appropriate privileges (usually root) to change
+///   the owner.
+/// - Changing the owner clears the setuid and setgid bits.
+pub fn chown<P: AsRef<Path>>(path: P, uid: Option<u32>, gid: Option<u32>) -> Result<()> {
+    let path_c = path_cstring(path.as_ref())?;
+    syscall::fs::chown(
+        path_c.as_ptr().cast(),
+        uid.unwrap_or(u32::MAX),
+        gid.unwrap_or(u32::MAX),
+    )
+    .map(|_| ())
+    .map_err(Error::from)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

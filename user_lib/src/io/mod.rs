@@ -9,23 +9,26 @@
 //! Line-oriented input is provided through the [`BufRead`] trait and the
 //! [`BufReader`] adapter, with [`Lines`] and [`Split`] iterators built on
 //! top.
-//!
-//! Higher-level adapters (`Cursor`, `Bytes`) are not yet provided.
-
 mod buffered;
+mod copy;
+mod cursor;
 mod error;
 mod stdio;
+mod util;
 
 use alloc::{string::String, vec::Vec};
 use core::{cmp, fmt};
 
 pub use buffered::{BufReader, BufWriter, LineWriter, Lines, Split};
+pub use copy::copy;
+pub use cursor::Cursor;
 pub(crate) use error::const_io_error;
 pub use error::{Error, ErrorKind, Result};
 pub(crate) use stdio::flush_stdout;
 #[doc(hidden)]
 pub use stdio::{_eprint, _print};
 pub use stdio::{Stderr, Stdin, Stdout, stderr, stdin, stdout};
+pub use util::{Empty, Repeat, Sink, empty, repeat, sink};
 
 const DEFAULT_BUF_SIZE: usize = 1024;
 

@@ -110,18 +110,8 @@ fn head_reader<R: Read>(reader: R, mode: Mode) -> Result<()> {
     let mut stdout = io::stdout();
     match mode {
         Mode::Bytes(limit) => {
-            let mut reader = reader;
-            let mut buf = [0u8; 1024];
-            let mut remaining = limit;
-            while remaining > 0 {
-                let want = core::cmp::min(remaining, buf.len() as u32) as usize;
-                let n = reader.read(&mut buf[..want])?;
-                if n == 0 {
-                    break;
-                }
-                stdout.write_all(&buf[..n])?;
-                remaining -= n as u32;
-            }
+            let mut taken = reader.take(u64::from(limit));
+            io::copy(&mut taken, &mut stdout)?;
         }
         Mode::Lines(limit) => {
             if limit == 0 {
