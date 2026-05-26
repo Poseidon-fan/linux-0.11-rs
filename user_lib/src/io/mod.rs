@@ -6,8 +6,11 @@
 //! [`Stdin`], [`Stdout`], and [`Stderr`] handles produced by [`stdin`],
 //! [`stdout`], and [`stderr`].
 //!
-//! Higher-level adapters (`BufReader`, `BufWriter`, `Cursor`, `Lines`,
-//! `Bytes`) are not yet provided.
+//! Line-oriented input is provided through the [`BufRead`] trait and the
+//! [`BufReader`] adapter, with [`Lines`] and [`Split`] iterators built on
+//! top.
+//!
+//! Higher-level adapters (`Cursor`, `Bytes`) are not yet provided.
 
 mod buffered;
 mod error;
@@ -16,7 +19,7 @@ mod stdio;
 use alloc::{string::String, vec::Vec};
 use core::{cmp, fmt};
 
-pub use buffered::{BufWriter, LineWriter};
+pub use buffered::{BufReader, BufWriter, LineWriter, Lines, Split};
 pub(crate) use error::const_io_error;
 pub use error::{Error, ErrorKind, Result};
 pub(crate) use stdio::flush_stdout;
@@ -216,6 +219,120 @@ pub trait Seek {
     }
 }
 
+/// A `BufRead` is a type of `Reader` which has an internal buffer, allowing
+/// it to perform extra ways of reading.
+///
+/// Counterpart to [`std::io::BufRead`]. Implementors provide [`fill_buf`]
+/// (return the bytes currently available without doing more I/O than
+/// necessary) and [`consume`] (advance past `amt` bytes of the previously
+/// returned slice). All line / delimiter helpers are built on top.
+///
+/// [`fill_buf`]: BufRead::fill_buf
+/// [`consume`]: BufRead::consume
+pub trait BufRead: Read {
+    /// Returns the contents of the internal buffer, filling it with more
+    /// data from the inner reader if it is empty.
+    fn fill_buf(&mut self) -> Result<&[u8]>;
+
+    /// Marks the first `amt` bytes of the internal buffer as consumed so
+    /// they are no longer returned by [`fill_buf`] / [`read`].
+    ///
+    /// [`fill_buf`]: BufRead::fill_buf
+    /// [`read`]: Read::read
+    fn consume(&mut self, amt: usize);
+
+    /// Returns `true` if the internal buffer has any pending data, fetching
+    /// more from the inner reader if needed.
+    fn has_data_left(&mut self) -> Result<bool> {
+        self.fill_buf().map(|b| !b.is_empty())
+    }
+
+    /// Reads bytes until `delim` is found, appending them (including the
+    /// delimiter) to `buf`. Returns the total number of bytes appended.
+    /// On EOF returns `Ok(0)` without modifying `buf` beyond what had
+    /// already been appended.
+    fn read_until(&mut self, delim: u8, buf: &mut Vec<u8>) -> Result<usize> {
+        default_read_until(self, delim, buf)
+    }
+
+    /// Reads bytes until `delim` is found, discarding them. Returns the
+    /// total number of bytes discarded (including the delimiter).
+    fn skip_until(&mut self, delim: u8) -> Result<usize> {
+        let mut total = 0;
+        loop {
+            let (done, used) = {
+                let available = match self.fill_buf() {
+                    Ok(slice) => slice,
+                    Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e),
+                };
+                match available.iter().position(|&b| b == delim) {
+                    Some(i) => (true, i + 1),
+                    None => (false, available.len()),
+                }
+            };
+            self.consume(used);
+            total += used;
+            if done || used == 0 {
+                return Ok(total);
+            }
+        }
+    }
+
+    /// Reads bytes from the underlying reader until a newline (the `0x0A`
+    /// byte) is found, appending them to `buf` including the newline. The
+    /// trailing newline is *not* stripped — callers usually strip it
+    /// themselves.
+    ///
+    /// Returns `Ok(0)` at EOF. Returns [`ErrorKind::InvalidData`] if the
+    /// appended bytes are not valid UTF-8; on that error `buf` is rolled
+    /// back to its original length.
+    fn read_line(&mut self, buf: &mut String) -> Result<usize> {
+        // SAFETY: we hold the borrow on `buf.as_mut_vec()` only while
+        // appending raw bytes, and we either commit (with a UTF-8 check)
+        // or roll back before returning so the `String` invariant holds
+        // again before any user code observes it.
+        let start = buf.len();
+        let mut bytes = core::mem::take(buf).into_bytes();
+        let appended = self.read_until(b'\n', &mut bytes)?;
+        match core::str::from_utf8(&bytes[start..]) {
+            Ok(_) => {
+                // SAFETY: prefix was already valid UTF-8 by `String`
+                // invariant, and the newly appended slice was just
+                // validated above.
+                *buf = unsafe { String::from_utf8_unchecked(bytes) };
+                Ok(appended)
+            }
+            Err(_) => {
+                bytes.truncate(start);
+                // SAFETY: bytes before `start` are unchanged from the
+                // original `String`, so the prefix is still valid UTF-8.
+                *buf = unsafe { String::from_utf8_unchecked(bytes) };
+                Err(const_io_error(
+                    ErrorKind::InvalidData,
+                    "stream did not contain valid UTF-8",
+                ))
+            }
+        }
+    }
+
+    /// Returns an iterator over the contents of this reader split on the
+    /// byte `delim`.
+    fn split(self, delim: u8) -> Split<Self>
+    where Self: Sized {
+        Split::new(self, delim)
+    }
+
+    /// Returns an iterator over the lines of this reader.
+    ///
+    /// Each yielded `String` has its trailing `\n` (and preceding `\r` if
+    /// present) stripped, matching [`std::io::Lines`].
+    fn lines(self) -> Lines<Self>
+    where Self: Sized {
+        Lines::new(self)
+    }
+}
+
 /// Reader adaptor that limits the number of bytes read from the underlying
 /// reader.
 ///
@@ -277,5 +394,90 @@ fn default_read_to_end<R: Read + ?Sized>(reader: &mut R, buf: &mut Vec<u8>) -> R
             Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         }
+    }
+}
+
+/// Default implementation of `read_until` shared by `BufRead` and
+/// `BufReader`.
+fn default_read_until<R: BufRead + ?Sized>(
+    reader: &mut R,
+    delim: u8,
+    buf: &mut Vec<u8>,
+) -> Result<usize> {
+    let mut total = 0;
+    loop {
+        let (done, used) = {
+            let available = match reader.fill_buf() {
+                Ok(slice) => slice,
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            match available.iter().position(|&b| b == delim) {
+                Some(i) => {
+                    buf.extend_from_slice(&available[..=i]);
+                    (true, i + 1)
+                }
+                None => {
+                    buf.extend_from_slice(available);
+                    (false, available.len())
+                }
+            }
+        };
+        reader.consume(used);
+        total += used;
+        if done || used == 0 {
+            return Ok(total);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// In-memory adapter impls
+// ---------------------------------------------------------------------------
+
+impl Read for &[u8] {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let amt = cmp::min(buf.len(), self.len());
+        let (head, tail) = self.split_at(amt);
+        if amt == 1 {
+            buf[0] = head[0];
+        } else {
+            buf[..amt].copy_from_slice(head);
+        }
+        *self = tail;
+        Ok(amt)
+    }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
+        buf.extend_from_slice(self);
+        let amt = self.len();
+        *self = &[];
+        Ok(amt)
+    }
+}
+
+impl BufRead for &[u8] {
+    #[inline]
+    fn fill_buf(&mut self) -> Result<&[u8]> {
+        Ok(*self)
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) {
+        *self = &self[cmp::min(amt, self.len())..];
+    }
+}
+
+impl Write for &mut [u8] {
+    fn write(&mut self, data: &[u8]) -> Result<usize> {
+        let amt = cmp::min(data.len(), self.len());
+        let (head, tail) = core::mem::take(self).split_at_mut(amt);
+        head.copy_from_slice(&data[..amt]);
+        *self = tail;
+        Ok(amt)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
     }
 }

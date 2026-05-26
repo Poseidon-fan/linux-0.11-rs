@@ -11,7 +11,7 @@ use anyhow::Result;
 use user_lib::{
     eprintln,
     fs::File,
-    io::{self, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     process::ExitCode,
 };
 use user_program::cli::cli_args;
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     let mut had_error = false;
 
     if cli.files.is_empty() {
-        if let Err(err) = head_reader(&mut io::stdin(), mode) {
+        if let Err(err) = head_reader(io::stdin(), mode) {
             eprintln!("head: {:#}", err);
             had_error = true;
         }
@@ -69,7 +69,7 @@ fn main() -> ExitCode {
     let mut first_emitted = false;
     for path in &cli.files {
         match File::open(path.as_str()) {
-            Ok(mut file) => {
+            Ok(file) => {
                 if show_headers {
                     let mut out = io::stdout();
                     if first_emitted {
@@ -78,7 +78,7 @@ fn main() -> ExitCode {
                     let _ = out.write_all(build_header(path).as_bytes());
                 }
                 first_emitted = true;
-                if let Err(err) = head_reader(&mut file, mode) {
+                if let Err(err) = head_reader(file, mode) {
                     eprintln!("head: {}: {}", path, err);
                     had_error = true;
                 }
@@ -103,11 +103,15 @@ enum Mode {
     Bytes(u32),
 }
 
-fn head_reader<R: Read>(reader: &mut R, mode: Mode) -> Result<()> {
-    let mut buf = [0u8; 1024];
+/// Streams `reader` through the configured mode to stdout. Takes ownership
+/// of the reader so that `Lines` mode can wrap it in a `BufReader` without
+/// dragging an extra lifetime around.
+fn head_reader<R: Read>(reader: R, mode: Mode) -> Result<()> {
     let mut stdout = io::stdout();
     match mode {
         Mode::Bytes(limit) => {
+            let mut reader = reader;
+            let mut buf = [0u8; 1024];
             let mut remaining = limit;
             while remaining > 0 {
                 let want = core::cmp::min(remaining, buf.len() as u32) as usize;
@@ -123,27 +127,16 @@ fn head_reader<R: Read>(reader: &mut R, mode: Mode) -> Result<()> {
             if limit == 0 {
                 return Ok(());
             }
-            let mut printed_lines: u32 = 0;
-            'outer: loop {
-                let n = reader.read(&mut buf)?;
-                if n == 0 {
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            let mut printed: u32 = 0;
+            while printed < limit {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 {
                     break;
                 }
-                let mut start = 0;
-                for (i, &b) in buf[..n].iter().enumerate() {
-                    if b == b'\n' {
-                        let end = i + 1;
-                        stdout.write_all(&buf[start..end])?;
-                        start = end;
-                        printed_lines += 1;
-                        if printed_lines >= limit {
-                            break 'outer;
-                        }
-                    }
-                }
-                if start < n {
-                    stdout.write_all(&buf[start..n])?;
-                }
+                stdout.write_all(line.as_bytes())?;
+                printed += 1;
             }
         }
     }
