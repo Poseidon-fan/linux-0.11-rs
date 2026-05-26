@@ -23,10 +23,10 @@ use core::fmt;
 use crate::{
     ffi::CString,
     io::{Error, ErrorKind, Read, Result, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
     syscall::{
         self,
-        fs::{AccessMode, OpenFlags, Stat, Whence},
+        fs::{AccessMode, OpenFlags, Stat, TimeUpdate, Whence},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -64,6 +64,7 @@ const DEFAULT_DIR_MODE: u32 = 0o777;
 /// Files are automatically closed when they go out of scope.
 pub struct File {
     fd: u32,
+    path: Option<PathBuf>,
 }
 
 impl File {
@@ -117,7 +118,26 @@ impl File {
     /// dropped.
     #[inline]
     pub(crate) unsafe fn from_raw_fd(fd: u32) -> Self {
-        File { fd }
+        File { fd, path: None }
+    }
+
+    /// Changes one or more timestamps of the underlying file.
+    ///
+    /// Mirrors [`std::fs::File::set_times`]. This kernel only exposes
+    /// path-based `utime(2)`, so the operation is supported for files opened
+    /// by path through this module.
+    pub fn set_times(&self, times: FileTimes) -> Result<()> {
+        let Some(path) = self.path.as_ref() else {
+            return Err(Error::from(ErrorKind::Unsupported));
+        };
+        set_path_times(path.as_path(), times)
+    }
+
+    /// Changes the modification time of the underlying file.
+    ///
+    /// This is an alias for `set_times(FileTimes::new().set_modified(time))`.
+    pub fn set_modified(&self, time: SystemTime) -> Result<()> {
+        self.set_times(FileTimes::new().set_modified(time))
     }
 }
 
@@ -169,7 +189,10 @@ impl Drop for File {
 
 impl fmt::Debug for File {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("File").field("fd", &self.fd).finish()
+        f.debug_struct("File")
+            .field("fd", &self.fd)
+            .field("path", &self.path)
+            .finish()
     }
 }
 
@@ -347,7 +370,10 @@ impl OpenOptions {
 
         let path_c = path_cstring(path)?;
         match syscall::fs::open(path_c.as_ptr().cast(), flags, self.mode) {
-            Ok(fd) => Ok(File { fd }),
+            Ok(fd) => Ok(File {
+                fd,
+                path: Some(path.to_path_buf()),
+            }),
             Err(errno) => Err(Error::from(errno)),
         }
     }
@@ -393,6 +419,32 @@ impl Default for OpenOptions {
 // ---------------------------------------------------------------------------
 // Metadata, Permissions, FileType
 // ---------------------------------------------------------------------------
+
+/// Representation of the various timestamps on a file.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FileTimes {
+    accessed: Option<SystemTime>,
+    modified: Option<SystemTime>,
+}
+
+impl FileTimes {
+    /// Creates a new `FileTimes` with no times set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the last access time of a file.
+    pub fn set_accessed(mut self, time: SystemTime) -> Self {
+        self.accessed = Some(time);
+        self
+    }
+
+    /// Sets the last modified time of a file.
+    pub fn set_modified(mut self, time: SystemTime) -> Self {
+        self.modified = Some(time);
+        self
+    }
+}
 
 /// Metadata information about a file.
 #[derive(Clone)]
@@ -905,6 +957,45 @@ fn system_time_from_unix_seconds(secs: i32) -> SystemTime {
     } else {
         UNIX_EPOCH - Duration::from_secs(u64::from(secs.unsigned_abs()))
     }
+}
+
+fn set_path_times(path: &Path, times: FileTimes) -> Result<()> {
+    if times.accessed.is_none() && times.modified.is_none() {
+        return Ok(());
+    }
+
+    let metadata = metadata(path)?;
+    let access_time = match times.accessed {
+        Some(time) => system_time_to_time_t(time)?,
+        None => i32::try_from(metadata.atime())
+            .map_err(|_| Error::new(ErrorKind::InvalidInput, "access time is out of range"))?,
+    };
+    let modification_time = match times.modified {
+        Some(time) => system_time_to_time_t(time)?,
+        None => i32::try_from(metadata.mtime()).map_err(|_| {
+            Error::new(ErrorKind::InvalidInput, "modification time is out of range")
+        })?,
+    };
+
+    let update = TimeUpdate {
+        access_time,
+        modification_time,
+    };
+    let path_c = path_cstring(path)?;
+    syscall::fs::utime(path_c.as_ptr().cast(), &update)
+        .map(|_| ())
+        .map_err(Error::from)
+}
+
+fn system_time_to_time_t(time: SystemTime) -> Result<i32> {
+    let duration = time.duration_since(UNIX_EPOCH).map_err(|_| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "timestamp is before the Unix epoch",
+        )
+    })?;
+    i32::try_from(duration.as_secs())
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "timestamp is too large"))
 }
 
 fn len_capacity(len: u64) -> usize {
