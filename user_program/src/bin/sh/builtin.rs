@@ -19,33 +19,17 @@ use crate::{exec::ExecError, state::State};
 
 /// Returns `true` if `name` is implemented by [`dispatch`].
 pub fn is_builtin(name: &str) -> bool {
-    matches!(
-        name,
-        "cd" | "pwd"
-            | "exit"
-            | "export"
-            | "unset"
-            | "set"
-            | "shift"
-            | "read"
-            | "echo"
-            | "eval"
-            | "exec"
-            | "."
-            | "source"
-            | ":"
-            | "true"
-            | "false"
-            | "break"
-            | "continue"
-            | "return"
-            | "umask"
-            | "type"
-            | "wait"
-            | "command"
-            | "test"
-            | "["
-    )
+    all_names().contains(&name)
+}
+
+/// Every name that [`dispatch`] knows how to handle. Used both for the
+/// `is_builtin` check and by the tab-completion completer.
+pub fn all_names() -> &'static [&'static str] {
+    &[
+        "cd", "pwd", "exit", "export", "unset", "set", "shift", "read", "echo", "eval", "exec",
+        ".", "source", ":", "true", "false", "break", "continue", "return", "umask", "type",
+        "wait", "command", "test", "[",
+    ]
 }
 
 /// Runs a builtin by name. The returned status is what `$?` will become.

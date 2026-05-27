@@ -26,6 +26,7 @@ extern crate alloc;
 
 mod ast;
 mod builtin;
+mod editor;
 mod exec;
 mod expand;
 mod lexer;
@@ -224,29 +225,40 @@ fn run_stdin_script(st: &mut State) -> Result<(), ExecError> {
 
 /// Interactive read-evaluate-print loop.
 ///
-/// Reads stdin one line at a time (the canonical-mode TTY returns whole
-/// lines, so a 1-line buffer is the natural unit). When a parse fails with
-/// `incomplete`, the next line is appended and re-parsed under PS2.
+/// Uses [`editor::Editor`] to provide raw-mode line editing (history,
+/// arrow keys, Tab completion, Ctrl-A/E/U/W/K/L). The editor returns
+/// either a complete line, end-of-input, or Ctrl-C; on Ctrl-C we discard
+/// any pending continuation and re-prompt at PS1.
 fn run_interactive(st: &mut State) -> Result<(), ExecError> {
-    let mut buf = String::new();
+    let mut editor = editor::Editor::new();
     let mut pending: Option<String> = None;
 
     loop {
-        write_prompt(st, pending.is_some());
+        let prompt = if pending.is_some() {
+            st.get("PS2").unwrap_or("> ").to_string()
+        } else {
+            let template = st.get("PS1").unwrap_or("$ ").to_string();
+            expand_prompt(&template, st)
+        };
 
-        buf.clear();
-        let n = io::stdin().read_line(&mut buf).unwrap_or(0);
-        if n == 0 {
-            return Ok(()); // EOF
-        }
-        if n > MAX_LINE {
+        let line = match editor.read_line(&prompt, st, pending.is_some()) {
+            editor::ReadLine::Line(line) => line,
+            editor::ReadLine::Eof => return Ok(()),
+            editor::ReadLine::Interrupted => {
+                pending = None;
+                continue;
+            }
+        };
+
+        if line.len() > MAX_LINE {
             let _ = writeln!(io::stderr(), "sh: input line too long");
             pending = None;
             continue;
         }
 
         let mut combined = pending.take().unwrap_or_default();
-        combined.push_str(&buf);
+        combined.push_str(&line);
+        combined.push('\n');
 
         match parse_and_run(&combined, st) {
             ParseOutcome::Ran => {}
@@ -292,18 +304,6 @@ fn parse_and_run(src: &str, st: &mut State) -> ParseOutcome {
         Err(ExecError::Fatal(m)) => ParseOutcome::RuntimeError(m),
         Err(_) => ParseOutcome::Ran,
     }
-}
-
-fn write_prompt(st: &mut State, secondary: bool) {
-    let prompt = if secondary {
-        st.get("PS2").unwrap_or("> ").to_string()
-    } else {
-        let template = st.get("PS1").unwrap_or("$ ").to_string();
-        expand_prompt(&template, st)
-    };
-    let mut out = io::stdout();
-    let _ = out.write_all(prompt.as_bytes());
-    let _ = out.flush();
 }
 
 /// Expands the prompt template before display.
@@ -389,29 +389,34 @@ fn set_termios(t: &Termios) {
     let _ = syscall::fs::ioctl(0, TtyRequest::SetTermios as u32, t as *const _ as u32);
 }
 
-/// Switches fd 0 into a shell-friendly cooked mode: CR→LF on input,
-/// LF→CRLF on output, canonical line editing with echo, and `ISIG` so
-/// Ctrl-C / Ctrl-\ deliver the corresponding signals. Returns the
-/// previous settings so the caller can restore them on exit.
+/// Switches fd 0 into raw input mode for the interactive line editor:
+/// `ICANON` and `ECHO` are turned off so the shell sees every keystroke
+/// immediately and renders its own line buffer. Output post-processing
+/// (CR-LF translation) stays on so prompts and command output continue
+/// to render correctly. Returns the previous settings so the caller can
+/// restore them on exit.
 fn configure_interactive_termios() -> Option<Termios> {
     let old = get_termios()?;
     let mut new = old;
 
-    // Input: translate CR to LF so `read(2)` returns when Enter is pressed.
+    // Input: translate CR to LF so Enter shows up as `\n`.
     new.input_mode |= InputMode::ICRNL;
     new.input_mode &= !(InputMode::INLCR | InputMode::IGNCR);
 
-    // Output: expand LF into CRLF so the terminal returns to column 0.
+    // Output: post-process and expand LF into CRLF.
     new.output_mode |= OutputMode::OPOST | OutputMode::ONLCR;
 
-    // Local: canonical input with echo, visible erase, signal generation.
-    new.local_mode |= LocalMode::ICANON
+    // Local: raw input — kernel hands every keystroke straight to us.
+    // We keep `ISIG` so Ctrl-C / Ctrl-\ still produce signals (the
+    // editor exits cleanly via the signal path), and disable kernel-side
+    // line editing and echo so the editor owns the display.
+    new.local_mode |= LocalMode::ISIG;
+    new.local_mode &= !(LocalMode::ICANON
         | LocalMode::ECHO
         | LocalMode::ECHOE
         | LocalMode::ECHOK
         | LocalMode::ECHOCTL
-        | LocalMode::ECHOKE
-        | LocalMode::ISIG;
+        | LocalMode::ECHOKE);
 
     // Control: ensure characters can actually be received.
     new.control_mode |= ControlMode::CREAD;
