@@ -128,7 +128,7 @@ fn handle_editing(state: &mut TtyState, byte: u8, echoed: &mut bool) -> bool {
         return true;
     }
 
-    if byte == erase_char {
+    if byte == erase_char || is_erase_compat(byte, erase_char) {
         let Some(last) = state.cooked_input.peek_last() else {
             return true;
         };
@@ -143,15 +143,33 @@ fn handle_editing(state: &mut TtyState, byte: u8, echoed: &mut bool) -> bool {
     false
 }
 
+/// Treats both `^H` (0x08) and DEL (0x7f) as erase regardless of which one
+/// is configured. Real terminals disagree on which byte the Backspace key
+/// sends, so accepting both lets the line editor work without per-terminal
+/// `stty` tweaking.
+fn is_erase_compat(byte: u8, erase_char: u8) -> bool {
+    matches!((erase_char, byte), (0x7f, 0x08) | (0x08, 0x7f))
+}
+
 fn echo_erase(state: &mut TtyState, last: u8, echoed: &mut bool) {
     if !state.termios.local_mode.contains(LocalMode::ECHO) {
         return;
     }
-
-    if last < 32 {
-        state.output.push(0x7f);
+    // ECHOE: rub out the prior glyph instead of just printing a DEL byte.
+    // Terminals don't render `\x7f`, so the standard erase sequence is
+    // `\b \b` (back up, write space, back up again). Control characters
+    // were originally echoed as `^X` — two glyphs — so they need the
+    // sequence twice.
+    if state.termios.local_mode.contains(LocalMode::ECHOE) {
+        let reps = if last < 32 || last == 0x7f { 2 } else { 1 };
+        for _ in 0..reps {
+            state.output.push(0x08);
+            state.output.push(b' ');
+            state.output.push(0x08);
+        }
+    } else {
+        state.output.push(0x08);
     }
-    state.output.push(0x7f);
     *echoed = true;
 }
 
