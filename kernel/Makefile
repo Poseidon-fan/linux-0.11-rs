@@ -18,7 +18,7 @@ SETUP_BINARY := $(TARGET_DIR)/setup
 BOOTSECT_SRC := $(SRC_DIR)/boot/bootsect.s
 SETUP_SRC := $(SRC_DIR)/boot/setup.s
 BUILD_SCRIPT := scripts/build.sh
-HDA_IMG := ../rootfs.img
+HDA_IMG := ../disk.img
 
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -Ttext 0

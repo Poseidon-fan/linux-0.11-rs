@@ -1,0 +1,10 @@
+# /etc/rc — run once by init, with /etc/rc as stdin.
+#
+# Pull the persistent hostname into the environment so interactive shells
+# can show it in PS1 / motd expansion. Anything written here runs before
+# any interactive shell starts; keep it quiet, the user will see motd next.
+
+if [ -f /etc/hostname ]; then
+    HOSTNAME=`cat /etc/hostname`
+    export HOSTNAME
+fi

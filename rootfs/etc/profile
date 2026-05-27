@@ -1,0 +1,13 @@
+PATH=/bin:/usr/bin
+HOME=/usr/root
+HOSTNAME=linux-rs
+PS1='[\u@\h \w]\$ '
+PS2='> '
+export PATH HOME HOSTNAME PS1 PS2
+
+umask 022
+cd $HOME
+
+if [ -f /etc/motd ]; then
+    cat /etc/motd
+fi

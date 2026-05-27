@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+#
+# Build a fresh disk image for linux-0.11-rs from scratch.
+#
+# The image is an MBR-partitioned disk whose first (primary, bootable)
+# partition contains a Minix v1 filesystem laid out roughly to the Unix
+# convention:
+#
+#   /bin        — every compiled binary from user_program/aout/
+#   /dev        — character / block device nodes
+#   /etc        — rc, profile, passwd, group, hostname, motd
+#   /tmp        — empty scratch directory (0777)
+#   /mnt        — empty mount point
+#   /usr/root   — root's home directory with a .profile
+#
+# Usage:
+#   tools/build-disk.sh                       # build with defaults
+#   tools/build-disk.sh -o my.img             # custom output path
+#   tools/build-disk.sh --size 32MiB          # custom partition size
+#   tools/build-disk.sh --no-build            # skip `make all`
+#   tools/build-disk.sh --help                # show help
+#
+# Defaults can be overridden with environment variables; see USAGE below.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths & defaults
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOTFS_TEMPLATE="$REPO_ROOT/rootfs"
+USER_PROGRAM_DIR="$REPO_ROOT/user_program"
+AOUT_DIR="$USER_PROGRAM_DIR/aout"
+
+OUTPUT="${OUTPUT:-$REPO_ROOT/disk.img}"
+PARTITION_SIZE="${PARTITION_SIZE:-16MiB}"
+DISK_SIZE="${DISK_SIZE:-32MiB}"
+INODE_COUNT="${INODE_COUNT:-2048}"
+DISK_SIGNATURE="${DISK_SIGNATURE:-0x12345678}"
+DO_BUILD=1
+KEEP_TMP=0
+MANIFEST=""           # auto-generated under TMPDIR by default
+
+usage() {
+    cat <<EOF
+Build a bootable disk image for linux-0.11-rs.
+
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -o, --output PATH          Output disk image path (default: $OUTPUT).
+      --partition-size SIZE  Partition payload size, e.g. 16MiB (default: $PARTITION_SIZE).
+      --disk-size SIZE       Total disk image size (default: $DISK_SIZE).
+      --inodes N             Inode count for the Minix filesystem (default: $INODE_COUNT).
+      --signature HEX        MBR disk signature (default: $DISK_SIGNATURE).
+      --no-build             Skip 'make all'; use whatever is in user_program/aout/.
+      --keep-tmp             Leave the intermediate Minix image + manifest behind for inspection.
+  -h, --help                 Print this help and exit.
+
+Required tools on PATH: cargo, make, python3, mbrkit, miniximg, dd.
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o|--output)            OUTPUT="$2";          shift 2 ;;
+        --partition-size)       PARTITION_SIZE="$2";  shift 2 ;;
+        --disk-size)            DISK_SIZE="$2";       shift 2 ;;
+        --inodes)               INODE_COUNT="$2";     shift 2 ;;
+        --signature)            DISK_SIGNATURE="$2";  shift 2 ;;
+        --no-build)             DO_BUILD=0;           shift   ;;
+        --keep-tmp)             KEEP_TMP=1;           shift   ;;
+        -h|--help)              usage; exit 0 ;;
+        *)
+            echo "build-disk.sh: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Sanity checks
+# ---------------------------------------------------------------------------
+
+for tool in mbrkit miniximg dd python3; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "build-disk.sh: required tool not on PATH: $tool" >&2
+        exit 1
+    fi
+done
+
+if [ ! -d "$ROOTFS_TEMPLATE" ]; then
+    echo "build-disk.sh: missing rootfs template at $ROOTFS_TEMPLATE" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: build user_program binaries
+# ---------------------------------------------------------------------------
+
+if [ "$DO_BUILD" = 1 ]; then
+    echo "==> Building user_program binaries"
+    make -s -C "$USER_PROGRAM_DIR" all
+fi
+
+if [ ! -d "$AOUT_DIR" ] || [ -z "$(ls -A "$AOUT_DIR" 2>/dev/null)" ]; then
+    echo "build-disk.sh: $AOUT_DIR is empty; run without --no-build first." >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Step 2: emit a temporary manifest describing the Minix filesystem layout
+# ---------------------------------------------------------------------------
+
+TMP_DIR="$(mktemp -d -t linuxrs-disk.XXXXXX)"
+if [ "$KEEP_TMP" = 0 ]; then
+    trap 'rm -rf "$TMP_DIR"' EXIT
+else
+    echo "==> Intermediate files kept in $TMP_DIR"
+fi
+
+MINIX_IMG="$TMP_DIR/rootfs.minix"
+MANIFEST="$TMP_DIR/manifest.toml"
+
+emit_manifest() {
+    cat > "$MANIFEST" <<EOF
+# Auto-generated by tools/build-disk.sh — do not edit.
+
+[image]
+output = "$MINIX_IMG"
+size = "$PARTITION_SIZE"
+inode_count = $INODE_COUNT
+overwrite_output = true
+default_uid = 0
+default_gid = 0
+default_file_mode = "0644"
+default_dir_mode = "0755"
+
+# --- Top-level directories ----------------------------------------------
+
+[[mapping]]
+kind = "dir"
+target = "/bin"
+mode = "0755"
+
+[[mapping]]
+kind = "dir"
+target = "/dev"
+mode = "0755"
+
+[[mapping]]
+kind = "dir"
+target = "/etc"
+mode = "0755"
+
+[[mapping]]
+kind = "dir"
+target = "/mnt"
+mode = "0755"
+
+[[mapping]]
+kind = "dir"
+target = "/tmp"
+mode = "1777"
+
+[[mapping]]
+kind = "dir"
+target = "/usr"
+mode = "0755"
+
+[[mapping]]
+kind = "dir"
+target = "/usr/root"
+mode = "0700"
+
+# --- Device nodes -------------------------------------------------------
+
+# Block devices: hd0 (whole disk) plus partitions hd1..hd4.
+[[mapping]]
+kind = "blockdev"
+target = "/dev/hd0"
+major = 3
+minor = 0
+mode = "0660"
+
+[[mapping]]
+kind = "blockdev"
+target = "/dev/hd1"
+major = 3
+minor = 1
+mode = "0660"
+
+# Character devices: controlling tty, VGA console (tty0), serial (tty1), /dev/null.
+[[mapping]]
+kind = "chardev"
+target = "/dev/tty"
+major = 5
+minor = 0
+mode = "0666"
+
+[[mapping]]
+kind = "chardev"
+target = "/dev/tty0"
+major = 4
+minor = 0
+mode = "0666"
+
+[[mapping]]
+kind = "chardev"
+target = "/dev/tty1"
+major = 4
+minor = 1
+mode = "0666"
+
+[[mapping]]
+kind = "chardev"
+target = "/dev/null"
+major = 1
+minor = 3
+mode = "0666"
+
+# --- Template files under /etc and /usr/root ----------------------------
+EOF
+
+    # Copy the entire rootfs template tree as individual file mappings,
+    # preserving directory structure. Default modes apply unless we set
+    # them explicitly (we do for executables).
+    while IFS= read -r src; do
+        rel="${src#$ROOTFS_TEMPLATE/}"
+        mode="0644"
+        case "$rel" in
+            etc/rc|etc/profile|*/.profile) mode="0644" ;;
+        esac
+        cat >> "$MANIFEST" <<EOF
+
+[[mapping]]
+kind = "file"
+source = "$src"
+target = "/$rel"
+mode = "$mode"
+EOF
+    done < <(find "$ROOTFS_TEMPLATE" -type f | sort)
+
+    # Append one mapping per user_program binary.
+    cat >> "$MANIFEST" <<EOF
+
+# --- /bin: user_program binaries ----------------------------------------
+EOF
+    for f in "$AOUT_DIR"/*; do
+        [ -f "$f" ] || continue
+        name="$(basename "$f")"
+        cat >> "$MANIFEST" <<EOF
+
+[[mapping]]
+kind = "file"
+source = "$f"
+target = "/bin/$name"
+mode = "0755"
+EOF
+    done
+}
+
+echo "==> Generating manifest at $MANIFEST"
+emit_manifest
+
+# ---------------------------------------------------------------------------
+# Step 3: build the Minix filesystem image
+# ---------------------------------------------------------------------------
+
+echo "==> Building Minix filesystem ($PARTITION_SIZE, $INODE_COUNT inodes)"
+miniximg build --manifest "$MANIFEST"
+
+# ---------------------------------------------------------------------------
+# Step 4: wrap it in an MBR disk image
+# ---------------------------------------------------------------------------
+
+echo "==> Packing MBR disk image at $OUTPUT ($DISK_SIZE)"
+mbrkit pack \
+    --output "$OUTPUT" \
+    --disk-size "$DISK_SIZE" \
+    --disk-signature "$DISK_SIGNATURE" \
+    --partition "file=$MINIX_IMG,type=minix,bootable,start=1,size=$PARTITION_SIZE" \
+    --force >/dev/null
+
+# ---------------------------------------------------------------------------
+# Step 5: verify and summarise
+# ---------------------------------------------------------------------------
+
+echo "==> Verifying"
+if ! mbrkit verify "$OUTPUT" | grep -q "^Verification: ok"; then
+    echo "build-disk.sh: mbrkit verify failed for $OUTPUT" >&2
+    exit 1
+fi
+
+BIN_COUNT=$(ls -1 "$AOUT_DIR" | wc -l)
+SIZE_HUMAN=$(du -h "$OUTPUT" | awk '{print $1}')
+echo "==> Done: $OUTPUT ($SIZE_HUMAN, $BIN_COUNT binaries in /bin)"
+echo
+echo "Run it with: cd kernel && make run         # VGA console"
+echo "         or: cd kernel && make run-console # serial console"

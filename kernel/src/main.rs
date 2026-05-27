@@ -108,8 +108,6 @@ fn user_init() -> ! {
     syscall::fs::dup(0).unwrap();
     syscall::fs::dup(0).unwrap();
 
-    user_lib::println!("hello linux");
-
     // --- Phase 1: run /bin/sh with /etc/rc as stdin ---
     let rc = File::open("/etc/rc").expect("/etc/rc must be present");
     let _ = Command::new("/bin/sh")

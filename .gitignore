@@ -25,3 +25,6 @@ target
 
 # Image
 Image-*
+
+# Disk image
+disk.img
