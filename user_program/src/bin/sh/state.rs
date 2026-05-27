@@ -27,6 +27,9 @@ pub struct State {
     vars: BTreeMap<String, Var>,
     /// Shell function definitions (`name() { … }`).
     funcs: BTreeMap<String, crate::ast::Cmd>,
+    /// `alias name=value` table. Aliases are textual substitutions applied
+    /// to the first word of each simple command at expansion time.
+    aliases: BTreeMap<String, String>,
     /// Positional parameters: `$1`, `$2`, … (does NOT include `$0`).
     params: Vec<String>,
     /// `$0` — the shell's argv[0] or the currently sourced script.
@@ -88,6 +91,7 @@ impl State {
         Self {
             vars,
             funcs: BTreeMap::new(),
+            aliases: BTreeMap::new(),
             params,
             arg0,
             last_status: 0,
@@ -223,5 +227,35 @@ impl State {
     /// Removes a function definition.
     pub fn undefine_function(&mut self, name: &str) {
         self.funcs.remove(name);
+    }
+
+    // -----------------------------------------------------------------
+    // Aliases
+    // -----------------------------------------------------------------
+
+    /// Looks up an alias by name.
+    pub fn alias(&self, name: &str) -> Option<&str> {
+        self.aliases.get(name).map(String::as_str)
+    }
+
+    /// Records an alias, overwriting any previous definition.
+    pub fn define_alias(&mut self, name: String, value: String) {
+        self.aliases.insert(name, value);
+    }
+
+    /// Removes one alias; returns `true` if it existed.
+    pub fn undefine_alias(&mut self, name: &str) -> bool {
+        self.aliases.remove(name).is_some()
+    }
+
+    /// Clears every alias.
+    pub fn clear_aliases(&mut self) {
+        self.aliases.clear();
+    }
+
+    /// Iterates over `(name, value)` pairs for every alias, sorted by
+    /// name (BTreeMap's natural order).
+    pub fn all_aliases(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.aliases.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 }

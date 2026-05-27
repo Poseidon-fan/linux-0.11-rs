@@ -226,6 +226,11 @@ fn run_simple(cmd: &SimpleCmd, st: &mut State) -> Result<i32, ExecError> {
         return Ok(0);
     }
 
+    // Alias substitution: if argv[0] names an alias, splice its value's
+    // tokens in front of argv[1..]. Track names already expanded so an
+    // alias that mentions itself terminates instead of looping.
+    argv = expand_aliases(argv, st);
+
     // Apply assignments as temporary.
     for a in &cmd.assigns {
         let v = expand::expand_assignment_value(&a.value, st)?;
@@ -299,6 +304,75 @@ fn run_simple(cmd: &SimpleCmd, st: &mut State) -> Result<i32, ExecError> {
     }
 
     r
+}
+
+/// Performs alias substitution on the first word of `argv`, recursively,
+/// until the head no longer names an alias (or we've already expanded it
+/// once in this chain — POSIX's anti-recursion rule).
+///
+/// The alias body is re-tokenised through the shell's own lexer so quotes
+/// and whitespace inside `alias name='ls -la'` produce the expected
+/// argument boundaries.
+fn expand_aliases(mut argv: Vec<String>, st: &State) -> Vec<String> {
+    use alloc::collections::BTreeSet;
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while let Some(head) = argv.first().cloned() {
+        if seen.contains(&head) {
+            break;
+        }
+        let Some(value) = st.alias(&head) else {
+            break;
+        };
+        let Some(tokens) = tokenize_alias_body(value) else {
+            break;
+        };
+        seen.insert(head);
+        let rest = argv.split_off(1);
+        argv = tokens;
+        argv.extend(rest);
+    }
+    argv
+}
+
+/// Runs the lexer over an alias body and pulls out the resulting words
+/// as plain strings. Alias substitution is purely textual — parameter
+/// and command expansions inside `value` are deliberately not applied,
+/// so quoting characters survive verbatim. Returns `None` for tokens
+/// the alias substitution path can't sensibly splice (anything other
+/// than plain words).
+fn tokenize_alias_body(body: &str) -> Option<Vec<String>> {
+    let mut lex = crate::lexer::Lexer::new(body);
+    let mut out: Vec<String> = Vec::new();
+    loop {
+        match lex.next_token().ok()? {
+            crate::lexer::Token::Eof => return Some(out),
+            crate::lexer::Token::Word(word) => out.push(word_to_literal(&word)),
+            _ => return None,
+        }
+    }
+}
+
+/// Flattens a word produced by tokenising an alias body into a single
+/// string, stripping the quoting machinery. Anything that would require
+/// runtime expansion is rendered as-is — alias substitution doesn't
+/// touch `$var` or `$(cmd)`.
+fn word_to_literal(word: &crate::ast::Word) -> alloc::string::String {
+    use crate::ast::Seg;
+    let mut out = alloc::string::String::new();
+    for seg in &word.0 {
+        match seg {
+            Seg::Lit(s) | Seg::SQuoted(s) => out.push_str(s),
+            Seg::DQuoted(inner) => {
+                for s in inner {
+                    if let Seg::Lit(t) | Seg::SQuoted(t) = s {
+                        out.push_str(t);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn is_special_builtin(name: &str) -> bool {
@@ -612,6 +686,9 @@ fn clone_for_subshell(st: &State) -> State {
     }
     for (name, body) in st.all_functions() {
         new.define_function(name.to_string(), body.clone());
+    }
+    for (name, value) in st.all_aliases() {
+        new.define_alias(name.to_string(), value.to_string());
     }
     new.last_status = st.last_status;
     new.last_bg_pid = st.last_bg_pid;

@@ -28,7 +28,7 @@ pub fn all_names() -> &'static [&'static str] {
     &[
         "cd", "pwd", "exit", "export", "unset", "set", "shift", "read", "echo", "eval", "exec",
         ".", "source", ":", "true", "false", "break", "continue", "return", "umask", "type",
-        "wait", "command", "test", "[",
+        "wait", "command", "test", "[", "alias", "unalias",
     ]
 }
 
@@ -67,6 +67,8 @@ pub fn dispatch(name: &str, args: &[String], st: &mut State) -> Result<i32, Exec
         "command" => Ok(builtin_command(args, st)),
         "test" => Ok(builtin_test(args, false)),
         "[" => Ok(builtin_test(args, true)),
+        "alias" => Ok(builtin_alias(args, st)),
+        "unalias" => Ok(builtin_unalias(args, st)),
         _ => Ok(127),
     }
 }
@@ -524,6 +526,80 @@ fn builtin_command(args: &[String], st: &mut State) -> i32 {
 
 fn parse_status(arg: Option<&String>, default: i32) -> i32 {
     arg.and_then(|s| s.parse().ok()).unwrap_or(default)
+}
+
+// ---------------------------------------------------------------------------
+// `alias` / `unalias`
+// ---------------------------------------------------------------------------
+
+/// `alias [NAME[=VALUE] ...]`
+///
+/// With no arguments, prints every alias as `alias name='value'`.
+/// `alias NAME` prints just that one. `alias NAME=VALUE` defines or
+/// replaces it.
+fn builtin_alias(args: &[String], st: &mut State) -> i32 {
+    if args.is_empty() {
+        for (name, value) in st.all_aliases() {
+            let _ = writeln!(io::stdout(), "alias {}={}", name, single_quote(value));
+        }
+        return 0;
+    }
+    let mut status = 0;
+    for arg in args {
+        match arg.split_once('=') {
+            Some((name, value)) if !name.is_empty() => {
+                st.define_alias(name.to_string(), value.to_string());
+            }
+            _ => match st.alias(arg) {
+                Some(value) => {
+                    let _ = writeln!(io::stdout(), "alias {}={}", arg, single_quote(value));
+                }
+                None => {
+                    error(&alloc::format!("alias: {}: not found", arg));
+                    status = 1;
+                }
+            },
+        }
+    }
+    status
+}
+
+/// `unalias [-a] NAME...` — drop one or more aliases (or all of them
+/// with `-a`).
+fn builtin_unalias(args: &[String], st: &mut State) -> i32 {
+    if args.iter().any(|a| a == "-a") {
+        st.clear_aliases();
+        return 0;
+    }
+    if args.is_empty() {
+        error("unalias: usage: unalias [-a] name [name ...]");
+        return 2;
+    }
+    let mut status = 0;
+    for name in args {
+        if !st.undefine_alias(name) {
+            error(&alloc::format!("unalias: {}: not found", name));
+            status = 1;
+        }
+    }
+    status
+}
+
+/// Renders `value` as a safely single-quoted shell string. Embedded
+/// single quotes are written as `'\''` so the result round-trips
+/// through `eval` and through other shells.
+fn single_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn error(msg: &str) {
