@@ -1,20 +1,43 @@
 # miniximg-cli
 
-`miniximg-cli` provides the `miniximg` command-line interface on top of
-`miniximg-core`.
+> Command-line tool for building, inspecting, editing, and interactively
+> exploring [Minix v1 filesystem][minix] images.
 
-The binary keeps parsing, manifest loading, and text rendering in the CLI crate
-while delegating all filesystem logic to the core library.
+`miniximg-cli` ships the `miniximg` binary. It glues
+[`miniximg`](https://crates.io/crates/miniximg) (the core library) and
+[`miniximg-shell`](https://crates.io/crates/miniximg-shell) (the
+interactive REPL) into a single tool.
 
-## Commands
+```bash
+cargo install miniximg-cli
+```
 
-### Build
+[minix]: https://en.wikipedia.org/wiki/MINIX_file_system
 
-Create a new image from either a TOML manifest or repeated `--entry` flags.
+## At a glance
+
+| Subcommand       | One-liner                                                     |
+|------------------|---------------------------------------------------------------|
+| `build`          | Create a new image from a TOML manifest or `--entry` flags.   |
+| `inspect`        | Print a human-readable summary of an existing image.          |
+| `check`          | Validate an image and exit non-zero on issues.                |
+| `ls`, `tree`, `cat`, `stat` | Read-only browsing.                                |
+| `get`, `put`     | Transfer one file between the host and an image.              |
+| `mkdir`, `mknod`, `rm`, `rmdir`, `mv`, `ln` | Direct mutating ops.        |
+| `shell`          | Drop into an interactive REPL against the image.              |
+
+Run `miniximg <subcommand> --help` for the full set of flags on any one
+command.
+
+## Build an image
+
+From a TOML manifest:
 
 ```bash
 miniximg build --manifest rootfs.toml
 ```
+
+Or with explicit mappings on the command line:
 
 ```bash
 miniximg build \
@@ -25,39 +48,10 @@ miniximg build \
   --entry kind=file,source=README.md,target=/etc/motd,overwrite=true
 ```
 
-### Inspect And Validate
+### Manifest shape
 
-```bash
-miniximg inspect build/rootfs.img
-miniximg check build/rootfs.img
-```
-
-### Read-Only Image Access
-
-```bash
-miniximg ls build/rootfs.img /
-miniximg tree build/rootfs.img /
-miniximg stat build/rootfs.img /bin/init
-miniximg cat build/rootfs.img /etc/motd
-miniximg get build/rootfs.img /etc/motd --output out/motd
-```
-
-### Mutating Image Operations
-
-```bash
-miniximg mkdir build/rootfs.img /usr/share
-miniximg mknod build/rootfs.img /dev/tty0 --kind char --major 4 --minor 0
-miniximg put build/rootfs.img host/message.txt /usr/share/message --overwrite
-miniximg mv build/rootfs.img /usr/share/message /usr/share/motd
-miniximg ln build/rootfs.img /usr/share/motd /etc/motd
-miniximg rm build/rootfs.img /usr/share/motd
-miniximg rmdir build/rootfs.img /usr/share
-```
-
-## Manifest Shape
-
-`build --manifest` expects a TOML file with one `[image]` table and zero or
-more `[[mapping]]` entries.
+`build --manifest` expects a TOML file with one `[image]` table and zero
+or more `[[mapping]]` entries.
 
 ```toml
 [image]
@@ -94,24 +88,59 @@ minor = 0
 mode = "0666"
 ```
 
-Supported mapping kinds:
+Supported mapping kinds: `file`, `tree`, `dir`, `block-device`,
+`char-device`.
 
-- `file`
-- `tree`
-- `dir`
-- `block-device`
-- `char-device`
-
-## Development
-
-Run tests:
+## Inspect and validate
 
 ```bash
-cargo test
+miniximg inspect build/rootfs.img
+miniximg check   build/rootfs.img
 ```
 
-Run Clippy:
+## Read-only browsing
 
 ```bash
-cargo clippy --all-targets --all-features -- -D warnings
+miniximg ls   build/rootfs.img /
+miniximg tree build/rootfs.img /
+miniximg cat  build/rootfs.img /etc/motd
+miniximg stat build/rootfs.img /bin/init
+miniximg get  build/rootfs.img /etc/motd --output out/motd
 ```
+
+## Mutating operations
+
+```bash
+miniximg mkdir build/rootfs.img /usr/share
+miniximg mknod build/rootfs.img /dev/tty0 --kind char --major 4 --minor 0
+miniximg put   build/rootfs.img host/message.txt /usr/share/message --overwrite
+miniximg mv    build/rootfs.img /usr/share/message /usr/share/motd
+miniximg ln    build/rootfs.img /usr/share/motd /etc/motd
+miniximg rm    build/rootfs.img /usr/share/motd
+miniximg rmdir build/rootfs.img /usr/share
+```
+
+## Interactive shell
+
+For ad-hoc exploration and editing, `shell` is much faster than chaining
+individual subcommands.
+
+```bash
+miniximg shell build/rootfs.img            # read-write
+miniximg shell --readonly build/rootfs.img # safe browsing
+```
+
+```text
+(rootfs.img) /> ls /etc
+group  hostname  motd  passwd  profile  rc
+(rootfs.img) /> edit /etc/motd           # opens $EDITOR, writes back on save
+(rootfs.img) /> put @./local-fix.sh /usr/local/bin/fix
+(rootfs.img) /> diff /etc/motd @./old-motd
+```
+
+See [`miniximg-shell`](https://crates.io/crates/miniximg-shell) for the
+full command list, prompt syntax, and the `@`-prefix convention.
+
+## License
+
+MIT. See [LICENSE](../../LICENSE) in the workspace root.

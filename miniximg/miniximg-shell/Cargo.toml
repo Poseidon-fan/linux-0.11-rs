@@ -1,0 +1,18 @@
+[package]
+name = "miniximg-shell"
+version = "1.1.0"
+authors = ["Poseidon <18646154381@163.com>"]
+edition = "2024"
+description = "Interactive REPL for inspecting and editing Minix v1 filesystem images"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Poseidon-fan/linux-0.11-rs"
+homepage = "https://github.com/Poseidon-fan/linux-0.11-rs/tree/master/miniximg/miniximg-shell"
+documentation = "https://docs.rs/miniximg-shell"
+keywords = ["minix", "filesystem", "shell", "repl", "linux-0-11"]
+categories = ["command-line-utilities", "filesystem"]
+
+[dependencies]
+miniximg = { version = "1.1.0", path = "../miniximg-core" }
+anyhow = "1.0"
+rustyline = { version = "14", default-features = false, features = ["with-file-history"] }

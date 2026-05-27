@@ -153,9 +153,39 @@ fn run() -> miniximg::Result<()> {
             image.link_path(&args.source, &args.target)?;
             image.flush()?;
         }
+        Command::Shell(args) => {
+            let options = miniximg_shell::ShellOptions {
+                image: args.image,
+                readonly: args.readonly,
+                history: resolve_history_path(args.history)?,
+            };
+            miniximg_shell::run(options)
+                .map_err(|err| MinixError::InvalidArgument(format!("shell: {err:#}")))?;
+        }
     }
 
     Ok(())
+}
+
+/// Resolves the `--history` flag into an optional on-disk history path.
+///
+/// - `None` (flag not given) → default to `$XDG_DATA_HOME/miniximg/history`
+///   (or `~/.local/share/miniximg/history`), creating the directory lazily
+///   when the shell first writes.
+/// - `Some("none")` (case-insensitive) → disable persistent history.
+/// - `Some(path)` → use that path verbatim.
+fn resolve_history_path(arg: Option<String>) -> miniximg::Result<Option<PathBuf>> {
+    if let Some(raw) = arg {
+        if raw.eq_ignore_ascii_case("none") || raw.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(PathBuf::from(raw)));
+    }
+
+    let dir = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    Ok(dir.map(|d| d.join("miniximg").join("history")))
 }
 
 /// The top-level CLI parser.
@@ -204,6 +234,8 @@ enum Command {
     Mv(RenameArgs),
     /// Create one hard link inside the image.
     Ln(RenameArgs),
+    /// Open an interactive shell against an image.
+    Shell(ShellArgs),
 }
 
 /// Arguments shared by commands that only need an image path.
@@ -234,6 +266,21 @@ struct RequiredImagePathArgs {
     /// The required image path.
     #[arg(value_name = "PATH")]
     path: String,
+}
+
+/// Arguments for `shell`.
+#[derive(Debug, Args)]
+struct ShellArgs {
+    /// The image file to operate on.
+    #[arg(value_name = "IMAGE")]
+    image: PathBuf,
+    /// Open the image read-only; mutating commands are refused.
+    #[arg(long)]
+    readonly: bool,
+    /// Path to persist line-edit history. Pass `none` to keep history in
+    /// memory only. Defaults to `$XDG_DATA_HOME/miniximg/history`.
+    #[arg(long, value_name = "PATH")]
+    history: Option<String>,
 }
 
 /// Arguments for `build`.

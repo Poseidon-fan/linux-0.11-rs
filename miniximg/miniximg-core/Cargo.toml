@@ -1,6 +1,6 @@
 [package]
 name = "miniximg"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Poseidon <18646154381@163.com>"]
 edition = "2024"
 description = "A library for creating, inspecting, and editing Minix v1 filesystem images"
