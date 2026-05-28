@@ -4,8 +4,10 @@
 //! scripting language (`.tst` files), and reports pass/fail per test.
 //!
 //! Two selection modes:
-//! * `--suite <dir>` — run every `*.tst` in a suite directory (repeatable).
-//! * `--test-set <suite/test>` — run a single test by `suite/test_name`
+//! * `--suite <name>` — run every `*.tst` in a suite (repeatable).
+//!   A bare name (e.g. `sh`) resolves under `--suites-root`; a path
+//!   with a slash is used as-is.
+//! * `--test-set <suite.test>` — run a single test by `suite.test_name`
 //!   (the `.tst` is implicit; repeatable).
 //!
 //! With no selectors, every suite directory under the suites root is run.
@@ -52,13 +54,15 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     image: PathBuf,
 
-    /// Run every `.tst` in this directory. Repeatable.
-    #[arg(long = "suite", value_name = "DIR")]
-    suites: Vec<PathBuf>,
+    /// Run every `.tst` in this suite. Either a bare suite name
+    /// (resolved under `--suites-root`) or a path to a directory.
+    /// Repeatable.
+    #[arg(long = "suite", value_name = "NAME|DIR")]
+    suites: Vec<String>,
 
-    /// Run one specific test, addressed as `suite_dir/test_name`
+    /// Run one specific test, addressed as `suite.test_name`
     /// (no `.tst` extension). Repeatable.
-    #[arg(long = "test-set", value_name = "SUITE/TEST")]
+    #[arg(long = "test-set", value_name = "SUITE.TEST")]
     test_sets: Vec<String>,
 
     /// Share a single QEMU instance (and disk copy) for the whole run
@@ -168,13 +172,24 @@ fn collect_tests(cli: &Cli) -> Result<Vec<TestCase>> {
             out.extend(load_suite(&s)?);
         }
     }
-    for s in &cli.suites {
-        out.extend(load_suite(s)?);
+    for spec in &cli.suites {
+        out.extend(load_suite(&resolve_suite(&cli.suites_root, spec))?);
     }
     for spec in &cli.test_sets {
         out.push(load_test_set(&cli.suites_root, spec)?);
     }
     Ok(out)
+}
+
+/// `--suite foo` resolves to `<suites_root>/foo`; `--suite path/to/dir`
+/// is used verbatim. We disambiguate by whether the spec contains a
+/// path separator.
+fn resolve_suite(root: &Path, spec: &str) -> PathBuf {
+    if spec.contains('/') || spec.contains(std::path::MAIN_SEPARATOR) {
+        PathBuf::from(spec)
+    } else {
+        root.join(spec)
+    }
 }
 
 fn run_one(

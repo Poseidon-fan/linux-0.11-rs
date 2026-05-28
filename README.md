@@ -81,8 +81,8 @@ from short `.tst` scripts under `ktest/suites/`.
 
 ```bash
 tools/run-tests.sh                              # run everything
-tools/run-tests.sh --suite ktest/suites/sh      # one suite
-tools/run-tests.sh --test-set sh/basic          # one test
+tools/run-tests.sh --suite=sh                   # one suite
+tools/run-tests.sh --test-set=sh.basic          # one test
 tools/run-tests.sh --disable-reboot             # share one QEMU across tests
 ```
 

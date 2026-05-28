@@ -70,11 +70,11 @@ pub fn load_suite(dir: &Path) -> Result<Vec<TestCase>> {
     Ok(out)
 }
 
-/// Resolves a `suite/test_name` identifier against the suites root.
+/// Resolves a `suite.test_name` identifier against the suites root.
 pub fn load_test_set(root: &Path, spec: &str) -> Result<TestCase> {
     let (suite, name) = spec
-        .split_once('/')
-        .with_context(|| format!("--test-set expects `suite/test`, got `{}`", spec))?;
+        .split_once('.')
+        .with_context(|| format!("--test-set expects `suite.test`, got `{}`", spec))?;
     let path = root.join(suite).join(format!("{}.tst", name));
     if !path.exists() {
         bail!("test not found: {}", path.display());

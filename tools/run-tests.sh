@@ -4,12 +4,12 @@
 #
 # Builds the runner crate (if needed), picks a kernel image and a disk
 # image, then invokes the runner. All extra arguments are forwarded —
-# e.g. `--suite ktest/suites/sh`, `--test-set sh/basic`, `--disable-reboot`.
+# e.g. `--suite=sh`, `--test-set=sh.basic`, `--disable-reboot`.
 #
 # Usage:
 #   tools/run-tests.sh                              # run everything
-#   tools/run-tests.sh --suite ktest/suites/sh      # one suite
-#   tools/run-tests.sh --test-set sh/basic          # one test
+#   tools/run-tests.sh --suite=sh                   # one suite
+#   tools/run-tests.sh --test-set=sh.basic          # one test
 #   KERNEL=kernel/Image-console-debug tools/run-tests.sh
 #   IMAGE=disk.img tools/run-tests.sh --disable-reboot
 
