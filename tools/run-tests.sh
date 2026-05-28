@@ -43,4 +43,8 @@ if [ ! -x "$RUNNER" ]; then
 fi
 
 cd "$REPO_ROOT"
-exec "$RUNNER" --kernel "$KERNEL" --image "$IMAGE" "$@"
+exec "$RUNNER" \
+    --kernel "$KERNEL" \
+    --image "$IMAGE" \
+    --suites-root "$REPO_ROOT/ktest/suites" \
+    "$@"

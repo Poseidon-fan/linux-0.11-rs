@@ -4,9 +4,8 @@
 //! scripting language (`.tst` files), and reports pass/fail per test.
 //!
 //! Two selection modes:
-//! * `--suite <name>` — run every `*.tst` in a suite (repeatable).
-//!   A bare name (e.g. `sh`) resolves under `--suites-root`; a path
-//!   with a slash is used as-is.
+//! * `--suite <name>` — run every `*.tst` in a suite, resolved as
+//!   `<suites-root>/<name>` (repeatable).
 //! * `--test-set <suite.test>` — run a single test by `suite.test_name`
 //!   (the `.tst` is implicit; repeatable).
 //!
@@ -57,7 +56,9 @@ struct Cli {
     /// Run every `.tst` in this suite. Either a bare suite name
     /// (resolved under `--suites-root`) or a path to a directory.
     /// Repeatable.
-    #[arg(long = "suite", value_name = "NAME|DIR")]
+    /// Run every `.tst` in this suite (resolved under `--suites-root`).
+    /// Repeatable.
+    #[arg(long = "suite", value_name = "NAME")]
     suites: Vec<String>,
 
     /// Run one specific test, addressed as `suite.test_name`
@@ -70,9 +71,10 @@ struct Cli {
     #[arg(long)]
     disable_reboot: bool,
 
-    /// Root directory containing the default set of suites
-    /// (used when neither `--suite` nor `--test-set` is given).
-    #[arg(long, value_name = "DIR", default_value = "ktest/suites")]
+    /// Root directory containing the suites. Falls back to the
+    /// `KTEST_SUITES_ROOT` environment variable; required if neither
+    /// is set.
+    #[arg(long, value_name = "DIR", env = "KTEST_SUITES_ROOT")]
     suites_root: PathBuf,
 
     /// Print captured serial output to stderr as soon as a test fails.
@@ -173,23 +175,12 @@ fn collect_tests(cli: &Cli) -> Result<Vec<TestCase>> {
         }
     }
     for spec in &cli.suites {
-        out.extend(load_suite(&resolve_suite(&cli.suites_root, spec))?);
+        out.extend(load_suite(&cli.suites_root.join(spec))?);
     }
     for spec in &cli.test_sets {
         out.push(load_test_set(&cli.suites_root, spec)?);
     }
     Ok(out)
-}
-
-/// `--suite foo` resolves to `<suites_root>/foo`; `--suite path/to/dir`
-/// is used verbatim. We disambiguate by whether the spec contains a
-/// path separator.
-fn resolve_suite(root: &Path, spec: &str) -> PathBuf {
-    if spec.contains('/') || spec.contains(std::path::MAIN_SEPARATOR) {
-        PathBuf::from(spec)
-    } else {
-        root.join(spec)
-    }
 }
 
 fn run_one(

@@ -30,5 +30,8 @@
         }
     },
     "remoteUser": "vscode",
+    "remoteEnv": {
+        "KTEST_SUITES_ROOT": "${containerWorkspaceFolder}/ktest/suites"
+    },
     "postCreateCommand": "sh -x ${containerWorkspaceFolder}/.devcontainer/setup.sh"
 }
