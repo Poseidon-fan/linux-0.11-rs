@@ -93,9 +93,13 @@ fn main() -> ExitCode {
         return ExitCode::from(EXIT_NO_TTY);
     };
 
-    tty::print_raw(tty::ENTER_ALT_SCREEN);
+    // Clear the screen on entry so we start from a known frame. We
+    // don't use the VT100 "alternate screen buffer" (`\x1b[?1049h`)
+    // because this kernel's VGA driver doesn't implement private-mode
+    // CSI sequences. Instead we explicitly clear on entry and exit.
+    tty::print_raw(tty::CLEAR_SCREEN);
     let exit_code = run(buffer);
-    tty::print_raw(tty::LEAVE_ALT_SCREEN);
+    tty::print_raw(tty::CLEAR_SCREEN);
     drop(tty);
     ExitCode::from(exit_code as u8)
 }

@@ -69,10 +69,12 @@ impl Drop for RawTty {
     fn drop(&mut self) {
         if let Some(prev) = self.saved.take() {
             set_termios(&prev);
-            // Make sure the cursor is visible and we're back at the
-            // bottom of the screen so the next shell prompt doesn't
-            // land on top of the editor's last frame.
-            print_raw("\x1b[?25h\x1b[m");
+            // Reset graphic attributes and put us on a fresh line so the
+            // next shell prompt doesn't share a row with our last
+            // status line. We intentionally avoid `\x1b[?25h` because
+            // this kernel's VGA driver doesn't implement DEC-private
+            // CSI sequences — the cursor is already visible by default.
+            print_raw("\x1b[m\r\n");
         }
     }
 }
@@ -103,13 +105,9 @@ pub fn print_raw(s: &str) {
     let _ = out.flush();
 }
 
-/// Builds an [Alternate Screen Buffer][asb] enter / leave pair.
-///
-/// [asb]: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-pub const ENTER_ALT_SCREEN: &str = "\x1b[?1049h";
-pub const LEAVE_ALT_SCREEN: &str = "\x1b[?1049l";
-
-/// Hides / shows the hardware cursor.
+/// Hides / shows the hardware cursor. Currently unused on this kernel
+/// because the VGA driver doesn't parse DEC-private CSI sequences,
+/// but kept for the day someone wants to flicker-proof the redraw.
 pub const HIDE_CURSOR: &str = "\x1b[?25l";
 pub const SHOW_CURSOR: &str = "\x1b[?25h";
 
