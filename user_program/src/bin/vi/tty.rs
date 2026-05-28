@@ -105,11 +105,11 @@ pub fn print_raw(s: &str) {
     let _ = out.flush();
 }
 
-/// Hides / shows the hardware cursor. Currently unused on this kernel
-/// because the VGA driver doesn't parse DEC-private CSI sequences,
-/// but kept for the day someone wants to flicker-proof the redraw.
-pub const HIDE_CURSOR: &str = "\x1b[?25l";
-pub const SHOW_CURSOR: &str = "\x1b[?25h";
+// `\x1b[?25l` / `\x1b[?25h` (hide / show cursor) would be the natural
+// way to hide the cursor between repaints to avoid flicker. We don't
+// emit them: this kernel's VGA driver doesn't parse DEC-private CSI
+// sequences, so the show-cursor on exit would be silently dropped and
+// the cursor would stay invisible across the editor's lifetime.
 
 /// Clears the screen and homes the cursor.
 pub const CLEAR_SCREEN: &str = "\x1b[2J\x1b[H";

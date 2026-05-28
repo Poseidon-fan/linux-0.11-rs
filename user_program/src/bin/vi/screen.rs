@@ -6,6 +6,18 @@
 //! diff-tracking complexity. Output goes through one `String` so the
 //! whole frame lands on the terminal in a single `write(2)`, avoiding
 //! flicker.
+//!
+//! ## Buffer vs screen columns
+//!
+//! The buffer stores raw bytes; the terminal renders them with variable
+//! widths — a literal `\t` expands to the next tab stop, control bytes
+//! print as `^X`, and runs past column 80 wrap. The editor cursor lives
+//! in **byte space** ([`Buffer::col`]) so motions, deletes, and reads
+//! work without surprises, and the renderer translates to **screen
+//! space** at draw time via [`byte_col_to_screen`]. Without that
+//! translation, a Tab in the buffer would put the screen cursor one
+//! column past the `\t` while the eye sees it eight columns later,
+//! making subsequent edits look broken.
 
 use alloc::{format, string::String};
 
@@ -26,8 +38,11 @@ pub const COLS: usize = 80;
 /// command line).
 pub const TEXT_ROWS: usize = ROWS - 1;
 
+/// Tab stop spacing in screen columns.
+pub const TAB_WIDTH: usize = 8;
+
 /// Scrolling viewport. `top` is the first buffer row visible; `left`
-/// is the first byte column.
+/// is the first **screen** column visible (i.e. tab-expanded).
 #[derive(Default)]
 pub struct Viewport {
     pub top: usize,
@@ -35,18 +50,23 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    /// Scrolls the viewport so the cursor at `(cur_row, cur_col)`
-    /// stays inside the visible rectangle.
-    pub fn track(&mut self, cur_row: usize, cur_col: usize) {
+    /// Scrolls the viewport so the cursor at buffer position
+    /// `(cur_row, cur_byte_col)` stays inside the visible rectangle.
+    ///
+    /// `cur_byte_col` is byte-based but we convert to screen columns
+    /// inside so vertical scrolling stays in sync with what the user
+    /// actually sees.
+    pub fn track(&mut self, buf: &Buffer, cur_row: usize, cur_byte_col: usize) {
         if cur_row < self.top {
             self.top = cur_row;
         } else if cur_row >= self.top + TEXT_ROWS {
             self.top = cur_row + 1 - TEXT_ROWS;
         }
-        if cur_col < self.left {
-            self.left = cur_col;
-        } else if cur_col >= self.left + COLS {
-            self.left = cur_col + 1 - COLS;
+        let screen_col = byte_col_to_screen(buf.line(cur_row), cur_byte_col);
+        if screen_col < self.left {
+            self.left = screen_col;
+        } else if screen_col >= self.left + COLS {
+            self.left = screen_col + 1 - COLS;
         }
     }
 }
@@ -58,16 +78,13 @@ impl Viewport {
 /// user can see what they're typing.
 pub fn draw(buf: &Buffer, view: &Viewport, status: &str) {
     let mut frame = String::with_capacity(ROWS * (COLS + 8));
-    frame.push_str(tty::HIDE_CURSOR);
     frame.push_str(&tty::move_to(1, 1));
 
     // Text area.
     for screen_row in 0..TEXT_ROWS {
         let buf_row = view.top + screen_row;
         if buf_row < buf.line_count() {
-            let line = buf.line(buf_row);
-            let slice = visible_slice(line, view.left, COLS);
-            frame.push_str(slice);
+            render_line_into(&mut frame, buf.line(buf_row), view.left, COLS);
         } else {
             frame.push('~');
         }
@@ -78,11 +95,13 @@ pub fn draw(buf: &Buffer, view: &Viewport, status: &str) {
     // Status / command line on the last row.
     draw_status(&mut frame, buf, status);
 
-    // Place the hardware cursor at the buffer cursor.
-    let cur_row = buf.row.saturating_sub(view.top) + 1;
-    let cur_col = buf.col.saturating_sub(view.left) + 1;
-    frame.push_str(&tty::move_to(cur_row as u16, cur_col as u16));
-    frame.push_str(tty::SHOW_CURSOR);
+    // Place the hardware cursor at the buffer cursor, translated to
+    // screen columns so it lands where the eye expects after tabs and
+    // control bytes have been expanded.
+    let cur_row_screen = buf.row.saturating_sub(view.top) + 1;
+    let cur_col_screen =
+        byte_col_to_screen(buf.line(buf.row), buf.col).saturating_sub(view.left) + 1;
+    frame.push_str(&tty::move_to(cur_row_screen as u16, cur_col_screen as u16));
 
     tty::print_raw(&frame);
 }
@@ -111,7 +130,7 @@ fn draw_status(frame: &mut String, buf: &Buffer, status: &str) {
     );
     let right = format!(" {},{} ", buf.row + 1, buf.col + 1);
     frame.push_str(&left);
-    let used = visible_width(&left) + visible_width(&right);
+    let used = left.len() + right.len();
     if COLS > used {
         for _ in 0..(COLS - used) {
             frame.push(' ');
@@ -127,25 +146,85 @@ fn draw_status(frame: &mut String, buf: &Buffer, status: &str) {
     }
 }
 
-/// Returns the substring of `line` that fits in `[left, left+width)`,
-/// expanding tabs to spaces along the way. We keep the math byte-based
-/// — multibyte text won't render perfectly but it won't crash either.
-fn visible_slice(line: &str, left: usize, width: usize) -> &str {
-    let bytes = line.as_bytes();
-    if left >= bytes.len() {
-        return "";
+// ---------------------------------------------------------------------------
+// Byte ↔ screen column translation
+// ---------------------------------------------------------------------------
+
+/// Returns the screen-column position of byte `byte_col` in `line`,
+/// after tabs have been expanded and control bytes rendered as `^X`.
+/// `byte_col` may sit one past the last byte (the standard
+/// insert-cursor convention) — we treat that as the position the next
+/// character would occupy.
+pub fn byte_col_to_screen(line: &str, byte_col: usize) -> usize {
+    let mut screen = 0usize;
+    for (i, &b) in line.as_bytes().iter().enumerate() {
+        if i == byte_col {
+            return screen;
+        }
+        screen += display_width_of(b, screen);
     }
-    let end = (left + width).min(bytes.len());
-    // `line` is `&str`, indexing with byte ranges is safe because we
-    // checked the bounds — but only for ASCII. For non-ASCII bytes the
-    // slice could end mid-codepoint; clamp to the nearest char boundary.
-    let mut e = end;
-    while e > left && !line.is_char_boundary(e) {
-        e -= 1;
-    }
-    &line[left..e]
+    screen
 }
 
-fn visible_width(s: &str) -> usize {
-    s.len()
+/// Appends the rendered form of `line[byte_left..]` to `frame`, clipped
+/// so the result occupies at most `cols` screen columns starting at
+/// screen column `screen_left`. Tabs become spaces up to the next tab
+/// stop, control bytes render as `^X` (caret-X), DEL renders as `^?`.
+fn render_line_into(frame: &mut String, line: &str, screen_left: usize, cols: usize) {
+    let mut screen = 0usize;
+    let max_screen = screen_left + cols;
+    for &b in line.as_bytes() {
+        let cell_w = display_width_of(b, screen);
+        let next_screen = screen + cell_w;
+
+        // Only emit the part of this cell that overlaps the viewport.
+        if next_screen > screen_left && screen < max_screen {
+            emit_cell(frame, b, screen, screen_left, max_screen);
+        }
+        screen = next_screen;
+        if screen >= max_screen {
+            break;
+        }
+    }
+}
+
+/// Width in screen columns of byte `b` when rendered at screen column
+/// `screen` (tabs need the column to figure out the next tab stop).
+fn display_width_of(b: u8, screen: usize) -> usize {
+    match b {
+        b'\t' => TAB_WIDTH - (screen % TAB_WIDTH),
+        0..=0x1f | 0x7f => 2, // `^X` notation
+        _ => 1,
+    }
+}
+
+/// Emits the visible portion of one logical cell (a single byte, but
+/// possibly expanded to many screen columns by tab or `^X`).
+fn emit_cell(frame: &mut String, b: u8, screen: usize, screen_left: usize, max_screen: usize) {
+    let cell_w = display_width_of(b, screen);
+    // Determine how many of this cell's columns intersect the viewport.
+    let visible_from = screen.max(screen_left) - screen;
+    let visible_to = (screen + cell_w).min(max_screen) - screen;
+
+    match b {
+        b'\t' => {
+            for _ in visible_from..visible_to {
+                frame.push(' ');
+            }
+        }
+        0..=0x1f => {
+            // Render as `^X` (X is `b ^ 0x40`).
+            let glyphs = [b'^', b ^ 0x40];
+            for g in &glyphs[visible_from..visible_to] {
+                frame.push(*g as char);
+            }
+        }
+        0x7f => {
+            let glyphs = [b'^', b'?'];
+            for g in &glyphs[visible_from..visible_to] {
+                frame.push(*g as char);
+            }
+        }
+        _ => frame.push(b as char),
+    }
 }

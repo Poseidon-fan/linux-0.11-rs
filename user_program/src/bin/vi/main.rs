@@ -171,7 +171,7 @@ fn run(buffer: Buffer) -> i32 {
 
     let mut reader = Reader::new(tty::read_byte);
     loop {
-        ed.viewport.track(ed.buffer.row, ed.buffer.col);
+        ed.viewport.track(&ed.buffer, ed.buffer.row, ed.buffer.col);
         let visible_status = match ed.mode {
             Mode::CommandLine(kind) => {
                 let prefix = match kind {
@@ -487,9 +487,29 @@ fn handle_insert(ed: &mut Editor, key: Key) {
             ed.last_insert.push('\t');
         }
         Key::Left => motion::left(&mut ed.buffer),
-        Key::Right => motion::right(&mut ed.buffer),
-        Key::Up => motion::up(&mut ed.buffer),
-        Key::Down => motion::down(&mut ed.buffer),
+        // In insert mode the cursor can sit one past the last byte — the
+        // position where the next typed character lands. `motion::right`
+        // is the normal-mode form that stops on the last character, so
+        // we step the cursor by hand here instead.
+        Key::Right => {
+            if ed.buffer.col < ed.buffer.lines[ed.buffer.row].len() {
+                ed.buffer.col += 1;
+            }
+        }
+        // Up / Down here use the same insert-mode clamp: the cursor may
+        // land one past the end of the destination line.
+        Key::Up => {
+            if ed.buffer.row > 0 {
+                ed.buffer.row -= 1;
+                ed.buffer.clamp_col(true);
+            }
+        }
+        Key::Down => {
+            if ed.buffer.row + 1 < ed.buffer.lines.len() {
+                ed.buffer.row += 1;
+                ed.buffer.clamp_col(true);
+            }
+        }
         Key::Ctrl(b'w') => edit::drop_word_left(&mut ed.buffer),
         _ => {}
     }
