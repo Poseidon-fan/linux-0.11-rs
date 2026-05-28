@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every crate in the repo with its own Cargo.toml.
+        # The nightly-only crates (kernel/user_lib/user_program/user_lib_macros)
+        # pick up their toolchain from their per-crate rust-toolchain.toml;
+        # the stable crates use the action's default stable toolchain.
+        crate:
+          - kernel
+          - user_lib
+          - user_lib_macros
+          - user_program
+          - ktest
+          - mbrkit
+          - miniximg
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}
+
+      - name: cargo fmt --check
+        working-directory: ${{ matrix.crate }}
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: ${{ matrix.crate }}
+        run: cargo clippy --all-targets -- -D warnings
+
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@v1.39.0
+
+  e2e:
+    name: ktest end-to-end
+    runs-on: ubuntu-latest
+    # Skip the long e2e job on doc-only changes.
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 \
+            binutils-x86-64-linux-gnu \
+            python3 \
+            dosfstools
+
+      - name: Cache cargo registry + targets
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            kernel
+            user_lib
+            user_lib_macros
+            user_program
+            ktest
+            mbrkit
+            miniximg
+
+      - name: Install mbrkit + miniximg
+        run: |
+          cargo install --path mbrkit --locked
+          cargo install --path miniximg/miniximg-cli --locked
+
+      - name: Build kernel (serial console)
+        run: make -C kernel Image-console-release
+
+      - name: Build disk image
+        run: tools/build-disk.sh
+
+      - name: Run ktest
+        env:
+          KERNEL: ${{ github.workspace }}/kernel/Image-console-release
+          IMAGE:  ${{ github.workspace }}/disk.img
+        run: tools/run-tests.sh --show-log-on-fail
+
+      - name: Upload serial logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ktest-serial-logs
+          path: target/test-out/
+          if-no-files-found: ignore
