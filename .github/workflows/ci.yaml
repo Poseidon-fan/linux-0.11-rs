@@ -93,8 +93,19 @@ jobs:
       - name: Build kernel (serial console)
         run: make -C kernel Image-console-release
 
+      - name: Build user programs (explicit)
+        run: make -C user_program all
+
       - name: Build disk image
-        run: tools/build-disk.sh
+        run: tools/build-disk.sh --no-build
+
+      - name: Sanity-check image contents
+        run: |
+          echo "--- user_program/aout/ ---"
+          ls -la user_program/aout/ | head -20
+          echo "--- disk.img ---"
+          ls -la disk.img
+          mbrkit verify disk.img | head -20
 
       - name: Run ktest
         env:
