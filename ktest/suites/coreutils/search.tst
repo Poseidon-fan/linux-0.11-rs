@@ -112,7 +112,7 @@
 > mkdir -p /tmp/kt-search/sub
 > touch /tmp/kt-search/sub/leaf
 > find /tmp/kt-search
-~ /tmp/kt-search$
+~ /tmp/kt-search$|/tmp/kt-search\b
 ~ /tmp/kt-search/sub
 ~ /tmp/kt-search/sub/leaf
 

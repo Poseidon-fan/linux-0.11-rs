@@ -6,7 +6,6 @@
 //! fragments are subject to field splitting and globbing afterwards.
 
 use alloc::{
-    borrow::ToOwned,
     string::{String, ToString},
     vec::Vec,
 };
@@ -331,21 +330,49 @@ fn split_fields(tagged: &[Tag], ifs: &str) -> Fields {
 
 /// Performs pathname expansion: if `field` contains any unquoted glob
 /// metacharacters, expand it against the filesystem; otherwise return it
-/// as-is. We can't easily track per-byte quoting after split, so we use a
-/// simple heuristic: glob whenever `field` contains `*`, `?`, or `[`.
-/// Quoted glob metas are escaped by the parser (single-quoted segments
-/// preserve them as literal text in the field string), so the heuristic is
-/// imperfect but workable for typical shell input.
+/// as-is. We use a simple heuristic over the raw field string:
+/// a backslash-escaped meta (`\*`, `\?`, `\[`) doesn't trigger globbing
+/// and is unescaped in place; an unescaped meta does.
 fn glob_expand(field: &str) -> Vec<String> {
-    if !field.bytes().any(|b| matches!(b, b'*' | b'?' | b'[')) {
-        return alloc::vec![field.to_owned()];
+    let mut has_unescaped_meta = false;
+    let mut iter = field.bytes().peekable();
+    while let Some(b) = iter.next() {
+        if b == b'\\' {
+            iter.next();
+            continue;
+        }
+        if matches!(b, b'*' | b'?' | b'[') {
+            has_unescaped_meta = true;
+            break;
+        }
+    }
+    if !has_unescaped_meta {
+        return alloc::vec![unescape_globs(field)];
     }
     let matches = match_glob(field);
     if matches.is_empty() {
-        alloc::vec![field.to_owned()]
+        alloc::vec![unescape_globs(field)]
     } else {
         matches
     }
+}
+
+/// Strip backslash before glob metacharacters (`\*` → `*`, `\?` → `?`,
+/// `\[` → `[`). Leaves every other backslash sequence alone.
+fn unescape_globs(field: &str) -> String {
+    let mut out = String::with_capacity(field.len());
+    let bytes = field.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b'*' | b'?' | b'[') {
+            out.push(bytes[i + 1] as char);
+            i += 2;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Splits `pattern` by `/` and walks the filesystem, matching each segment

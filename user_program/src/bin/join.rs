@@ -60,6 +60,29 @@ fn main() -> ExitCode {
             k.to_string()
         }
     };
+    // Split a line on the active delimiter. Mirrors `key`'s logic so
+    // we can take both the key field and the remaining fields out.
+    let split_line = |line: &str| -> Vec<String> {
+        if delim == b' ' {
+            line.split(|c: char| c == ' ' || c == '\t')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            line.split(delim as char).map(|s| s.to_string()).collect()
+        }
+    };
+    let join_with_delim = |fields: &[String]| -> String {
+        let sep = if delim == b' ' { ' ' } else { delim as char };
+        let mut s = String::new();
+        for (i, f) in fields.iter().enumerate() {
+            if i > 0 {
+                s.push(sep);
+            }
+            s.push_str(f);
+        }
+        s
+    };
     let mut out = io::stdout();
     let mut buf = String::new();
     use core::fmt::Write as _;
@@ -72,7 +95,23 @@ fn main() -> ExitCode {
         } else if kb < ka {
             j += 1;
         } else {
-            let _ = writeln!(buf, "{} {} {}", a[i], delim as char, b[j]);
+            // GNU join output: `<key> <a's other fields> <b's other fields>`.
+            let parts_a = split_line(&a[i]);
+            let parts_b = split_line(&b[j]);
+            let rest_a: Vec<String> = parts_a
+                .iter()
+                .enumerate()
+                .filter_map(|(k, s)| (k + 1 != f1).then(|| s.clone()))
+                .collect();
+            let rest_b: Vec<String> = parts_b
+                .iter()
+                .enumerate()
+                .filter_map(|(k, s)| (k + 1 != f2).then(|| s.clone()))
+                .collect();
+            let mut row = alloc::vec![ka.clone()];
+            row.extend(rest_a);
+            row.extend(rest_b);
+            let _ = writeln!(buf, "{}", join_with_delim(&row));
             i += 1;
             j += 1;
         }

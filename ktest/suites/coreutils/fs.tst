@@ -17,7 +17,8 @@
 
 > rmdir /tmp/kt-fs/d2/d3/d4
 > ls /tmp/kt-fs/d2/d3
-~ ^\s*$|total 0
+> echo rmdir_rc=$?
+< rmdir_rc=0
 
 # --- touch -------------------------------------------------------------
 

@@ -39,7 +39,7 @@ fn main() -> ExitCode {
     };
 
     let edits = lcs_diff(&lines_a, &lines_b);
-    if edits.is_empty() {
+    if edits.iter().all(|e| matches!(e, Edit::Keep)) {
         return ExitCode::SUCCESS;
     }
     print_normal_diff(&lines_a, &lines_b, &edits);

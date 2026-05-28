@@ -71,10 +71,11 @@ fn main() -> ExitCode {
 fn du(path_str: &str, cli: &DuArgs, block_size: u64) -> Result<u64> {
     let meta = fs::metadata(path_str).with_context(|| path_str.to_string())?;
     if !meta.is_dir() {
+        // GNU du prints non-directory arguments too: only the `-a` and
+        // recursion bits skip files _under_ directories, but a file
+        // passed directly is always reported.
         let blocks = blocks_used(meta.len(), block_size);
-        if cli.all {
-            print_size(blocks * block_size, path_str, block_size, cli.human);
-        }
+        print_size(blocks * block_size, path_str, block_size, cli.human);
         return Ok(blocks);
     }
 

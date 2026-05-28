@@ -16,10 +16,11 @@ fn main() -> ExitCode {
     let name = if let Ok(data) = fs::read_to_string("/etc/passwd") {
         data.lines()
             .find_map(|l| {
-                let mut p = l.splitn(3, ':');
+                let mut p = l.splitn(4, ':');
                 let n = p.next()?;
-                let _ = p.next()?;
-                if p.next()?.parse::<u32>().ok()? == euid {
+                let _passwd = p.next()?;
+                let uid_field = p.next()?;
+                if uid_field.parse::<u32>().ok()? == euid {
                     Some(n.to_string())
                 } else {
                     None

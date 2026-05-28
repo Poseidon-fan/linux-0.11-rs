@@ -868,14 +868,15 @@ pub fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
         current.push(raw);
         match create_dir(current.as_path()) {
             Ok(()) => {}
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-                if !metadata(current.as_path())
+            // Treat any error (AlreadyExists from EEXIST, NotFound from
+            // EEXIST-on-root, etc.) as success when the path turns out
+            // to already be a directory — matches std behavior and is
+            // robust against host kernels that report mkdir() of an
+            // existing path with a non-EEXIST errno.
+            Err(_)
+                if metadata(current.as_path())
                     .map(|m| m.is_dir())
-                    .unwrap_or(false)
-                {
-                    return Err(Error::from(ErrorKind::AlreadyExists));
-                }
-            }
+                    .unwrap_or(false) => {}
             Err(err) => return Err(err),
         }
     }
@@ -945,14 +946,21 @@ pub fn hard_link<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> Result
 ///   the owner.
 /// - Changing the owner clears the setuid and setgid bits.
 pub fn chown<P: AsRef<Path>>(path: P, uid: Option<u32>, gid: Option<u32>) -> Result<()> {
-    let path_c = path_cstring(path.as_ref())?;
-    syscall::fs::chown(
-        path_c.as_ptr().cast(),
-        uid.unwrap_or(u32::MAX),
-        gid.unwrap_or(u32::MAX),
-    )
-    .map(|_| ())
-    .map_err(Error::from)
+    let path = path.as_ref();
+    // The kernel chown syscall writes both uid and gid unconditionally,
+    // so fill in any None slot with the existing value via stat to keep
+    // the "leave unchanged" semantics expected by chown(1).
+    let (uid, gid) = match (uid, gid) {
+        (Some(u), Some(g)) => (u, g),
+        (u, g) => {
+            let m = metadata(path)?;
+            (u.unwrap_or(m.uid()), g.unwrap_or(m.gid()))
+        }
+    };
+    let path_c = path_cstring(path)?;
+    syscall::fs::chown(path_c.as_ptr().cast(), uid, gid)
+        .map(|_| ())
+        .map_err(Error::from)
 }
 
 // ---------------------------------------------------------------------------

@@ -257,6 +257,14 @@ impl<'a> Lexer<'a> {
                         if c == b'\n' {
                             // Line continuation.
                             self.pos += 1;
+                        } else if matches!(c, b'*' | b'?' | b'[') {
+                            // Escape a glob meta as `\X` so pathname
+                            // expansion treats it as a literal byte
+                            // (glob_expand strips the backslash, but
+                            // skips globbing if every meta was escaped).
+                            lit.push('\\');
+                            lit.push(c as char);
+                            self.pos += 1;
                         } else {
                             lit.push(c as char);
                             self.pos += 1;

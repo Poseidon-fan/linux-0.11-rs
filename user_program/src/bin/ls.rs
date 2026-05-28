@@ -215,7 +215,7 @@ fn write_entries(
     }
 }
 
-/// Writes entries in long format.
+/// Writes entries in long format: `mode nlink owner group size mtime name`.
 fn write_long_entries(
     out: &mut impl Write,
     entries: &[ListingEntry],
@@ -226,30 +226,150 @@ fn write_long_entries(
         writeln!(out, "total {}", total_blocks(entries))?;
     }
 
-    let size_width = entries
+    let owner_lookup = OwnerLookup::load();
+    let nlink_w = entries
         .iter()
-        .map(|entry| decimal_width(entry.metadata.len()))
+        .map(|e| decimal_width(e.metadata.nlink()))
         .max()
         .unwrap_or(1);
-    let inode_width = entries
+    let size_w = entries
         .iter()
-        .map(|entry| decimal_width(entry.metadata.ino()))
+        .map(|e| decimal_width(e.metadata.len()))
+        .max()
+        .unwrap_or(1);
+    let owner_w = entries
+        .iter()
+        .map(|e| owner_lookup.user(e.metadata.uid()).len())
+        .max()
+        .unwrap_or(1);
+    let group_w = entries
+        .iter()
+        .map(|e| owner_lookup.group(e.metadata.gid()).len())
         .max()
         .unwrap_or(1);
 
     for entry in entries {
+        let user = owner_lookup.user(entry.metadata.uid());
+        let group = owner_lookup.group(entry.metadata.gid());
         let line = format!(
-            "{} {:>size_width$} {:>inode_width$} {}\n",
+            "{} {:>nlink_w$} {:<owner_w$} {:<group_w$} {:>size_w$} {} {}\n",
             mode_string(&entry.metadata),
+            entry.metadata.nlink(),
+            user,
+            group,
             entry.metadata.len(),
-            entry.metadata.ino(),
+            format_mtime(entry.metadata.mtime()),
             decorated_name(entry.name.as_str(), &entry.metadata, args.classify),
-            size_width = size_width,
-            inode_width = inode_width,
+            nlink_w = nlink_w,
+            owner_w = owner_w,
+            group_w = group_w,
+            size_w = size_w,
         );
         out.write_all(line.as_bytes())?;
     }
     Ok(())
+}
+
+/// Looks up user and group names from `/etc/passwd` and `/etc/group`,
+/// falling back to numeric ids when a name is missing or the files are
+/// unreadable.
+struct OwnerLookup {
+    users: Vec<(u32, String)>,
+    groups: Vec<(u32, String)>,
+}
+
+impl OwnerLookup {
+    fn load() -> Self {
+        Self {
+            users: read_id_name("/etc/passwd"),
+            groups: read_id_name("/etc/group"),
+        }
+    }
+
+    fn user(&self, uid: u32) -> String {
+        self.users
+            .iter()
+            .find(|(id, _)| *id == uid)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| format!("{}", uid))
+    }
+
+    fn group(&self, gid: u32) -> String {
+        self.groups
+            .iter()
+            .find(|(id, _)| *id == gid)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| format!("{}", gid))
+    }
+}
+
+/// Parses `name:_:id:...`-style colon files (passwd / group).
+fn read_id_name(path: &str) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    let Ok(contents) = fs::read_to_string(path) else {
+        return out;
+    };
+    for line in contents.lines() {
+        let mut parts = line.splitn(4, ':');
+        let Some(name) = parts.next() else { continue };
+        let _x = parts.next();
+        let Some(id_str) = parts.next() else { continue };
+        let Ok(id) = id_str.parse::<u32>() else {
+            continue;
+        };
+        out.push((id, name.to_string()));
+    }
+    out
+}
+
+/// Formats a Unix mtime (seconds since epoch) as `MMM DD HH:MM`, matching
+/// the abbreviated form GNU `ls` uses for "recent" files. We have no
+/// timezone or "is it within six months?" logic, so this is approximate.
+fn format_mtime(secs: i64) -> String {
+    let (year, month, day, hour, minute) = unix_to_calendar(secs);
+    let month_name = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][(month - 1) as usize];
+    let _ = year;
+    format!("{} {:>2} {:02}:{:02}", month_name, day, hour, minute)
+}
+
+/// Naive Unix-time → (year, month, day, hour, minute) conversion in UTC.
+fn unix_to_calendar(secs: i64) -> (i32, u32, u32, u32, u32) {
+    let mut days = secs.div_euclid(86_400);
+    let secs_of_day = secs.rem_euclid(86_400) as u32;
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+
+    let mut year: i32 = 1970;
+    loop {
+        let dy = if is_leap_year(year) { 366 } else { 365 };
+        if days < dy {
+            break;
+        }
+        days -= dy;
+        year += 1;
+    }
+    let months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut month: u32 = 1;
+    for &m in &months {
+        let dm = if month == 2 && is_leap_year(year) {
+            29
+        } else {
+            m
+        };
+        if days < dm {
+            break;
+        }
+        days -= dm;
+        month += 1;
+    }
+    let day = days as u32 + 1;
+    (year, month, day, hour, minute)
+}
+
+fn is_leap_year(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 /// Writes entries one per line.
