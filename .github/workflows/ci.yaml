@@ -117,6 +117,21 @@ jobs:
             -nographic -serial mon:stdio </dev/null 2>&1 | head -200
           echo "(boot diagnostic complete)"
 
+      - name: Upload images for offline reproduction
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-images
+          path: |
+            kernel/Image-console-release
+            disk.img
+            user_program/aout
+
+      - name: Print binutils + qemu versions
+        run: |
+          x86_64-linux-gnu-ld --version | head -1
+          x86_64-linux-gnu-as --version | head -1
+          qemu-system-i386 --version | head -1
+
       - name: Run ktest
         env:
           KERNEL: ${{ github.workspace }}/kernel/Image-console-release
