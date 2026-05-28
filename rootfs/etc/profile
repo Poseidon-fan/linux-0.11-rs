@@ -1,5 +1,5 @@
 PATH=/bin:/usr/bin
-HOME=/usr/root
+HOME=/root
 HOSTNAME=linux-rs
 PS1='[\u@\h \w]\$ '
 PS2='> '

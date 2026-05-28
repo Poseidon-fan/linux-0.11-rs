@@ -141,7 +141,7 @@ fn user_init() -> ! {
 
         let status = Command::new("/bin/sh")
             .arg0("-/bin/sh")
-            .env("HOME", "/usr/root")
+            .env("HOME", "/root")
             .stdin(Stdio::from(stdin))
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))

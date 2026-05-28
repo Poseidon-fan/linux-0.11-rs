@@ -9,9 +9,9 @@
 #   /bin        — every compiled binary from user_program/aout/
 #   /dev        — character / block device nodes
 #   /etc        — rc, profile, passwd, group, hostname, motd
-#   /tmp        — empty scratch directory (0777)
+#   /tmp        — empty scratch directory (1777)
 #   /mnt        — empty mount point
-#   /usr/root   — root's home directory with a .profile
+#   /root       — root's home directory with a .profile
 #
 # Usage:
 #   tools/build-disk.sh                       # build with defaults
@@ -172,12 +172,7 @@ mode = "1777"
 
 [[mapping]]
 kind = "dir"
-target = "/usr"
-mode = "0755"
-
-[[mapping]]
-kind = "dir"
-target = "/usr/root"
+target = "/root"
 mode = "0700"
 
 # --- Device nodes -------------------------------------------------------
@@ -226,7 +221,7 @@ major = 1
 minor = 3
 mode = "0666"
 
-# --- Template files under /etc and /usr/root ----------------------------
+# --- Template files under /etc and /root --------------------------------
 EOF
 
     # Copy the entire rootfs template tree as individual file mappings,

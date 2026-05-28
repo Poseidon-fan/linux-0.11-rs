@@ -9,7 +9,7 @@ $ cd kernel && make run
 Welcome to linux-0.11-rs.
 https://github.com/Poseidon-fan/linux-0.11-rs
 (login: 0 @ linux-rs :: Wed May 27 09:35:43 UTC 2026)
-[root@linux-rs /usr/root]# ls /bin | wc -l
+[root@linux-rs /root]# ls /bin | wc -l
 69
 ```
 
@@ -53,7 +53,7 @@ cd kernel && make run            # VGA console
 cd kernel && make run-console    # serial console (-nographic)
 ```
 
-You'll land at a shell prompt in `/usr/root`. Try:
+You'll land at a shell prompt in `/root`. Try:
 
 ```sh
 ls /bin                              # browse what's installed
@@ -84,7 +84,7 @@ user_program/        ~80 coreutils + the `sh` shell
 mbrkit/              MBR disk-image CLI (also on crates.io)
 miniximg/            Minix-fs image CLI and library
 platform/            custom i386-unknown-none target spec
-rootfs/              disk-image content template (/etc, /usr/root, …)
+rootfs/              disk-image content template (/etc, /root, …)
 tools/               developer scripts (build-disk.sh and friends)
 tutorial/            mdbook walkthrough (work in progress)
 .devcontainer/       ready-to-use dev environment
