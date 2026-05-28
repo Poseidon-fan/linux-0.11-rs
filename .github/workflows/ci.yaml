@@ -93,44 +93,8 @@ jobs:
       - name: Build kernel (serial console)
         run: make -C kernel Image-console-release
 
-      - name: Build user programs (explicit)
-        run: make -C user_program all
-
       - name: Build disk image
-        run: tools/build-disk.sh --no-build
-
-      - name: Sanity-check image contents
-        run: |
-          echo "--- user_program/aout/ ---"
-          ls -la user_program/aout/ | head -20
-          echo "--- disk.img ---"
-          ls -la disk.img
-          mbrkit verify disk.img | head -20
-
-      - name: Boot QEMU standalone (diagnostic)
-        run: |
-          set +e
-          timeout 20 qemu-system-i386 \
-            -m 16M -boot a \
-            -drive file=kernel/Image-console-release,format=raw,if=floppy \
-            -drive file=disk.img,format=raw,if=ide,index=0 \
-            -nographic -serial mon:stdio </dev/null 2>&1 | head -200
-          echo "(boot diagnostic complete)"
-
-      - name: Upload images for offline reproduction
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-images
-          path: |
-            kernel/Image-console-release
-            disk.img
-            user_program/aout
-
-      - name: Print binutils + qemu versions
-        run: |
-          x86_64-linux-gnu-ld --version | head -1
-          x86_64-linux-gnu-as --version | head -1
-          qemu-system-i386 --version | head -1
+        run: tools/build-disk.sh
 
       - name: Run ktest
         env:
