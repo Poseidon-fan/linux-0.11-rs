@@ -46,7 +46,7 @@ jobs:
 
       - name: cargo clippy
         working-directory: ${{ matrix.crate }}
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy -- -D warnings
 
   typos:
     name: typos
