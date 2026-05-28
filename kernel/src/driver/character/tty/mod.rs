@@ -106,18 +106,6 @@ const FLUSH_INPUT: u32 = 0;
 const FLUSH_OUTPUT: u32 = 1;
 const FLUSH_BOTH: u32 = 2;
 
-#[cfg(feature = "serial-console")]
-const COM1_TERMIOS: Termios = {
-    use user_lib::syscall::tty::LocalMode;
-    let mut t = Termios::serial_default();
-    t.local_mode = LocalMode::ISIG
-        .union(LocalMode::ICANON)
-        .union(LocalMode::ECHO)
-        .union(LocalMode::ECHOCTL)
-        .union(LocalMode::ECHOKE);
-    t
-};
-
 static DEVICES: [TtyDevice; DEVICE_COUNT] = [
     TtyDevice::new(
         Termios::console_default(),
@@ -125,16 +113,7 @@ static DEVICES: [TtyDevice; DEVICE_COUNT] = [
         nop_configure,
     ),
     TtyDevice::new(
-        {
-            #[cfg(feature = "serial-console")]
-            {
-                COM1_TERMIOS
-            }
-            #[cfg(not(feature = "serial-console"))]
-            {
-                Termios::serial_default()
-            }
-        },
+        Termios::serial_default(),
         super::serial::flush_output,
         super::serial::configure,
     ),

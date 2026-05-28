@@ -18,6 +18,7 @@
                     "user_lib/Cargo.toml",
                     "user_lib_macros/Cargo.toml",
                     "user_program/Cargo.toml",
+                    "ktest/Cargo.toml",
                     "miniximg/Cargo.toml",
                     "mbrkit/Cargo.toml"
                 ],

@@ -49,6 +49,18 @@ repos:
         entry: bash -c 'cd user_program && cargo clippy -- -D warnings'
         pass_filenames: false
         files: ^(user_program|user_lib)/
+      - id: ktest-fmt
+        name: ktest-fmt
+        language: system
+        entry: bash -c 'cd ktest && cargo fmt'
+        pass_filenames: false
+        files: ^ktest/
+      - id: ktest-clippy
+        name: ktest-clippy
+        language: system
+        entry: bash -c 'cd ktest && cargo clippy -- -D warnings'
+        pass_filenames: false
+        files: ^ktest/
       - id: miniximg-fmt
         name: miniximg-fmt
         language: system
