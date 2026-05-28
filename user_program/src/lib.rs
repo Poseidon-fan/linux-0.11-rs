@@ -5,4 +5,5 @@
 extern crate alloc;
 
 pub mod cli;
+pub mod compiler;
 pub mod fnmatch;
