@@ -233,6 +233,11 @@ fn report_fail(test: &TestCase, msg: &str, runner: Option<&Runner>, cli: &Cli) {
 fn drive(runner: &mut Runner, script: &Script) -> Result<()> {
     let mut step_timeout = DEFAULT_STEP_TIMEOUT;
     let mut last_chunk = String::new();
+    // Assertion failures (Contains/Matches) accumulate so one run
+    // surfaces every mismatch in the script instead of stopping at
+    // the first. I/O-level errors (timeout, qemu died, bad regex)
+    // still abort immediately.
+    let mut failures: Vec<String> = Vec::new();
     for (i, step) in script.steps.iter().enumerate() {
         let line = script.line_numbers[i];
         let where_ = || format!("{}:{}", script.name, line);
@@ -244,24 +249,24 @@ fn drive(runner: &mut Runner, script: &Script) -> Result<()> {
             }
             Step::ContainsLine(needle) => {
                 if !last_chunk.contains(needle) {
-                    bail!(
+                    failures.push(format!(
                         "{}: expected output to contain `{}`, got:\n{}",
                         where_(),
                         needle,
                         last_chunk
-                    );
+                    ));
                 }
             }
             Step::MatchesRegex(pat) => {
                 let re = regex::Regex::new(pat)
                     .with_context(|| format!("{}: bad regex `{}`", where_(), pat))?;
                 if !re.is_match(&last_chunk) {
-                    bail!(
+                    failures.push(format!(
                         "{}: expected output to match /{}/, got:\n{}",
                         where_(),
                         pat,
                         last_chunk
-                    );
+                    ));
                 }
             }
             Step::SendRaw(payload) => {
@@ -288,6 +293,14 @@ fn drive(runner: &mut Runner, script: &Script) -> Result<()> {
             Step::Timeout(secs) => step_timeout = Duration::from_secs(*secs),
             Step::Sleep(ms) => std::thread::sleep(Duration::from_millis(*ms)),
         }
+    }
+    if !failures.is_empty() {
+        let summary = format!(
+            "{} assertion(s) failed:\n\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
+        bail!(summary);
     }
     Ok(())
 }

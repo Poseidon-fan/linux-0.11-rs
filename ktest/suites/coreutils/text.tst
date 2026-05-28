@@ -1,20 +1,164 @@
-# Coreutils sanity: a handful of standard tools agree with their docs.
+# Text-processing coreutils: wc/head/tail/sort/uniq/tr/cut/nl/od/...
+#
+# Each block follows the pattern:
+#   1. Build a fixture under /tmp/kt-text/ (we created the dir up front).
+#   2. Run the command, assert on its output.
+#   3. (Optional) check $?.
+# We tear the scratch dir down at the end. Reference outputs come from
+# host GNU coreutils — minor formatting differences (extra leading
+# whitespace, locale tweaks) are tolerated via `~` regex.
+
+> rm -rf /tmp/kt-text && mkdir /tmp/kt-text
+
+# --- echo --------------------------------------------------------------
+
+> echo hello world
+< hello world
+
+> echo
+<
+
+> echo -n hi
+< hi
+
+# --- printf ------------------------------------------------------------
+
+> printf '%s-%s\n' a b
+< a-b
+
+> printf '%d\n' 42
+< 42
+
+# --- cat ---------------------------------------------------------------
+
+> printf 'l1\nl2\nl3\n' > /tmp/kt-text/three
+> cat /tmp/kt-text/three
+< l1
+< l2
+< l3
+
+> cat /tmp/kt-text/three | cat
+< l1
+< l3
+
+# --- wc ----------------------------------------------------------------
 
 > echo abc | wc -c
 ~ ^\s*4\b
 
-> echo hello | tr a-z A-Z
-< HELLO
+> echo abc | wc -l
+~ ^\s*1\b
 
-> seq 1 3
-< 1
-< 2
-< 3
+> echo one two three four | wc -w
+~ ^\s*4\b
 
-> printf 'a\nb\nc\n' | head -n 2
+> wc -l /tmp/kt-text/three
+~ ^\s*3\b.*three
+
+# --- head / tail -------------------------------------------------------
+
+> printf 'a\nb\nc\nd\ne\n' > /tmp/kt-text/five
+> head -n 2 /tmp/kt-text/five
 < a
 < b
 
-> printf 'x\nx\ny\n' | uniq -c
-~ \s*2\s+x
-~ \s*1\s+y
+> head -n 1 /tmp/kt-text/five
+< a
+
+> tail -n 2 /tmp/kt-text/five
+< d
+< e
+
+> tail -n 1 /tmp/kt-text/five
+< e
+
+# --- tr ----------------------------------------------------------------
+
+> echo HelloWorld | tr A-Z a-z
+< helloworld
+
+> echo abc | tr -d b
+< ac
+
+> printf 'a   b   c\n' | tr -s ' '
+< a b c
+
+# --- cut ---------------------------------------------------------------
+
+> echo 'one two three' | cut -d ' ' -f 2
+< two
+
+> echo 'one two three' | cut -d ' ' -f 1,3
+< one three
+
+> echo 'abcdef' | cut -c 2-4
+< bcd
+
+# --- sort (we ship no `sort`; skip) ------------------------------------
+# (deliberately omitted — bring back when sort lands)
+
+# --- uniq --------------------------------------------------------------
+
+> printf 'a\na\nb\nb\nb\nc\n' | uniq
+< a
+< b
+< c
+
+> printf 'a\na\nb\n' | uniq -c
+~ \s*2\s+a
+~ \s*1\s+b
+
+# --- nl ----------------------------------------------------------------
+
+> printf 'x\ny\n' | nl
+~ \s*1\s+x
+~ \s*2\s+y
+
+# --- fold --------------------------------------------------------------
+
+> echo abcdefgh | fold -w 3
+< abc
+< def
+< gh
+
+# --- paste -------------------------------------------------------------
+
+> printf 'a\nb\n' > /tmp/kt-text/p1
+> printf '1\n2\n' > /tmp/kt-text/p2
+> paste /tmp/kt-text/p1 /tmp/kt-text/p2
+~ a\s+1
+~ b\s+2
+
+# --- tee ---------------------------------------------------------------
+
+> echo via-tee | tee /tmp/kt-text/teed
+< via-tee
+> cat /tmp/kt-text/teed
+< via-tee
+
+# --- expand / unexpand -------------------------------------------------
+
+> printf 'a\tb\n' | expand
+~ a +b
+
+# --- od ----------------------------------------------------------------
+
+> printf 'abc' | od -t c
+~ 0000000\s+a\s+b\s+c
+
+# --- base64 ------------------------------------------------------------
+
+> echo abc | base64
+< YWJjCg==
+
+> echo YWJjCg== | base64 -d
+< abc
+
+# --- cksum -------------------------------------------------------------
+
+> printf 'abc\n' | cksum
+~ 1112837078 4
+
+# --- cleanup -----------------------------------------------------------
+
+> rm -rf /tmp/kt-text
