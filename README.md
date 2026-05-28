@@ -74,6 +74,18 @@ cargo install --path mbrkit
 cargo install --path miniximg/miniximg-cli
 ```
 
+## ✅ Tests
+
+End-to-end tests boot the kernel under QEMU and drive the serial console
+from short `.tst` scripts under `ktest/suites/`.
+
+```bash
+tools/run-tests.sh                              # run everything
+tools/run-tests.sh --suite ktest/suites/sh      # one suite
+tools/run-tests.sh --test-set sh/basic          # one test
+tools/run-tests.sh --disable-reboot             # share one QEMU across tests
+```
+
 ## 🗂️ Repository layout
 
 ```
@@ -81,11 +93,12 @@ kernel/              The kernel itself
 user_lib/            std-style user-space library
 user_lib_macros/     proc-macro: #[user_lib::main]
 user_program/        ~80 coreutils + the `sh` shell
+ktest/               end-to-end test runner driving QEMU over serial
 mbrkit/              MBR disk-image CLI (also on crates.io)
 miniximg/            Minix-fs image CLI and library
 platform/            custom i386-unknown-none target spec
 rootfs/              disk-image content template (/etc, /root, …)
-tools/               developer scripts (build-disk.sh and friends)
+tools/               developer scripts (build-disk.sh, run-tests.sh, …)
 tutorial/            mdbook walkthrough (work in progress)
 .devcontainer/       ready-to-use dev environment
 ```
