@@ -1,0 +1,71 @@
+# vi — search and substitute, :e/:r/:set, file metadata.
+
+# `/foo` lands on the first match; `n` advances to the next.
+> printf 'foo bar foo baz\n' > /tmp/v_search.txt
+! send "vi /tmp/v_search.txt\r"
+! sleep 0.5
+! send "/foo\r"
+! sleep 0.5
+! send "niMARK-\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_search.txt
+< foo bar MARK-foo baz
+
+# `:s/old/new/` substitutes first occurrence on current line.
+> printf 'aaa bbb\n' > /tmp/v_sub.txt
+! send "vi /tmp/v_sub.txt\r"
+! sleep 0.5
+! send ":s/aaa/AAA/\r"
+! sleep 0.3
+! send ":wq\r"
+! wait-prompt
+
+> cat /tmp/v_sub.txt
+< AAA bbb
+
+# `:%s/old/new/g` substitutes globally on every line.
+> printf 'x x\nx x\n' > /tmp/v_subg.txt
+! send "vi /tmp/v_subg.txt\r"
+! sleep 0.5
+! send ":%s/x/Y/g\r"
+! sleep 0.3
+! send ":wq\r"
+! wait-prompt
+
+> cat /tmp/v_subg.txt
+< Y Y
+< Y Y
+
+# `:r FILE` reads a file at the cursor (next line).
+> printf 'inserted\n' > /tmp/v_src.txt
+> printf 'host\n' > /tmp/v_r.txt
+! send "vi /tmp/v_r.txt\r"
+! sleep 0.5
+! send ":r /tmp/v_src.txt\r"
+! sleep 0.3
+! send ":wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_r.txt
+~ ^\s*2\b
+
+> head -n 1 /tmp/v_r.txt
+< host
+
+> tail -n 1 /tmp/v_r.txt
+< inserted
+
+# `:set number` then `:set nonumber` shouldn't change file contents.
+> printf 'abc\n' > /tmp/v_set.txt
+! send "vi /tmp/v_set.txt\r"
+! sleep 0.5
+! send ":set number\r"
+! sleep 0.3
+! send ":set nonumber\r"
+! sleep 0.3
+! send ":wq\r"
+! wait-prompt
+
+> cat /tmp/v_set.txt
+< abc

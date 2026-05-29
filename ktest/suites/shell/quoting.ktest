@@ -1,0 +1,24 @@
+# Word splitting, quoting, escapes.
+
+> echo 'a  b   c'
+< a  b   c
+
+> echo "a  b   c"
+< a  b   c
+
+> echo a  b   c
+< a b c
+
+# Command substitution preserves literal whitespace inside double quotes.
+> echo "$(printf 'a  b   c')"
+< a  b   c
+
+> echo 'no $expansion'
+< no $expansion
+
+> echo "with $(echo subst)"
+< with subst
+
+# `echo` doesn't interpret `\t`; it prints the two literal chars.
+> echo "tab:\there"
+< tab:\there

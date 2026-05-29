@@ -1,0 +1,89 @@
+# Arithmetic expansion and the test/[ builtin.
+
+> echo $(( 1 + 2 ))
+< 3
+
+> echo $(( 2 * 3 + 4 ))
+< 10
+
+> echo $(( (2 + 3) * 4 ))
+< 20
+
+> echo $(( 10 / 3 ))
+< 3
+
+> echo $(( 10 % 3 ))
+< 1
+
+> echo $(( -5 + 10 ))
+< 5
+
+> echo $(( ! 0 ))
+< 1
+
+> echo $(( ! 5 ))
+< 0
+
+> echo $(( 1 == 1 ))
+< 1
+
+> echo $(( 1 == 2 ))
+< 0
+
+> echo $(( 5 >= 5 ))
+< 1
+
+> echo $(( 5 > 5 ))
+< 0
+
+> echo $(( 1 && 1 ))
+< 1
+
+> echo $(( 1 && 0 ))
+< 0
+
+> echo $(( 0 || 1 ))
+< 1
+
+> N=7
+> echo $(( N * N ))
+< 49
+
+> N=$(( 1 + 2 + 3 + 4 ))
+> echo $N
+< 10
+
+# `test` / `[` builtin.
+> [ 1 = 1 ] && echo eq
+< eq
+
+> [ 1 = 2 ] || echo ne
+< ne
+
+> [ -z "" ] && echo z
+< z
+
+> [ -n abc ] && echo nz
+< nz
+
+> [ 3 -gt 2 ] && echo gt
+< gt
+
+> [ 2 -lt 3 ] && echo lt
+< lt
+
+> [ ! 1 = 2 ] && echo not
+< not
+
+> touch /tmp/exists
+> [ -e /tmp/exists ] && echo yes
+< yes
+
+> [ -f /tmp/exists ] && echo regular
+< regular
+
+> [ -d /tmp ] && echo dir
+< dir
+
+> [ -d /tmp/exists ] || echo notdir
+< notdir

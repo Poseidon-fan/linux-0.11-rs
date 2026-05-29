@@ -1,15 +1,29 @@
-# Basic shell smoke test: echo, exit status, arithmetic.
+# Built-in commands that don't fit the dedicated suites below.
 
-> echo hello world
-< hello world
+> pwd
+~ ^/
 
-> true
+> cd /tmp && pwd
+< /tmp
+
+> cd / && pwd
+< /
+
+> :
 > echo $?
 < 0
 
-> false
-> echo $?
-< 1
+> true && echo ok || echo no
+< ok
 
-> echo $((1 + 2 * 3))
-< 7
+> false && echo ok || echo no
+< no
+
+> echo $(( 0 ))
+< 0
+
+> echo a b c | tr ' ' ,
+< a,b,c
+
+> echo hi > /tmp/b.txt && cat /tmp/b.txt
+< hi

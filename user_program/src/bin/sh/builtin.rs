@@ -500,6 +500,12 @@ fn builtin_command(args: &[String], st: &mut State) -> i32 {
     }
     if print_kind {
         if let Some(name) = args.get(i) {
+            // POSIX: a function name resolves the same as the bare name
+            // (it's what the shell would actually run), so print it back.
+            if st.function(name).is_some() {
+                let _ = writeln!(io::stdout(), "{}", name);
+                return 0;
+            }
             if is_builtin(name) {
                 let _ = writeln!(io::stdout(), "{}", name);
                 return 0;

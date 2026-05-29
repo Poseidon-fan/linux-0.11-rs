@@ -314,6 +314,13 @@ fn split_fields(tagged: &[Tag], ifs: &str) -> Fields {
             i += 1;
             continue;
         }
+        // Quoted glob metacharacters must survive pathname expansion
+        // unchanged. Backslash-escape them here; `glob_expand` treats
+        // `\*` / `\?` / `\[` as literal and `unescape_globs` peels the
+        // escape off again.
+        if t.quoted && matches!(t.byte, b'*' | b'?' | b'[' | b'\\') {
+            current.push('\\');
+        }
         current.push(t.byte as char);
         have_field = true;
         i += 1;
@@ -358,13 +365,16 @@ fn glob_expand(field: &str) -> Vec<String> {
 }
 
 /// Strip backslash before glob metacharacters (`\*` → `*`, `\?` → `?`,
-/// `\[` → `[`). Leaves every other backslash sequence alone.
+/// `\[` → `[`, `\\` → `\`). Leaves every other backslash sequence alone.
 fn unescape_globs(field: &str) -> String {
     let mut out = String::with_capacity(field.len());
     let bytes = field.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b'*' | b'?' | b'[') {
+        if bytes[i] == b'\\'
+            && i + 1 < bytes.len()
+            && matches!(bytes[i + 1], b'*' | b'?' | b'[' | b'\\')
+        {
             out.push(bytes[i + 1] as char);
             i += 2;
         } else {

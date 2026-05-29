@@ -1,0 +1,118 @@
+# vi — operators and motions not covered by the other suites:
+# f/F/t/T, b/e, X, c (cw/cc), P, count prefix, ? search, % bracket.
+
+# `f` jumps to the next occurrence of the given char on the current line.
+> printf 'abcdefg\n' > /tmp/v_adv.txt
+! send "vi /tmp/v_adv.txt\r"
+! sleep 0.5
+! send "fdiX\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_adv.txt
+< abcXdefg
+
+# `t` jumps to the char BEFORE the next occurrence.
+> printf 'abcdefg\n' > /tmp/v_adv2.txt
+! send "vi /tmp/v_adv2.txt\r"
+! sleep 0.5
+! send "tdiY\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_adv2.txt
+< abYcdefg
+
+# `b` goes to start of previous word.
+> printf 'one two three\n' > /tmp/v_b.txt
+! send "vi /tmp/v_b.txt\r"
+! sleep 0.5
+! send "$biZ\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_b.txt
+< one two Zthree
+
+# `e` jumps to the end of the current/next word.
+> printf 'abcd efgh\n' > /tmp/v_e.txt
+! send "vi /tmp/v_e.txt\r"
+! sleep 0.5
+! send "eaX\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_e.txt
+< abcdX efgh
+
+# `X` deletes the char before the cursor.
+> printf 'abcdef\n' > /tmp/v_X.txt
+! send "vi /tmp/v_X.txt\r"
+! sleep 0.5
+! send "llX:wq\r"
+! wait-prompt
+
+> cat /tmp/v_X.txt
+< acdef
+
+# `cw` changes a word — enters insert mode after deleting.
+> printf 'hello world\n' > /tmp/v_cw.txt
+! send "vi /tmp/v_cw.txt\r"
+! sleep 0.5
+! send "cwHI\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_cw.txt
+< HIworld
+
+# `cc` changes the whole line.
+> printf 'old line\nkeep\n' > /tmp/v_cc.txt
+! send "vi /tmp/v_cc.txt\r"
+! sleep 0.5
+! send "ccNEW\e:wq\r"
+! wait-prompt
+
+> head -n 1 /tmp/v_cc.txt
+< NEW
+
+> tail -n 1 /tmp/v_cc.txt
+< keep
+
+# `yy` then `P` pastes a copy BEFORE the current line.
+> printf 'original\n' > /tmp/v_P.txt
+! send "vi /tmp/v_P.txt\r"
+! sleep 0.5
+! send "yyP:wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_P.txt
+~ ^\s*2\b
+
+# Count prefix: `3x` deletes three characters.
+> printf 'abcdefg\n' > /tmp/v_count.txt
+! send "vi /tmp/v_count.txt\r"
+! sleep 0.5
+! send "3x:wq\r"
+! wait-prompt
+
+> cat /tmp/v_count.txt
+< defg
+
+# `?` searches backward.
+> printf 'foo bar foo baz\n' > /tmp/v_qmark.txt
+! send "vi /tmp/v_qmark.txt\r"
+! sleep 0.5
+! send "$?foo\r"
+! sleep 0.5
+! send "iZ\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_qmark.txt
+< foo bar Zfoo baz
+
+# `%` jumps to the matching bracket.
+> printf 'a(b(c)d)e\n' > /tmp/v_pct.txt
+! send "vi /tmp/v_pct.txt\r"
+! sleep 0.5
+# Cursor at col 1 ('(' at col 1). `%` jumps to matching ')' at col 7.
+! send "l%iX\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_pct.txt
+< a(b(c)dX)e

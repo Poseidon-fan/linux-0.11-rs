@@ -1,0 +1,26 @@
+# Pathname expansion (globbing) and special variables.
+
+> mkdir -p /tmp/gl
+> rm -f /tmp/gl/*
+> touch /tmp/gl/a.txt /tmp/gl/b.txt /tmp/gl/c.log
+
+> echo /tmp/gl/*.txt
+< /tmp/gl/a.txt /tmp/gl/b.txt
+
+> echo /tmp/gl/?.log
+< /tmp/gl/c.log
+
+> echo /tmp/gl/[ab].txt
+< /tmp/gl/a.txt /tmp/gl/b.txt
+
+# Unmatched glob expands to itself.
+> echo /tmp/gl/none*.zzz
+< /tmp/gl/none*.zzz
+
+# Quoted glob is literal.
+> echo "/tmp/gl/*.txt"
+< /tmp/gl/*.txt
+
+# $$ is the shell PID — a positive integer.
+> echo $$
+~ [1-9][0-9]*

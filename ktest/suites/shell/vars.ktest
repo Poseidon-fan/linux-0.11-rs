@@ -1,0 +1,64 @@
+# Variables, assignments, parameter expansion.
+
+> X=hello
+> echo $X
+< hello
+
+> X=hello Y=world
+> echo $X-$Y
+< hello-world
+
+> echo ${X}_suffix
+< hello_suffix
+
+> unset X
+> echo "x=[${X-default}]"
+< x=[default]
+
+> echo "x=[${X:-empty}]"
+< x=[empty]
+
+> X=
+> echo "x=[${X-default}]"
+< x=[]
+
+> echo "x=[${X:-default}]"
+< x=[default]
+
+> unset X
+> echo "x=[${X+set}]"
+< x=[]
+
+> X=
+> echo "x=[${X+set}]"
+< x=[set]
+
+> X=
+> echo "x=[${X:+nonempty}]"
+< x=[]
+
+> X=foo
+> echo "x=[${X:+nonempty}]"
+< x=[nonempty]
+
+# := assigns + expands.
+> unset Y
+> echo "${Y:=assigned}-$Y"
+< assigned-assigned
+
+# Positional via set --.
+> set -- one two three
+> echo $1 $2 $3
+< one two three
+
+> echo $#
+< 3
+
+> shift
+> echo $1
+< two
+
+# Environment variable export round-trip.
+> export FOO=hi
+> sh -c 'echo $FOO'
+< hi

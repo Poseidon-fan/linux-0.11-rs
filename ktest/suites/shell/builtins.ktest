@@ -1,0 +1,82 @@
+# Builtins that don't fit the other suites: alias, source/., eval, exec,
+# command, type, umask, wait, and multi-arg unset/export.
+
+# alias + unalias
+> alias ll='ls -l'
+> alias
+~ ll
+> alias ll
+~ ls -l
+> unalias ll
+> alias ll
+~ not found
+
+# source / . — read commands from a file, mutating the *current* shell.
+> printf 'SOURCED=yes\nfunc_from_src() { echo from-src; }\n' > /tmp/b_src.sh
+> . /tmp/b_src.sh
+> echo $SOURCED
+< yes
+> func_from_src
+< from-src
+
+# sourced script sees the parent's positionals.
+> printf 'echo "args: $#"\n' > /tmp/b_src2.sh
+> set -- a b c
+> . /tmp/b_src2.sh
+< args: 3
+
+# eval — run a string as shell text in the current process.
+> eval 'X=hi; echo $X'
+< hi
+> eval echo "$((2+3))"
+< 5
+
+# type identifies builtins, functions, and external programs.
+> type echo
+~ echo
+
+> type cd
+~ builtin
+
+> myfunc() { echo m; }
+> type myfunc
+~ function
+
+> type ls
+~ /bin/ls
+
+> type does_not_exist
+~ not found
+
+# command runs a name skipping aliases / functions.
+> myls() { echo overridden; }
+> command -v myls
+~ myls
+> command echo via-command
+< via-command
+
+# umask round-trip.
+> umask 0022
+> umask
+~ 0022
+> umask 0077
+> umask
+~ 0077
+> umask 0022
+
+# wait with no children returns 0.
+> wait
+> echo $?
+< 0
+
+# Multi-arg unset and export.
+> A=1 B=2 C=3
+> echo $A $B $C
+< 1 2 3
+> unset A B
+> echo "[$A][$B][$C]"
+< [][][3]
+
+> export DD=alpha EE=beta
+> sh -c 'echo "$DD-$EE"'
+< alpha-beta

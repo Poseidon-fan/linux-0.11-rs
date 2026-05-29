@@ -635,11 +635,11 @@ impl<'a> Lexer<'a> {
     /// Reads text between balanced `open` and `close` delimiters, honoring
     /// quotes so a `)` inside `"..."` does not close `$(...)`.
     fn read_balanced(&mut self, open: &str, close: &str) -> Result<String, LexError> {
+        let need_double = open.len() == 2 && close.len() == 2;
         let mut depth: i32 = 1;
         let mut out = String::new();
         let open_first = open.as_bytes()[0];
         let close_first = close.as_bytes()[0];
-        let need_double = open.len() == 2 && close.len() == 2;
         while let Some(c) = self.peek() {
             // Honor quoted regions verbatim.
             if c == b'\'' {
@@ -685,6 +685,31 @@ impl<'a> Lexer<'a> {
                 continue;
             }
             if need_double {
+                // `$((...))` mode. Handle nested `$(cmd)` substitutions
+                // first so their inner `(` / `)` aren't confused with the
+                // arithmetic's closing `))`.
+                if c == b'$' && self.peek_at(1) == Some(b'(') {
+                    // Could be `$((...))` (nested arithmetic) or `$(...)`
+                    // (command substitution). Either way we re-enter
+                    // `read_balanced` for the nested span and copy its
+                    // bytes through unchanged so the outer caller still
+                    // sees a syntactically intact expression.
+                    out.push('$');
+                    out.push('(');
+                    self.pos += 2;
+                    if self.peek() == Some(b'(') {
+                        out.push('(');
+                        self.pos += 1;
+                        let inner = self.read_balanced("((", "))")?;
+                        out.push_str(&inner);
+                        out.push_str("))");
+                    } else {
+                        let inner = self.read_balanced("(", ")")?;
+                        out.push_str(&inner);
+                        out.push(')');
+                    }
+                    continue;
+                }
                 if c == open_first && self.peek_at(1) == Some(open.as_bytes()[1]) {
                     depth += 1;
                     out.push_str(open);

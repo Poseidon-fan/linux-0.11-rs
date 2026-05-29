@@ -1,0 +1,54 @@
+# vi — insert variants: i, I, a, A, o, O.
+
+> printf 'middle\n' > /tmp/v_insert.txt
+# `I` enters insert at first non-blank of current line.
+! send "vi /tmp/v_insert.txt\r"
+! sleep 0.5
+! send "IPREFIX-\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_insert.txt
+< PREFIX-middle
+
+# `A` appends at end of line.
+! send "vi /tmp/v_insert.txt\r"
+! sleep 0.5
+! send "A-SUFFIX\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_insert.txt
+< PREFIX-middle-SUFFIX
+
+# `o` opens a new line below.
+! send "vi /tmp/v_insert.txt\r"
+! sleep 0.5
+! send "obelow\e:wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_insert.txt
+~ ^\s*2\b
+
+> tail -n 1 /tmp/v_insert.txt
+< below
+
+# `O` opens a new line above.
+! send "vi /tmp/v_insert.txt\r"
+! sleep 0.5
+! send "Oabove\e:wq\r"
+! wait-prompt
+
+> head -n 1 /tmp/v_insert.txt
+< above
+
+> wc -l < /tmp/v_insert.txt
+~ ^\s*3\b
+
+# `a` appends one column to the right of cursor.
+> printf 'XY\n' > /tmp/v_insert2.txt
+! send "vi /tmp/v_insert2.txt\r"
+! sleep 0.5
+! send "aZ\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_insert2.txt
+< XZY

@@ -1,0 +1,36 @@
+# vi — basic insert + save + reload.
+
+> rm -f /tmp/v_basic.txt
+! send "vi /tmp/v_basic.txt\r"
+! sleep 0.5
+! send "ihello world\e"
+! sleep 0.3
+! send ":wq\r"
+! wait-prompt
+
+> cat /tmp/v_basic.txt
+< hello world
+
+# Open existing file, append a line at end with o.
+! send "vi /tmp/v_basic.txt\r"
+! sleep 0.5
+! send "Gosecond line\e:wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_basic.txt
+~ ^\s*2\b
+
+> head -n 1 /tmp/v_basic.txt
+< hello world
+
+> tail -n 1 /tmp/v_basic.txt
+< second line
+
+# :q! discards changes.
+! send "vi /tmp/v_basic.txt\r"
+! sleep 0.5
+! send "ddi GONE\e:q!\r"
+! wait-prompt
+
+> head -n 1 /tmp/v_basic.txt
+< hello world

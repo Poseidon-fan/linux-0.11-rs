@@ -1,14 +1,50 @@
-# Pipes and redirection.
+# Pipelines and redirections.
 
-> echo abc > /tmp/p.txt
-> cat /tmp/p.txt
+> echo abc > /tmp/r.txt
+> cat /tmp/r.txt
 < abc
 
+> echo first > /tmp/r.txt
+> echo second >> /tmp/r.txt
+> cat /tmp/r.txt
+< first
+
+> wc -l < /tmp/r.txt
+~ ^\s*2\b
+
+> echo hello > /tmp/r.txt
+> wc -c < /tmp/r.txt
+~ ^\s*6\b
+
+# `>|` should truncate even if noclobber were set; for us it behaves like `>`.
+> echo go >| /tmp/r.txt
+> cat /tmp/r.txt
+< go
+
+# Pipelines.
 > printf 'a\nb\nc\n' | wc -l
 ~ ^\s*3\b
 
 > echo hello | tr a-z A-Z
 < HELLO
 
-> seq 1 3 | tail -n 1
+> seq 1 5 | head -n 3 | tail -n 1
 < 3
+
+> ! true
+> echo $?
+< 1
+
+> ! false
+> echo $?
+< 0
+
+# stderr / fd redirection.
+> sh -c 'echo err 1>&2' 2>/tmp/r.err
+> cat /tmp/r.err
+< err
+
+# &>file redirects both stdout and stderr.
+> sh -c 'echo out; echo err 1>&2' &> /tmp/r.both
+> wc -l < /tmp/r.both
+~ \s*2\b

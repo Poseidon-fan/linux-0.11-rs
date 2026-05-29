@@ -1,14 +1,93 @@
-# vi smoke test: open a file, insert text, save, verify on disk.
-#
-# `vi` takes over the screen so a normal `>` (which waits for the shell
-# prompt) would hang — send the launch line raw and only re-sync with
-# the prompt after `:wq` exits.
+# vi — operators: x, X, dd, dw, D, J, r, y/p, undo.
 
-> rm -f /tmp/v.txt
-! send "vi /tmp/v.txt\r"
+# `x` deletes char under cursor.
+> printf 'ABCDEF\n' > /tmp/v_op.txt
+! send "vi /tmp/v_op.txt\r"
 ! sleep 0.5
-! send "ihello vi\e:wq\r"
+! send "x:wq\r"
 ! wait-prompt
 
-> cat /tmp/v.txt
-< hello vi
+> cat /tmp/v_op.txt
+< BCDEF
+
+# `dd` deletes a whole line.
+> printf 'line1\nline2\nline3\n' > /tmp/v_dd.txt
+! send "vi /tmp/v_dd.txt\r"
+! sleep 0.5
+! send "dd:wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_dd.txt
+~ ^\s*2\b
+
+> head -n 1 /tmp/v_dd.txt
+< line2
+
+# `dw` deletes a word.
+> printf 'one two three\n' > /tmp/v_dw.txt
+! send "vi /tmp/v_dw.txt\r"
+! sleep 0.5
+! send "dw:wq\r"
+! wait-prompt
+
+> cat /tmp/v_dw.txt
+< two three
+
+# `D` deletes to end of line.
+> printf 'keep DROP\n' > /tmp/v_dollar.txt
+! send "vi /tmp/v_dollar.txt\r"
+! sleep 0.5
+# Move to column 4 (the space) then D.
+! send "4lD:wq\r"
+! wait-prompt
+
+> cat /tmp/v_dollar.txt
+< keep
+
+# `J` joins next line into current with a space.
+> printf 'aaa\nbbb\n' > /tmp/v_join.txt
+! send "vi /tmp/v_join.txt\r"
+! sleep 0.5
+! send "J:wq\r"
+! wait-prompt
+
+> cat /tmp/v_join.txt
+< aaa bbb
+
+# `r` replaces single char.
+> printf 'hello\n' > /tmp/v_r.txt
+! send "vi /tmp/v_r.txt\r"
+! sleep 0.5
+! send "rH:wq\r"
+! wait-prompt
+
+> cat /tmp/v_r.txt
+< Hello
+
+# `yy` + `p` duplicates a line.
+> printf 'orig\n' > /tmp/v_yp.txt
+! send "vi /tmp/v_yp.txt\r"
+! sleep 0.5
+! send "yyp:wq\r"
+! wait-prompt
+
+> wc -l < /tmp/v_yp.txt
+~ ^\s*2\b
+
+> head -n 1 /tmp/v_yp.txt
+< orig
+
+> tail -n 1 /tmp/v_yp.txt
+< orig
+
+# `u` undoes last change.
+> printf 'before\n' > /tmp/v_undo.txt
+! send "vi /tmp/v_undo.txt\r"
+! sleep 0.5
+! send "dd"
+! sleep 0.3
+! send "u:wq\r"
+! wait-prompt
+
+> cat /tmp/v_undo.txt
+< before

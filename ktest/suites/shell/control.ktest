@@ -1,0 +1,63 @@
+# Control flow: if/else, while, until, for, functions, break/continue, return.
+
+> if true; then echo yes; fi
+< yes
+
+> if false; then echo no; else echo other; fi
+< other
+
+> if false; then echo a; elif true; then echo b; else echo c; fi
+< b
+
+> N=0
+> while [ $N -lt 3 ]; do N=$((N+1)); echo $N; done
+< 1
+< 2
+< 3
+
+> N=3
+> until [ $N -eq 0 ]; do echo $N; N=$((N-1)); done
+< 3
+< 2
+< 1
+
+> for x in alpha beta gamma; do echo $x; done
+< alpha
+< beta
+< gamma
+
+> for x in $(seq 1 3); do echo it $x; done
+< it 1
+< it 2
+< it 3
+
+# break + continue.
+> for i in 1 2 3 4 5; do if [ $i -eq 3 ]; then break; fi; echo $i; done
+< 1
+< 2
+
+> for i in 1 2 3 4 5; do if [ $i -eq 2 ]; then continue; fi; echo $i; done
+< 1
+< 3
+< 4
+< 5
+
+# Function definition + invocation + return value.
+> greet() { echo "hello $1"; }
+> greet world
+< hello world
+
+> add() { echo $(($1 + $2)); }
+> add 7 8
+< 15
+
+# `return N` sets $?.
+> bad() { return 5; }
+> bad
+> echo $?
+< 5
+
+# Recursion.
+> fact() { if [ $1 -le 1 ]; then echo 1; else echo $(($1 * $(fact $(($1 - 1))))); fi; }
+> fact 5
+< 120

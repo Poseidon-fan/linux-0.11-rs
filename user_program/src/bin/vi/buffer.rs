@@ -222,6 +222,17 @@ impl Buffer {
         removed
     }
 
+    /// Replaces the current line with the empty string, keeping the
+    /// line slot in the buffer. Used by `cc`. Returns the old contents
+    /// so the caller can store them in a register.
+    pub fn clear_current_line(&mut self) -> String {
+        let row = self.row;
+        let old = core::mem::take(&mut self.lines[row]);
+        self.col = 0;
+        self.dirty = true;
+        old
+    }
+
     /// Inserts a fresh empty line below the cursor and moves the cursor
     /// to its column 0 — the `o` command.
     pub fn open_below(&mut self) {

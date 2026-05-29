@@ -1,0 +1,56 @@
+# vi — motions: hjkl, w/b/e, 0/^/$, gg/G, counts.
+
+# Two-line file so j/k can move.
+> printf 'first line\nsecond line\n' > /tmp/v_motion.txt
+! send "vi /tmp/v_motion.txt\r"
+! sleep 0.5
+
+# `G` jumps to last line, then `I` inserts at start of that line.
+! send "GIX-\e:wq\r"
+! wait-prompt
+
+> head -n 1 /tmp/v_motion.txt
+< first line
+
+> tail -n 1 /tmp/v_motion.txt
+< X-second line
+
+# `gg` jumps to first line.
+! send "vi /tmp/v_motion.txt\r"
+! sleep 0.5
+! send "GggIT-\e:wq\r"
+! wait-prompt
+
+> head -n 1 /tmp/v_motion.txt
+< Y-first line
+
+# `$` go to EOL, `a` after it, append.
+> printf 'abc\n' > /tmp/v_motion2.txt
+! send "vi /tmp/v_motion2.txt\r"
+! sleep 0.5
+! send "$aZ\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_motion2.txt
+< abcZ
+
+# `0` go to BOL, `i` insert.
+> printf 'middle\n' > /tmp/v_motion3.txt
+! send "vi /tmp/v_motion3.txt\r"
+! sleep 0.5
+! send "$0iSTART-\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_motion3.txt
+< START-middle
+
+# `w` advances by word.
+> printf 'one two three\n' > /tmp/v_motion4.txt
+! send "vi /tmp/v_motion4.txt\r"
+! sleep 0.5
+# Move past "one " and "two ", then insert before "three".
+! send "wwiZ\e:wq\r"
+! wait-prompt
+
+> cat /tmp/v_motion4.txt
+< one two Zthree

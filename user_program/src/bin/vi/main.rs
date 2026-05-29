@@ -422,6 +422,20 @@ fn execute_operator(ed: &mut Editor, op: u8, motion_key: Key) {
             ed.register = edit::delete_word(&mut ed.buffer);
             enter_insert(ed);
         }
+        (b'c', Key::Char(b'c')) => {
+            // `cc` — change line: empty the current line in place and
+            // drop into insert mode at column 0.
+            ed.undo.snapshot(&ed.buffer);
+            let mut removed = ed.buffer.clear_current_line();
+            removed.push('\n');
+            ed.register = removed;
+            enter_insert(ed);
+        }
+        (b'c', Key::Char(b'$')) => {
+            ed.undo.snapshot(&ed.buffer);
+            ed.register = edit::delete_to_eol(&mut ed.buffer);
+            enter_insert(ed);
+        }
         (b'Z', Key::Char(b'Z')) => {
             let _ = ex::dispatch("wq", &mut ed.buffer, &mut ed.show_numbers);
             ed.status = "ZZ".to_string();
@@ -559,7 +573,7 @@ fn handle_cmdline(ed: &mut Editor, key: Key, kind: CommandKind) -> Option<i32> {
                     let forward = matches!(kind, CommandKind::SearchForward);
                     match ed.search.set(&line, forward) {
                         Ok(()) => {
-                            if !ed.search.find_next(&mut ed.buffer) {
+                            if !ed.search.find_first(&mut ed.buffer) {
                                 ed.status = "pattern not found".to_string();
                             }
                         }

@@ -51,16 +51,28 @@ impl Search {
     /// Moves `buf.row` / `buf.col` to the next match in the chosen
     /// direction. Wraps around the end of the buffer. Returns `false`
     /// if no match exists anywhere.
+    ///
+    /// `from_cursor` controls whether a match at the exact cursor
+    /// position counts (`true`, used for the initial `/pat` lookup) or
+    /// whether the search must advance past it first (`false`, used by
+    /// `n` / `N`).
     pub fn find_next(&self, buf: &mut Buffer) -> bool {
-        self.find(buf, self.forward)
+        self.find(buf, self.forward, false)
+    }
+
+    /// Same as [`find_next`] but matches at the current cursor count.
+    /// Used immediately after `/pat` / `?pat` so the cursor sits on the
+    /// first match, matching `vim`'s default behaviour.
+    pub fn find_first(&self, buf: &mut Buffer) -> bool {
+        self.find(buf, self.forward, true)
     }
 
     /// Searches in the opposite direction (used by `N`).
     pub fn find_prev(&self, buf: &mut Buffer) -> bool {
-        self.find(buf, !self.forward)
+        self.find(buf, !self.forward, false)
     }
 
-    fn find(&self, buf: &mut Buffer, forward: bool) -> bool {
+    fn find(&self, buf: &mut Buffer, forward: bool, include_cursor: bool) -> bool {
         let Some(re) = self.compiled.as_ref() else {
             return false;
         };
@@ -71,7 +83,13 @@ impl Search {
         if forward {
             // From the current cursor to the end of the current line,
             // then through subsequent lines, then wrap to the top.
-            if let Some(m) = re.find_at(buf.line(start_row), start_col + 1) {
+            let line = buf.line(start_row);
+            let scan_from = if include_cursor {
+                start_col.min(line.len())
+            } else {
+                (start_col + 1).min(line.len())
+            };
+            if let Some(m) = re.find_at(line, scan_from) {
                 buf.col = m.start();
                 return true;
             }
@@ -90,8 +108,13 @@ impl Search {
         } else {
             // Backward: scan the current line up to (but not including)
             // the cursor, then previous lines, then wrap.
-            if start_col > 0 {
-                if let Some(m) = last_match_in(re, &buf.line(start_row)[..start_col]) {
+            let cutoff = if include_cursor {
+                (start_col + 1).min(buf.line(start_row).len())
+            } else {
+                start_col
+            };
+            if cutoff > 0 {
+                if let Some(m) = last_match_in(re, &buf.line(start_row)[..cutoff]) {
                     buf.col = m;
                     return true;
                 }
