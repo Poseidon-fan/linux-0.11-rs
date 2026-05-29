@@ -77,7 +77,7 @@ cargo install --path miniximg/miniximg-cli
 ## ✅ Tests
 
 End-to-end tests boot the kernel under QEMU and drive the serial console
-from short `.tst` scripts under `ktest/suites/`.
+from short `.ktest` scripts under `ktest/suites/`.
 
 ```bash
 tools/run-tests.sh                              # run everything

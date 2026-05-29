@@ -1,6 +1,6 @@
-//! `.tst` file parser.
+//! `.ktest` file parser.
 //!
-//! A `.tst` is plain text. Each non-blank, non-comment line is one
+//! A `.ktest` is plain text. Each non-blank, non-comment line is one
 //! [`Step`]. We support five line shapes:
 //!
 //! | leading | meaning                                              |
@@ -52,7 +52,7 @@ pub struct Script {
 }
 
 impl Script {
-    /// Loads a `.tst` from disk. `name` is the human-readable label
+    /// Loads a `.ktest` from disk. `name` is the human-readable label
     /// shown in test output (e.g. `"sh/arith"`).
     pub fn load(path: &Path, name: &str) -> Result<Self> {
         let text =

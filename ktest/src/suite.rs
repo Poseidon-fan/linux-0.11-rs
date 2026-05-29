@@ -1,4 +1,4 @@
-//! Suite discovery — finds `.tst` files under a suites root and
+//! Suite discovery — finds `.ktest` files under a suites root and
 //! resolves `suite/test_name` identifiers used by `--test-set`.
 
 use std::path::{Path, PathBuf};
@@ -7,11 +7,11 @@ use anyhow::{Context, Result, bail};
 
 #[derive(Debug, Clone)]
 pub struct TestCase {
-    /// Path to the `.tst` file on disk.
+    /// Path to the `.ktest` file on disk.
     pub path: PathBuf,
     /// Suite name — the directory name containing the test.
     pub suite: String,
-    /// Test name — the `.tst` stem.
+    /// Test name — the `.ktest` stem.
     pub name: String,
 }
 
@@ -39,7 +39,7 @@ pub fn discover_default_suites(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// Loads every `*.tst` in a suite directory, sorted by filename.
+/// Loads every `*.ktest` in a suite directory, sorted by filename.
 pub fn load_suite(dir: &Path) -> Result<Vec<TestCase>> {
     if !dir.is_dir() {
         bail!("suite is not a directory: {}", dir.display());
@@ -53,7 +53,7 @@ pub fn load_suite(dir: &Path) -> Result<Vec<TestCase>> {
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("tst") {
+        if path.extension().and_then(|s| s.to_str()) == Some("ktest") {
             let name = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -75,7 +75,7 @@ pub fn load_test_set(root: &Path, spec: &str) -> Result<TestCase> {
     let (suite, name) = spec
         .split_once('.')
         .with_context(|| format!("--test-set expects `suite.test`, got `{}`", spec))?;
-    let path = root.join(suite).join(format!("{}.tst", name));
+    let path = root.join(suite).join(format!("{}.ktest", name));
     if !path.exists() {
         bail!("test not found: {}", path.display());
     }

@@ -1,13 +1,13 @@
 //! End-to-end test runner for `linux-0.11-rs`.
 //!
 //! Boots the kernel under QEMU, drives the serial console with a small
-//! scripting language (`.tst` files), and reports pass/fail per test.
+//! scripting language (`.ktest` files), and reports pass/fail per test.
 //!
 //! Two selection modes:
-//! * `--suite <name>` — run every `*.tst` in a suite, resolved as
+//! * `--suite <name>` — run every `*.ktest` in a suite, resolved as
 //!   `<suites-root>/<name>` (repeatable).
 //! * `--test-set <suite.test>` — run a single test by `suite.test_name`
-//!   (the `.tst` is implicit; repeatable).
+//!   (the `.ktest` is implicit; repeatable).
 //!
 //! With no selectors, every suite directory under the suites root is run.
 //!
@@ -53,16 +53,16 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     image: PathBuf,
 
-    /// Run every `.tst` in this suite. Either a bare suite name
+    /// Run every `.ktest` in this suite. Either a bare suite name
     /// (resolved under `--suites-root`) or a path to a directory.
     /// Repeatable.
-    /// Run every `.tst` in this suite (resolved under `--suites-root`).
+    /// Run every `.ktest` in this suite (resolved under `--suites-root`).
     /// Repeatable.
     #[arg(long = "suite", value_name = "NAME")]
     suites: Vec<String>,
 
     /// Run one specific test, addressed as `suite.test_name`
-    /// (no `.tst` extension). Repeatable.
+    /// (no `.ktest` extension). Repeatable.
     #[arg(long = "test-set", value_name = "SUITE.TEST")]
     test_sets: Vec<String>,
 

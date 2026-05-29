@@ -4,7 +4,7 @@
 //! stdin/stdout, then drives the guest through a few primitives:
 //!
 //! - [`Runner::send_line`] writes one command-line worth of text and a
-//!   `\r`, then waits for the next shell prompt — what `.tst` `>` lines
+//!   `\r`, then waits for the next shell prompt — what `.ktest` `>` lines
 //!   expand into.
 //! - [`Runner::send_raw`] writes verbatim bytes (with escape decoding)
 //!   without waiting for a prompt — used inside `vi` and friends.
@@ -225,7 +225,7 @@ fn spawn_reader(mut stdout: ChildStdout, log: Arc<Mutex<Vec<u8>>>, eof: Arc<Atom
     });
 }
 
-/// Translates the escape sequences understood by the `.tst` `! send`
+/// Translates the escape sequences understood by the `.ktest` `! send`
 /// directive. Supports `\n` `\r` `\t` `\\` `\"` `\e` (ESC) and `\xHH`.
 fn decode_escapes(raw: &str) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(raw.len());
