@@ -53,7 +53,7 @@ pub struct Script {
 
 impl Script {
     /// Loads a `.ktest` from disk. `name` is the human-readable label
-    /// shown in test output (e.g. `"sh/arith"`).
+    /// shown in test output (e.g. `"shell/arith"`).
     pub fn load(path: &Path, name: &str) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;

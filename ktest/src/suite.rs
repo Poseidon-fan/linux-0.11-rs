@@ -16,7 +16,7 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    /// Human-readable identifier (`sh/arith`) shown in CLI output and
+    /// Human-readable identifier (`shell/arith`) shown in CLI output and
     /// used as the log file basename.
     pub fn label(&self) -> String {
         format!("{}/{}", self.suite, self.name)
