@@ -13,6 +13,7 @@ extern crate alloc;
 mod boot;
 mod driver;
 mod error;
+mod fpu;
 mod fs;
 mod logging;
 mod mm;
@@ -61,6 +62,7 @@ pub extern "C" fn rust_main() -> ! {
     trap::init();
     time::init();
     task::init();
+    fpu::init();
     driver::character::serial::init();
     driver::character::console::init();
     driver::block::hd::init();

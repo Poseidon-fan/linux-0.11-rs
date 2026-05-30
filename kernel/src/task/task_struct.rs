@@ -11,6 +11,7 @@ use core::{
 use user_lib::syscall::signal::NSIG;
 
 use crate::{
+    fpu::FpuContext,
     fs::{file::File, minix::Inode},
     mm::{
         frame::{self, PAGE_SIZE, PhysFrameRange},
@@ -69,6 +70,7 @@ pub struct TaskControlBlockInner {
     pub ldt: LocalDescriptorTable,
     pub tss: TaskStateSegment,
     pub signal_info: TaskSignalInfo,
+    pub fpu: FpuContext,
 }
 
 /// Process memory layout boundaries set during exec.
@@ -379,6 +381,7 @@ impl TaskControlBlock {
             },
             ldt: LocalDescriptorTable::new(0, 0x9f),
             signal_info: TaskSignalInfo::default(),
+            fpu: FpuContext::default(),
             tss: TaskStateSegment {
                 back_link: 0,
                 esp0: task_page_addr + page_sz,

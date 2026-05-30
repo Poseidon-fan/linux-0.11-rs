@@ -413,6 +413,9 @@ define_syscall_handler!(
 
         let slot = task::current_slot();
 
+        // Discard inherited FPU state: the new image starts without one.
+        crate::fpu::reset_for_exec();
+
         // Install the new address space and per-task fields under a
         // `with_current` borrow. Do **not** write user memory inside this
         // closure: a not-present page in the fresh stack would trap into

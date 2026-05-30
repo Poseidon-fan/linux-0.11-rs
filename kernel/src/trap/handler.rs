@@ -4,7 +4,7 @@ use core::arch::{asm, naked_asm};
 
 use log::{error, info};
 
-use crate::mm;
+use crate::{mm, pmio::outb};
 
 /// CPU exception frame built by the common entry stubs.
 ///
@@ -285,8 +285,8 @@ extern "C" fn on_invalid_op(frame: &ExceptionFrame) {
     fatal("invalid opcode", frame);
 }
 
-extern "C" fn on_device_not_available(frame: &ExceptionFrame) {
-    fatal("device not available", frame);
+extern "C" fn on_device_not_available(_frame: &ExceptionFrame) {
+    crate::fpu::switch_in();
 }
 
 extern "C" fn on_double_fault(frame: &ExceptionFrame) {
@@ -330,8 +330,8 @@ extern "C" fn on_page_fault(frame: &ExceptionFrame) {
     }
 }
 
-extern "C" fn on_coprocessor_error(frame: &ExceptionFrame) {
-    fatal("coprocessor error", frame);
+extern "C" fn on_coprocessor_error(_frame: &ExceptionFrame) {
+    crate::fpu::handle_error();
 }
 
 extern "C" fn on_reserved(frame: &ExceptionFrame) {
@@ -342,8 +342,13 @@ extern "C" fn on_parallel_interrupt(_frame: &ExceptionFrame) {
     // Spurious IRQ7 — nothing to do.
 }
 
-extern "C" fn on_irq13(frame: &ExceptionFrame) {
-    fatal("IRQ13 (coprocessor)", frame);
+extern "C" fn on_irq13(_frame: &ExceptionFrame) {
+    // Clear the external coprocessor's busy latch, then acknowledge the slave
+    // PIC and the master cascade line before handling the error.
+    outb(0, 0xF0);
+    outb(0x20, 0xA0);
+    outb(0x20, 0x20);
+    crate::fpu::handle_error();
 }
 
 // ---------------------------------------------------------------------------

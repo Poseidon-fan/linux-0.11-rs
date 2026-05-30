@@ -102,6 +102,10 @@ pub fn schedule() {
             options(att_syntax),
         );
     }
+
+    // Reached when this task is later switched back in: reclaim the FPU
+    // without a fault if it still owns the live register state.
+    crate::fpu::on_resume();
 }
 
 /// Terminate the current task and switch to another runnable task.
@@ -110,6 +114,9 @@ pub fn exit_process(code: i32) -> ! {
         let slot = current_slot();
         let pid = current_pid();
         assert_ne!(slot, 0, "task[0] cannot exit");
+
+        // Drop FPU ownership before the PCB is reaped to avoid a dangling owner.
+        crate::fpu::abandon_on_exit();
         let init_task = manager
             .tasks
             .iter()

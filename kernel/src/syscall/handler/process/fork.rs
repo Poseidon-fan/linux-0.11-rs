@@ -32,6 +32,10 @@ define_syscall_handler!(
         let stack_top = new_task.stack_top();
         let cr3 = unsafe { &pg_dir as *const u8 as u32 };
 
+        // Snapshot the parent's FPU state (flushing live registers if owned)
+        // before borrowing its PCB below.
+        let child_fpu = crate::fpu::snapshot_current();
+
         let child_inner = parent.pcb.inner.exclusive(|p| {
             let data_base = p.ldt.data_segment().base();
             let code_base = p.ldt.code_segment().base();
@@ -83,6 +87,7 @@ define_syscall_handler!(
                     sigaction: p.signal_info.sigaction,
                     alarm: 0,
                 },
+                fpu: child_fpu,
             })
         })?;
 
