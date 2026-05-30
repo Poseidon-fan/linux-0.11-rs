@@ -4,3 +4,11 @@ HDA = "HDA"
 aout = "aout"
 AOUT = "AOUT"
 BRE = "BRE"
+
+[files]
+# `.ktest` scripts simulate raw keystroke streams (vi commands, escape
+# sequences, etc.) where character clusters like `IY`, `wQ`, `OX` are
+# data — not English text. Skip them entirely.
+extend-exclude = [
+    "ktest/suites/**",
+]

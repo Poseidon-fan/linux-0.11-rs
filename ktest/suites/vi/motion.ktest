@@ -18,7 +18,7 @@
 # `gg` jumps to first line.
 ! send "vi /tmp/v_motion.txt\r"
 ! sleep 0.5
-! send "GggIT-\e:wq\r"
+! send "GggIY-\e:wq\r"
 ! wait-prompt
 
 > head -n 1 /tmp/v_motion.txt

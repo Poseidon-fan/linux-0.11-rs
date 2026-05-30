@@ -89,6 +89,13 @@ repos:
     rev: v1.39.0
     hooks:
       - id: typos
+        # `--force-exclude` makes [files.extend-exclude] in .typos.toml
+        # apply even when pre-commit passes file paths explicitly. Without
+        # this flag, typos honours excludes only when discovering files
+        # itself, so the raw keystroke scripts under `ktest/suites/`
+        # (clusters of letters that look like English typos but are
+        # really vi commands) would still be auto-fixed.
+        args: ["--force-exclude"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
