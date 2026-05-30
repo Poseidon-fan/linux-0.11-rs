@@ -197,6 +197,42 @@
 > printf 'abc\n' | cksum
 ~ 1112837078 4
 
+# --- xargs -------------------------------------------------------------
+
+# Default: collect all items onto one `echo` command line.
+> printf 'a\nb\nc\n' | xargs echo
+< a b c
+
+# Items also feed an explicit command after its own initial arguments.
+> printf 'x\ny\n' | xargs echo PRE
+< PRE x y
+
+# -n batches items, running the command once per group.
+> printf '1 2 3 4 5\n' | xargs -n2 echo
+< 1 2
+< 3 4
+< 5
+
+# -I substitutes each input line into the command template.
+> printf 'foo\nbar\n' | xargs -I{} echo item={}
+< item=foo
+< item=bar
+
+# -0 splits on NUL, so embedded spaces stay within one item.
+> printf 'a\0b c\0' | xargs -0 -n1 echo
+< a
+< b c
+
+# Single quotes group whitespace into one item.
+> printf '%s\n' "'a b' c" | xargs -n1 echo
+< a b
+< c
+
+# -r suppresses the run on empty input (no output, success).
+> printf '' | xargs -r echo SHOULD_NOT_APPEAR
+> echo rc=$?
+< rc=0
+
 # --- cleanup -----------------------------------------------------------
 
 > rm -rf /tmp/kt-text
