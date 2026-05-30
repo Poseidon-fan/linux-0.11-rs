@@ -94,8 +94,46 @@
 > echo 'abcdef' | cut -c 2-4
 < bcd
 
-# --- sort (we ship no `sort`; skip) ------------------------------------
-# (deliberately omitted — bring back when sort lands)
+# --- sort --------------------------------------------------------------
+
+> printf 'banana\napple\ncherry\n' | sort
+< apple
+< banana
+< cherry
+
+> printf 'banana\napple\ncherry\n' | sort -r
+< cherry
+< banana
+< apple
+
+# Numeric sort orders by value, not lexically (10 after 2).
+> printf '10\n2\n1\n' | sort -n
+< 1
+< 2
+< 10
+
+# General-numeric sort handles exponents (1.5e3 == 1500); this path runs
+# real x87 floating-point and exercises the kernel's lazy FPU switching.
+> printf '3.14\n2\n10\n1.5e3\n' | sort -g
+< 2
+< 3.14
+< 10
+< 1.5e3
+
+> printf 'b\na\nb\na\n' | sort -u
+< a
+< b
+
+> printf 'a:3\nb:1\nc:2\n' | sort -t: -k2
+< b:1
+< c:2
+< a:3
+
+> printf 'c\na\nb\n' | sort -o /tmp/kt-text/sorted
+> cat /tmp/kt-text/sorted
+< a
+< b
+< c
 
 # --- uniq --------------------------------------------------------------
 

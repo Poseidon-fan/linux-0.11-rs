@@ -1,5 +1,8 @@
 [build]
-target = "../platform/i386-unknown-none.json"
+# This target spec omits `soft-float` (unlike the kernel's), so user-space
+# floating point compiles to real x87 instructions and exercises the kernel's
+# lazy FPU context switching.
+target = "i386-unknown-none.json"
 
 [unstable]
 build-std = ["core", "alloc"]
