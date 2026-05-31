@@ -96,7 +96,6 @@ user_program/        ~80 coreutils + the `sh` shell
 ktest/               end-to-end test runner driving QEMU over serial
 mbrkit/              MBR disk-image CLI (also on crates.io)
 miniximg/            Minix-fs image CLI and library
-platform/            custom i386-unknown-none target spec
 rootfs/              disk-image content template (/etc, /root, …)
 tools/               developer scripts (build-disk.sh, run-tests.sh, …)
 tutorial/            mdbook walkthrough (work in progress)
@@ -106,8 +105,8 @@ tutorial/            mdbook walkthrough (work in progress)
 ## 🛣️ Project status
 
 - **Kernel** — substantially feature-complete relative to Linux 0.11.
-  Floppy support and x87 emulation are intentionally out of scope; ongoing
-  work is on polish and tooling.
+  Floppy support is intentionally out of scope; ongoing work is on polish
+  and tooling.
 - **User library** — covers what the shell and coreutils need today.
 - **Userland** — usable for real interactive work.
 - **Tutorial** — early draft; the long-term plan is a complete
