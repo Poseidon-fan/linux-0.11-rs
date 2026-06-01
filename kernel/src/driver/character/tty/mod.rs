@@ -1,7 +1,7 @@
 //! TTY core layer.
 //!
 //! The TTY core owns the queues, line discipline, termios state, and wait
-//! queues for the fixed Linux 0.11-style terminal table:
+//! queues for the fixed terminal table:
 //!
 //! ```text
 //!   hardware ISR ──► raw_input ──► line discipline ──► cooked_input ──► read()
@@ -35,9 +35,8 @@ pub fn read(channel: usize, buffer: &mut [u8]) -> Result<usize> {
 
 /// Write kernel-owned bytes to a TTY.
 ///
-/// This is the Rust equivalent of the Linux 0.11 `printk` path, which writes
-/// formatted kernel output through TTY channel 0 after making the buffer
-/// readable as kernel data.
+/// This is the kernel log output path: it writes formatted kernel output
+/// through TTY channel 0 after making the buffer readable as kernel data.
 pub fn write(channel: usize, bytes: &[u8]) -> Result<usize> {
     device(channel)?.write(channel, bytes)
 }
@@ -91,21 +90,6 @@ pub fn has_output(channel: usize) -> bool {
         .unwrap_or(false)
 }
 
-type FlushOutputFn = fn(usize);
-type ConfigureFn = fn(usize, Termios);
-
-const NO_FOREGROUND_GROUP: i32 = 0;
-const WRITE_WAKE_THRESHOLD: usize = 128;
-const READ_CANONICAL_LOW_WATER: usize = 20;
-
-const TCFLSH: u32 = 0x540B;
-const TIOCOUTQ: u32 = 0x5411;
-const TIOCINQ: u32 = 0x541B;
-
-const FLUSH_INPUT: u32 = 0;
-const FLUSH_OUTPUT: u32 = 1;
-const FLUSH_BOTH: u32 = 2;
-
 static DEVICES: [TtyDevice; DEVICE_COUNT] = [
     TtyDevice::new(
         Termios::console_default(),
@@ -124,31 +108,66 @@ static DEVICES: [TtyDevice; DEVICE_COUNT] = [
     ),
 ];
 
+const NO_FOREGROUND_GROUP: i32 = 0;
+const WRITE_WAKE_THRESHOLD: usize = 128;
+const READ_CANONICAL_LOW_WATER: usize = 20;
+
+const TCFLSH: u32 = 0x540B;
+const TIOCOUTQ: u32 = 0x5411;
+const TIOCINQ: u32 = 0x541B;
+
+const FLUSH_INPUT: u32 = 0;
+const FLUSH_OUTPUT: u32 = 1;
+const FLUSH_BOTH: u32 = 2;
+
+/// Backend callback that flushes pending output for a channel.
+type FlushOutputFn = fn(usize);
+/// Backend callback that reconfigures a channel from termios state.
+type ConfigureFn = fn(usize, Termios);
+
+/// One TTY device: queues, configuration, and waiters.
 struct TtyDevice {
+    /// Mutable TTY state behind a kernel cell.
     state: KernelCell<TtyState>,
+    /// Backend flush callback for this channel.
     backend_flush: FlushOutputFn,
+    /// Backend reconfigure callback for this channel.
     backend_configure: ConfigureFn,
+    /// Readers waiting for cooked input.
     cooked_wait: WaitQueue,
+    /// Writers waiting for output queue space.
     output_wait: WaitQueue,
 }
 
+/// Mutable per-device TTY state.
 struct TtyState {
+    /// Terminal configuration.
     termios: Termios,
+    /// Foreground process group receiving terminal signals.
     foreground_group: i32,
+    /// Whether output is currently flow-control stopped.
     stopped: bool,
+    /// Raw bytes received from hardware.
     raw_input: RingBuffer,
+    /// Bytes queued for transmission to the backend.
     output: RingBuffer,
+    /// Line-discipline-processed bytes ready for reads.
     cooked_input: RingBuffer,
+    /// Number of complete lines available in canonical mode.
     pending_lines: usize,
+    /// Whether a carriage return was already inserted for the next newline.
     output_cr_pending: bool,
 }
 
+/// No-op backend reconfigure callback for the console channel.
 fn nop_configure(_channel: usize, _termios: Termios) {}
 
+/// Look up a TTY device by channel number.
 fn device(channel: usize) -> Result<&'static TtyDevice> {
     DEVICES.get(channel).ok_or(Errno::NODEV)
 }
 
+/// Post `signal_mask` to every task in the given foreground process group.
 fn signal_foreground_group(foreground_group: i32, signal_mask: u32) {
     if foreground_group <= 0 {
         return;
@@ -167,6 +186,7 @@ fn signal_foreground_group(foreground_group: i32, signal_mask: u32) {
 }
 
 impl TtyDevice {
+    /// Build a TTY device with empty queues and the given configuration.
     const fn new(
         termios: Termios,
         backend_flush: FlushOutputFn,
@@ -190,6 +210,7 @@ impl TtyDevice {
         }
     }
 
+    /// Read cooked input bytes into `buffer`, blocking until data or a signal.
     fn read(&'static self, buffer: &mut [u8]) -> Result<usize> {
         let count = buffer.len();
         if count == 0 {
@@ -239,6 +260,7 @@ impl TtyDevice {
         Ok(written)
     }
 
+    /// Write `buffer` to the output queue, applying output post-processing.
     fn write(&'static self, channel: usize, buffer: &[u8]) -> Result<usize> {
         let mut sent = 0usize;
         let count = buffer.len();
@@ -289,6 +311,7 @@ impl TtyDevice {
         Ok(sent)
     }
 
+    /// Handle a terminal ioctl request for this device.
     fn ioctl(&'static self, channel: usize, cmd: u32, arg: u32) -> Result<u32> {
         match cmd {
             x if x == TtyRequest::GetTermios as u32 => self.get_termios_to_user(arg),
@@ -342,6 +365,7 @@ impl TtyDevice {
         }
     }
 
+    /// Push raw hardware bytes through the line discipline and wake readers.
     fn receive_input(&'static self, channel: usize, bytes: &[u8]) {
         let has_echo = self.state.exclusive(|state| {
             for &byte in bytes {
@@ -357,6 +381,7 @@ impl TtyDevice {
         }
     }
 
+    /// Pop queued output bytes into `out`, returning the count drained.
     fn take_output(&'static self, out: &mut [u8]) -> usize {
         self.state.exclusive(|state| {
             let mut count = 0;
@@ -371,6 +396,7 @@ impl TtyDevice {
         })
     }
 
+    /// Copy the current termios out to a user pointer.
     fn get_termios_to_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termios = self.state.exclusive(|state| state.termios);
         mm::ensure_user_area_writable(user_ptr, core::mem::size_of::<Termios>());
@@ -378,6 +404,7 @@ impl TtyDevice {
         Ok(0)
     }
 
+    /// Load termios from a user pointer and reconfigure the backend.
     fn set_termios_from_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termios = uaccess::read_struct(user_ptr as *const Termios);
         self.state.exclusive(|state| state.termios = termios);
@@ -385,6 +412,7 @@ impl TtyDevice {
         Ok(0)
     }
 
+    /// Copy the current termios out to a user pointer in legacy termio form.
     fn get_termio_to_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termio = self.state.exclusive(|state| state.termios.to_termio());
         mm::ensure_user_area_writable(user_ptr, core::mem::size_of::<Termio>());
@@ -392,6 +420,7 @@ impl TtyDevice {
         Ok(0)
     }
 
+    /// Apply a legacy termio from a user pointer and reconfigure the backend.
     fn set_termio_from_user(&'static self, user_ptr: u32) -> Result<u32> {
         let termio = uaccess::read_struct(user_ptr as *const Termio);
         let termios = self.state.exclusive(|state| {
@@ -402,6 +431,7 @@ impl TtyDevice {
         Ok(0)
     }
 
+    /// Return this device's channel index in the device table.
     fn channel(&'static self) -> usize {
         DEVICES
             .iter()
@@ -409,6 +439,7 @@ impl TtyDevice {
             .unwrap_or(0)
     }
 
+    /// Flush input and/or output queues for a `TCFLSH` ioctl.
     fn flush_for_ioctl(&'static self, arg: u32) -> Result<u32> {
         match arg {
             FLUSH_INPUT => self.state.exclusive(TtyState::flush_input),
@@ -424,10 +455,12 @@ impl TtyDevice {
 }
 
 impl TtyState {
+    /// Whether the terminal is in canonical (line-buffered) mode.
     fn is_canonical(&self) -> bool {
         self.termios.local_mode.contains(LocalMode::ICANON)
     }
 
+    /// Whether a read can return data without blocking.
     fn has_readable_data(&self) -> bool {
         if self.is_canonical() {
             self.pending_lines > 0 || self.cooked_input.remaining() <= READ_CANONICAL_LOW_WATER
@@ -436,10 +469,12 @@ impl TtyState {
         }
     }
 
+    /// Whether `byte` terminates a canonical-mode line.
     fn is_line_boundary(&self, byte: u8) -> bool {
         byte == b'\n' || byte == self.termios.control_char(ControlChar::Eof)
     }
 
+    /// Apply output-mode character translations to one byte.
     fn map_output_byte(&self, byte: u8) -> u8 {
         if byte == b'\r' && self.termios.output_mode.contains(OutputMode::OCRNL) {
             return b'\n';
@@ -453,16 +488,19 @@ impl TtyState {
         byte
     }
 
+    /// Whether a carriage return must be inserted before `byte`.
     fn should_insert_output_cr(&self, byte: u8) -> bool {
         byte == b'\n'
             && self.termios.output_mode.contains(OutputMode::ONLCR)
             && !self.output_cr_pending
     }
 
+    /// Discard all queued raw input.
     fn flush_input(&mut self) {
         self.raw_input.flush();
     }
 
+    /// Discard all queued output.
     fn flush_output(&mut self) {
         self.output.flush();
         self.output_cr_pending = false;

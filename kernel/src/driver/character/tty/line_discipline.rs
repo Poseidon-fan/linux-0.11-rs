@@ -11,11 +11,6 @@ use user_lib::syscall::{
 
 use super::{TtyState, signal_foreground_group};
 
-enum MappedInput {
-    Byte(u8),
-    Discard,
-}
-
 /// Drain raw input through the line discipline.
 ///
 /// Returns `true` when echo bytes were appended to the output queue.
@@ -61,6 +56,15 @@ pub fn process_raw_input(state: &mut TtyState) -> bool {
     echoed
 }
 
+/// Result of mapping one input byte through the input-mode flags.
+enum MappedInput {
+    /// Byte to continue processing.
+    Byte(u8),
+    /// Byte was consumed and should be dropped.
+    Discard,
+}
+
+/// Apply input-mode translations (strip, CR/NL mapping, case folding).
 fn map_input(state: &TtyState, mut byte: u8) -> MappedInput {
     if state.termios.input_mode.contains(InputMode::ISTRIP) {
         byte &= 0x7f;
@@ -84,6 +88,7 @@ fn map_input(state: &TtyState, mut byte: u8) -> MappedInput {
     MappedInput::Byte(byte)
 }
 
+/// Handle XON/XOFF flow control; returns `true` if the byte was consumed.
 fn handle_flow_control(state: &mut TtyState, byte: u8) -> bool {
     if byte == state.termios.control_char(ControlChar::Stop) {
         state.stopped = true;
@@ -98,6 +103,7 @@ fn handle_flow_control(state: &mut TtyState, byte: u8) -> bool {
     false
 }
 
+/// Deliver INTR/QUIT signals; returns `true` if the byte was consumed.
 fn check_signal(state: &TtyState, byte: u8) -> bool {
     if byte == state.termios.control_char(ControlChar::Intr) {
         signal_foreground_group(state.foreground_group, 1u32 << (Signal::Int as u32 - 1));
@@ -112,6 +118,7 @@ fn check_signal(state: &TtyState, byte: u8) -> bool {
     false
 }
 
+/// Apply canonical-mode ERASE/KILL editing; returns `true` if consumed.
 fn handle_editing(state: &mut TtyState, byte: u8, echoed: &mut bool) -> bool {
     let erase_char = state.termios.control_char(ControlChar::Erase);
     let kill_char = state.termios.control_char(ControlChar::Kill);
@@ -151,6 +158,7 @@ fn is_erase_compat(byte: u8, erase_char: u8) -> bool {
     matches!((erase_char, byte), (0x7f, 0x08) | (0x08, 0x7f))
 }
 
+/// Echo the rub-out sequence for an erased character when ECHO is enabled.
 fn echo_erase(state: &mut TtyState, last: u8, echoed: &mut bool) {
     if !state.termios.local_mode.contains(LocalMode::ECHO) {
         return;
@@ -173,6 +181,7 @@ fn echo_erase(state: &mut TtyState, last: u8, echoed: &mut bool) {
     *echoed = true;
 }
 
+/// Echo one input byte to the output queue; returns `true` if bytes were added.
 fn echo(state: &mut TtyState, byte: u8) -> bool {
     if byte == b'\n' {
         state.output.push(b'\n');

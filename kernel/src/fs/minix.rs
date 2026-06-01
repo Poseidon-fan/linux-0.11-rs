@@ -107,6 +107,31 @@ const MAX_LOGICAL_BLOCKS: usize = DIRECT_ZONE_COUNT
 /// One indirect block interpreted as 16-bit Minix zone identifiers.
 type IndirectBlock = [u16; INDIRECT_ENTRIES_PER_BLOCK];
 
+/// Recursively free a zone tree rooted at `zone`.
+///
+/// `levels` is the depth of the indirection tree:
+/// - `0`: `zone` is a data zone; free it directly.
+/// - `1`: `zone` is a single-indirect block whose entries are data zones.
+/// - `2`: `zone` is a double-indirect block whose entries are single-indirect
+///   blocks.
+///
+/// Zero entries (sparse holes) and unreadable blocks are skipped silently;
+/// the indirection root itself is always returned to the bitmap.
+fn free_zone_tree(fs: &MinixFileSystem, dev: DevNum, zone: u16, levels: u32) {
+    if zone == 0 {
+        return;
+    }
+    if levels > 0 {
+        if let Some(buf) = buffer::read(BufferKey::new(dev, u32::from(zone))) {
+            let entries = buf.read(|table: &IndirectBlock| *table);
+            for child in entries {
+                free_zone_tree(fs, dev, child, levels - 1);
+            }
+        }
+    }
+    fs.free_zone(zone);
+}
+
 impl InodeId {
     /// Construct an inode identifier from a device number and inode number.
     pub const fn new(device: DevNum, inode_number: InodeNumber) -> Self {
@@ -813,6 +838,7 @@ impl MinixFileSystem {
 }
 
 impl InodeTable {
+    /// Construct an empty inode table with all slots vacant.
     fn new() -> Self {
         Self {
             slots: array::from_fn(|_| None),
@@ -954,29 +980,4 @@ impl InodeTable {
             victim.sync();
         }
     }
-}
-
-/// Recursively free a zone tree rooted at `zone`.
-///
-/// `levels` is the depth of the indirection tree:
-/// - `0`: `zone` is a data zone; free it directly.
-/// - `1`: `zone` is a single-indirect block whose entries are data zones.
-/// - `2`: `zone` is a double-indirect block whose entries are single-indirect
-///   blocks.
-///
-/// Zero entries (sparse holes) and unreadable blocks are skipped silently;
-/// the indirection root itself is always returned to the bitmap.
-fn free_zone_tree(fs: &MinixFileSystem, dev: DevNum, zone: u16, levels: u32) {
-    if zone == 0 {
-        return;
-    }
-    if levels > 0 {
-        if let Some(buf) = buffer::read(BufferKey::new(dev, u32::from(zone))) {
-            let entries = buf.read(|table: &IndirectBlock| *table);
-            for child in entries {
-                free_zone_tree(fs, dev, child, levels - 1);
-            }
-        }
-    }
-    fs.free_zone(zone);
 }

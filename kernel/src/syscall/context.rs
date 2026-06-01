@@ -52,7 +52,7 @@ pub struct SyscallContext {
     // --- syscall number and arguments ---
     /// Syscall number on entry; overwritten with the return value before `iret`.
     pub eax: u32,
-    /// First argument (Linux 0.11 convention: arg1 in EBX).
+    /// First argument (syscall convention: arg1 in EBX).
     pub ebx: u32,
     /// Second argument.
     pub ecx: u32,

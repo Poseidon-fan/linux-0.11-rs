@@ -2,6 +2,30 @@
 
 use crate::task::{FIRST_LDT_ENTRY, FIRST_TSS_ENTRY};
 
+/// Kernel code segment (GDT index 1, Ring 0) = `0x08`.
+pub const KERNEL_CS: SegmentSelector = SegmentSelector::gdt(1, 0);
+
+/// Kernel data segment (GDT index 2, Ring 0) = `0x10`.
+pub const KERNEL_DS: SegmentSelector = SegmentSelector::gdt(2, 0);
+
+/// User code segment (LDT index 1, Ring 3) = `0x0f`.
+pub const USER_CS: SegmentSelector = SegmentSelector::ldt(1, 3);
+
+/// User data segment (LDT index 2, Ring 3) = `0x17`.
+pub const USER_DS: SegmentSelector = SegmentSelector::ldt(2, 3);
+
+/// Returns the TSS selector for the task at `task_slot` (GDT index
+/// `FIRST_TSS_ENTRY + task_slot * 2`).
+pub const fn tss_selector(task_slot: u16) -> SegmentSelector {
+    SegmentSelector::gdt(FIRST_TSS_ENTRY + task_slot * 2, 0)
+}
+
+/// Returns the LDT descriptor selector for the task at `task_slot` (GDT
+/// index `FIRST_LDT_ENTRY + task_slot * 2`).
+pub const fn ldt_selector(task_slot: u16) -> SegmentSelector {
+    SegmentSelector::gdt(FIRST_LDT_ENTRY + task_slot * 2, 0)
+}
+
 /// A 16-bit segment selector for indexing into the GDT or LDT.
 ///
 /// ```text
@@ -34,28 +58,4 @@ impl SegmentSelector {
     pub const fn as_u32(self) -> u32 {
         self.0 as u32
     }
-}
-
-/// Kernel code segment (GDT index 1, Ring 0) = `0x08`.
-pub const KERNEL_CS: SegmentSelector = SegmentSelector::gdt(1, 0);
-
-/// Kernel data segment (GDT index 2, Ring 0) = `0x10`.
-pub const KERNEL_DS: SegmentSelector = SegmentSelector::gdt(2, 0);
-
-/// User code segment (LDT index 1, Ring 3) = `0x0f`.
-pub const USER_CS: SegmentSelector = SegmentSelector::ldt(1, 3);
-
-/// User data segment (LDT index 2, Ring 3) = `0x17`.
-pub const USER_DS: SegmentSelector = SegmentSelector::ldt(2, 3);
-
-/// Returns the TSS selector for the task at `task_slot` (GDT index
-/// `FIRST_TSS_ENTRY + task_slot * 2`).
-pub const fn tss_selector(task_slot: u16) -> SegmentSelector {
-    SegmentSelector::gdt(FIRST_TSS_ENTRY + task_slot * 2, 0)
-}
-
-/// Returns the LDT descriptor selector for the task at `task_slot` (GDT
-/// index `FIRST_LDT_ENTRY + task_slot * 2`).
-pub const fn ldt_selector(task_slot: u16) -> SegmentSelector {
-    SegmentSelector::gdt(FIRST_LDT_ENTRY + task_slot * 2, 0)
 }

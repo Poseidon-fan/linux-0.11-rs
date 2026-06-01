@@ -97,15 +97,6 @@ pub struct PhysFrameRange {
     pub page_count: usize,
 }
 
-const PAGING_MEMORY: u32 = 14 * 1024 * 1024;
-const PAGING_PAGES: usize = (PAGING_MEMORY as usize) >> PAGE_SHIFT;
-const HIGH_MEMORY: u32 = LOW_MEM + PAGING_MEMORY;
-const UNPAGED_PAGES: u32 = LOW_MEM >> PAGE_SHIFT;
-
-struct FrameAllocator {
-    mem_map: [u8; PAGING_PAGES],
-}
-
 /// Frame allocator instance.
 ///
 /// Using `static` instead of `lazy_static!` ensures the mem_map array
@@ -115,6 +106,15 @@ struct FrameAllocator {
 static FRAME_ALLOCATOR: KernelCell<FrameAllocator> = KernelCell::new(FrameAllocator {
     mem_map: [0; PAGING_PAGES],
 });
+
+const PAGING_MEMORY: u32 = 14 * 1024 * 1024;
+const PAGING_PAGES: usize = (PAGING_MEMORY as usize) >> PAGE_SHIFT;
+const HIGH_MEMORY: u32 = LOW_MEM + PAGING_MEMORY;
+const UNPAGED_PAGES: u32 = LOW_MEM >> PAGE_SHIFT;
+
+struct FrameAllocator {
+    mem_map: [u8; PAGING_PAGES],
+}
 
 impl Drop for PhysFrame {
     fn drop(&mut self) {

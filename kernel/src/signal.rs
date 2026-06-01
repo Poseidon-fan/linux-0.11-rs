@@ -15,47 +15,6 @@ use user_lib::syscall::signal::{NSIG, SigFlags, SigHandler, Signal};
 
 use crate::{mm, segment::uaccess, task};
 
-/// Caller-saved registers included in the user-space signal frame.
-///
-/// Pushed onto the user stack before the handler runs and restored by the
-/// sigreturn path so the interrupted code resumes with correct register state.
-#[derive(Clone, Copy)]
-pub struct SignalSavedRegisters {
-    pub eax: u32,
-    pub ecx: u32,
-    pub edx: u32,
-    pub eflags: u32,
-    pub old_eip: u32,
-}
-
-/// Parameters for delivering a single signal to user space.
-#[derive(Clone, Copy)]
-pub struct DeliverAction {
-    pub handler: u32,
-    pub restorer: u32,
-    pub signal_number: u32,
-    pub blocked: u32,
-    pub sa_flags: u32,
-    pub sa_mask: u32,
-}
-
-/// Implemented by interrupt/syscall return frames that support signal delivery.
-///
-/// Both `SyscallContext` and `TimerFrame` implement this trait so that
-/// [`handle_pending_signal`] can inject a signal frame regardless of the
-/// return path.
-pub trait SignalDeliveryFrame {
-    fn is_returning_to_user(&self) -> bool;
-    fn deliver_signal(&mut self, action: DeliverAction) -> bool;
-}
-
-enum PendingSignalAction {
-    None,
-    Deliver(DeliverAction),
-    Stop,
-    Exit { signal_number: u32 },
-}
-
 /// Checks for one pending unblocked signal and delivers it before returning
 /// to user mode.
 pub fn handle_pending_signal(frame: &mut dyn SignalDeliveryFrame) {
@@ -168,4 +127,63 @@ pub fn push_user_signal_frame(
     uaccess::write_u32(regs.old_eip, sp);
 
     new_esp
+}
+
+/// Caller-saved registers included in the user-space signal frame.
+///
+/// Pushed onto the user stack before the handler runs and restored by the
+/// sigreturn path so the interrupted code resumes with correct register state.
+#[derive(Clone, Copy)]
+pub struct SignalSavedRegisters {
+    /// Saved `EAX`.
+    pub eax: u32,
+    /// Saved `ECX`.
+    pub ecx: u32,
+    /// Saved `EDX`.
+    pub edx: u32,
+    /// Saved `EFLAGS`.
+    pub eflags: u32,
+    /// Instruction pointer the handler returns to.
+    pub old_eip: u32,
+}
+
+/// Parameters for delivering a single signal to user space.
+#[derive(Clone, Copy)]
+pub struct DeliverAction {
+    /// User-space address of the signal handler.
+    pub handler: u32,
+    /// User-space address of the sigreturn trampoline.
+    pub restorer: u32,
+    /// One-based signal number being delivered.
+    pub signal_number: u32,
+    /// Signal mask in effect before delivery.
+    pub blocked: u32,
+    /// `sa_flags` from the installed `sigaction`.
+    pub sa_flags: u32,
+    /// Additional signals to block while the handler runs.
+    pub sa_mask: u32,
+}
+
+/// Implemented by interrupt/syscall return frames that support signal delivery.
+///
+/// Both `SyscallContext` and `TimerFrame` implement this trait so that
+/// [`handle_pending_signal`] can inject a signal frame regardless of the
+/// return path.
+pub trait SignalDeliveryFrame {
+    /// Returns `true` if this frame is about to return to ring 3.
+    fn is_returning_to_user(&self) -> bool;
+    /// Injects a signal frame for `action`, returning `true` on success.
+    fn deliver_signal(&mut self, action: DeliverAction) -> bool;
+}
+
+/// Outcome of inspecting the current task's pending signals.
+enum PendingSignalAction {
+    /// Nothing to deliver.
+    None,
+    /// Run the user-supplied handler described by the action.
+    Deliver(DeliverAction),
+    /// Stop the task and reschedule.
+    Stop,
+    /// Terminate the task with the given fatal signal number.
+    Exit { signal_number: u32 },
 }

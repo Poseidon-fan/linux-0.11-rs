@@ -33,6 +33,7 @@ pub const TASK_PAGE_FRAMES: usize = 2;
 /// Total bytes reserved for one task's PCB + kernel stack block.
 pub const TASK_PAGE_SIZE: usize = PAGE_SIZE * TASK_PAGE_FRAMES;
 
+/// Maximum number of open file descriptors per task.
 pub const TASK_OPEN_FILES_LIMIT: usize = 20;
 
 /// Process Control Block (PCB) for a task.
@@ -43,6 +44,7 @@ pub const TASK_OPEN_FILES_LIMIT: usize = 20;
 pub struct TaskControlBlock {
     /// Slot index in the global task table.
     pub slot: usize,
+    /// Process identifier.
     pub pid: u32,
     /// Packed per-task IRQ nesting state used by synchronization guards.
     ///
@@ -50,6 +52,7 @@ pub struct TaskControlBlock {
     /// - bit 7: saved outer IF value
     /// - bits 0..=6: nested IRQ-masked depth
     pub irq_state: AtomicU8,
+    /// Interior-mutable task state guarded by [`KernelCell`].
     pub inner: KernelCell<TaskControlBlockInner>,
 }
 
@@ -58,18 +61,31 @@ pub struct TaskControlBlock {
 /// This struct holds all the mutable state of a task, separated from the
 /// immutable `pid` to enable interior mutability via [`KernelCell`].
 pub struct TaskControlBlockInner {
+    /// Scheduling state and time-slice accounting.
     pub sched: TaskSchedInfo,
+    /// Parent/group/session relationships.
     pub relation: TaskRelationInfo,
+    /// User and group identity for permission checks.
     pub identity: TaskIdentityInfo,
+    /// CPU time accounting.
     pub acct: TaskAcctInfo,
+    /// The task's user address space, if any.
     pub memory_space: Option<MemorySpace>,
+    /// User-space memory layout boundaries.
     pub mem_layout: TaskMemoryLayout,
+    /// Exit code recorded when the task becomes a zombie.
     pub exit_code: i32,
+    /// Controlling terminal channel, or `-1` if none.
     pub tty: i32,
+    /// Filesystem context: cwd, root, open files, umask.
     pub fs: TaskFileSystemContext,
+    /// Per-task Local Descriptor Table.
     pub ldt: LocalDescriptorTable,
+    /// Per-task hardware Task State Segment.
     pub tss: TaskStateSegment,
+    /// Pending/blocked signals and signal handlers.
     pub signal_info: TaskSignalInfo,
+    /// Saved FPU register context.
     pub fpu: FpuContext,
 }
 
@@ -94,11 +110,17 @@ pub struct TaskMemoryLayout {
 /// Per-task filesystem context shared by pathname lookup and file descriptors.
 #[derive(Clone)]
 pub struct TaskFileSystemContext {
+    /// File-mode creation mask applied to new files.
     pub umask: u16,
+    /// Filesystem root directory inode.
     pub root_directory: Option<Arc<Inode>>,
+    /// Current working directory inode.
     pub current_directory: Option<Arc<Inode>>,
+    /// Inode of the executable backing the current image.
     pub executable_inode: Option<Arc<Inode>>,
+    /// Bitmap of descriptors to close on `exec`.
     pub close_on_exec: u32,
+    /// Open file descriptor table.
     pub open_files: [Option<Arc<dyn File>>; TASK_OPEN_FILES_LIMIT],
 }
 
@@ -124,6 +146,7 @@ pub struct TaskFileSystemContext {
 pub struct TaskPage {
     pub pcb: TaskControlBlock,
 
+    /// Kernel stack occupying the remainder of the task page.
     stack: [u8; TASK_PAGE_SIZE - size_of::<TaskControlBlock>()],
 }
 
@@ -147,6 +170,7 @@ pub struct Task(PhysFrameRange);
 #[repr(C)]
 #[derive(Clone)]
 pub struct LocalDescriptorTable {
+    /// LDT entries: `[null, user code, user data]`.
     pub entries: [Descriptor; 3],
 }
 
@@ -183,13 +207,21 @@ pub struct TaskStateSegment {
     pub eflags: u32,
 
     // General purpose registers
+    /// Accumulator register.
     pub eax: u32,
+    /// Counter register.
     pub ecx: u32,
+    /// Data register.
     pub edx: u32,
+    /// Base register.
     pub ebx: u32,
+    /// Stack pointer register.
     pub esp: u32,
+    /// Base pointer register.
     pub ebp: u32,
+    /// Source index register.
     pub esi: u32,
+    /// Destination index register.
     pub edi: u32,
 
     // Segment registers (16 high bits zero for each)
@@ -213,16 +245,23 @@ pub struct TaskStateSegment {
     pub trace_bitmap: u32,
 }
 
+/// Scheduling state of a task.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
+    /// Runnable or currently running.
     Running = 0,
+    /// Sleeping; can be woken by a signal.
     Interruptible = 1,
+    /// Sleeping; ignores signals until explicitly woken.
     Uninterruptible = 2,
+    /// Terminated, awaiting reaping by its parent.
     Zombie = 3,
+    /// Stopped by a job-control signal.
     Stopped = 4,
 }
 
+/// Scheduling state and time-slice accounting for a task.
 #[derive(Clone, Copy)]
 pub struct TaskSchedInfo {
     /// Scheduling state (runnable/sleeping/etc.).
@@ -249,11 +288,17 @@ pub struct TaskRelationInfo {
 /// User/group identity for permission checks.
 #[derive(Clone, Copy, Default)]
 pub struct TaskIdentityInfo {
+    /// Real user id.
     pub uid: u16,
+    /// Effective user id (used for permission checks).
     pub euid: u16,
+    /// Saved set-user-id.
     pub suid: u16,
+    /// Real group id.
     pub gid: u16,
+    /// Effective group id (used for permission checks).
     pub egid: u16,
+    /// Saved set-group-id.
     pub sgid: u16,
 }
 
@@ -338,6 +383,7 @@ impl DerefMut for Task {
 }
 
 impl TaskControlBlock {
+    /// Build a PCB for `slot`/`pid` wrapping the given mutable inner state.
     pub fn new(slot: usize, pid: u32, inner: TaskControlBlockInner) -> Self {
         Self {
             slot,
@@ -415,6 +461,7 @@ impl TaskControlBlock {
 }
 
 impl TaskPage {
+    /// Address of the top of this page's kernel stack (used as ESP0).
     pub fn stack_top(&self) -> u32 {
         let top = self as *const TaskPage as usize + TASK_PAGE_SIZE;
         top as u32

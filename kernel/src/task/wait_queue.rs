@@ -18,6 +18,7 @@ use crate::{
 
 /// Single-slot wait queue.
 pub struct WaitQueue {
+    /// The single waiting task, held as a weak reference.
     slot: KernelCell<Option<Weak<Task>>>,
 }
 

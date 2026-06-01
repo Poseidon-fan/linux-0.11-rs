@@ -6,6 +6,9 @@
 use alloc::string::String;
 use core::{arch::asm, mem};
 
+/// Maximum length for user-space pathname strings.
+pub const MAX_PATH_LEN: usize = 256;
+
 /// Reads a `u8` from `addr` through the FS segment.
 #[inline]
 pub fn read_u8(addr: *const u8) -> u8 {
@@ -91,9 +94,6 @@ pub fn read_string(addr: *const u8, max_len: usize) -> String {
     }
     s
 }
-
-/// Maximum length for user-space pathname strings.
-pub const MAX_PATH_LEN: usize = 256;
 
 /// Read a null-terminated pathname from user space at `addr`.
 pub fn read_pathname(addr: u32) -> String {

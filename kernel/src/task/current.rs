@@ -22,22 +22,6 @@ pub fn current_task() -> Arc<Task> {
     try_current_task().expect("current_task called before task::init initialized current task")
 }
 
-/// Return the current task as a strong `Arc` when task tracking is initialized.
-pub fn try_current_task() -> Option<Arc<Task>> {
-    let ptr = CURRENT_TASK.load(Ordering::Acquire);
-    if ptr.is_null() {
-        return None;
-    }
-
-    Some(unsafe {
-        // SAFETY:
-        // - `ptr` comes from `Arc::as_ptr` in init/set path.
-        // - The task table keeps a long-lived strong reference.
-        Arc::increment_strong_count(ptr.cast_const());
-        Arc::from_raw(ptr.cast_const())
-    })
-}
-
 /// Return the current task's slot index.
 ///
 /// Reads the raw pointer directly to avoid Arc refcount overhead.
@@ -129,3 +113,19 @@ const IRQ_SAVED_IF_BIT: u8 = 1 << 7;
 
 /// Low 7 bits store nested IRQ-masked depth.
 const IRQ_DEPTH_MASK: u8 = 0x7f;
+
+/// Return the current task as a strong `Arc` when task tracking is initialized.
+fn try_current_task() -> Option<Arc<Task>> {
+    let ptr = CURRENT_TASK.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
+    }
+
+    Some(unsafe {
+        // SAFETY:
+        // - `ptr` comes from `Arc::as_ptr` in init/set path.
+        // - The task table keeps a long-lived strong reference.
+        Arc::increment_strong_count(ptr.cast_const());
+        Arc::from_raw(ptr.cast_const())
+    })
+}

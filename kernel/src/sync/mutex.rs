@@ -24,6 +24,7 @@ pub struct Mutex<T> {
     value: UnsafeCell<T>,
 }
 
+/// RAII guard returned by [`Mutex::lock`]; releases the mutex on drop.
 #[must_use = "dropping the guard unlocks the mutex"]
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,

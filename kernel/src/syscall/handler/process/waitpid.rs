@@ -17,32 +17,54 @@ define_syscall_handler!(
         const WNOHANG: u32 = 1;
         const WUNTRACED: u32 = 2;
 
+        /// Snapshot of a child task's fields taken under the task-table lock,
+        /// so the rest of the scan can run without holding the child's PCB.
         #[derive(Clone, Copy)]
         struct ChildView {
+            /// Index of the child in the task table.
             slot: usize,
+            /// Child process ID.
             pid: u32,
+            /// Child process group ID.
             pgrp: u32,
+            /// Current scheduling state.
             state: TaskState,
+            /// Exit/stop status word.
             exit_code: i32,
+            /// Accumulated user-mode time (jiffies).
             utime: u32,
+            /// Accumulated system-mode time (jiffies).
             stime: u32,
+            /// Parent process ID.
             father: u32,
         }
 
+        /// Outcome of one pass over the caller's children.
         #[derive(Clone, Copy)]
         enum ScanResult {
+            /// A stopped child was found (reported when `WUNTRACED` is set).
             Stopped {
+                /// PID to report.
                 pid: u32,
+                /// Status word to write back to user space.
                 status: u32,
             },
+            /// A zombie child was found and reaped.
             Zombie {
+                /// Task-table slot freed by reaping.
                 slot: usize,
+                /// PID to report.
                 pid: u32,
+                /// Status word to write back to user space.
                 status: u32,
+                /// Child user-mode time, folded into the parent's totals.
                 utime: u32,
+                /// Child system-mode time, folded into the parent's totals.
                 stime: u32,
             },
+            /// Matching live children exist; the caller must block and retry.
             NeedWait,
+            /// No matching children exist.
             NoChild,
         }
 

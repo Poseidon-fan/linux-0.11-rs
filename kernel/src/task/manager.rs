@@ -12,10 +12,8 @@ use lazy_static::lazy_static;
 use super::task_struct::{TASK_PAGE_SIZE, Task, TaskControlBlock, TaskPage, TaskState};
 use crate::sync::KernelCell;
 
-/// Number of tasks in the task table.
-pub const TASK_NUM: usize = 64;
-
 lazy_static! {
+    /// Global task table and PID allocator for the whole kernel.
     pub static ref TASK_MANAGER: KernelCell<TaskManager> = unsafe {
         // Initialize the static memory for task 0.
         let init_task_ptr = addr_of_mut!(INIT_TASK_PAGE).cast::<TaskPage>();
@@ -44,13 +42,19 @@ lazy_static! {
     };
 }
 
+/// Number of tasks in the task table.
+pub const TASK_NUM: usize = 64;
+
+/// The global task table.
 pub struct TaskManager {
+    /// Per-slot task entries; `tasks[0]` is the idle process.
     pub tasks: [Option<Arc<Task>>; TASK_NUM],
+    /// Last allocated PID, used as the starting point for the next search.
     last_pid: AtomicU32,
 }
 
 unsafe extern "C" {
-    /// Page directory for the kernel， defined in `head.s`.
+    /// Page directory for the kernel, defined in `head.s`.
     static pg_dir: u8;
 }
 

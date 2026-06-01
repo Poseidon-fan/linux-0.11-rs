@@ -26,27 +26,39 @@ use crate::{
     sync::KernelCell,
 };
 
-bitflags! {
-    /// Active modifier key state, tracked across make/break scan codes.
-    #[derive(Clone, Copy)]
-    struct Modifiers: u8 {
-        const LEFT_SHIFT  = 0x01;
-        const RIGHT_SHIFT = 0x02;
-        const LEFT_CTRL   = 0x04;
-        const RIGHT_CTRL  = 0x08;
-        const LEFT_ALT    = 0x10;
-        const RIGHT_ALT   = 0x20;
-        const CAPS_LOCK   = 0x40;
-        const CAPS_PRESSED = 0x80;
+/// Naked ISR stub for IRQ1 (keyboard interrupt).
+///
+/// Saves registers, sets up kernel data segments, calls the Rust handler,
+/// then restores and returns via `iret`. Follows the same register-save
+/// convention as the timer interrupt stub.
+#[naked]
+pub extern "C" fn keyboard_interrupt() {
+    unsafe {
+        naked_asm!(
+            "pushl %eax",
+            "pushl %ebx",
+            "pushl %ecx",
+            "pushl %edx",
+            "push %ds",
+            "push %es",
+            "movl $0x10, %eax",
+            "movw %ax, %ds",
+            "movw %ax, %es",
+            "call {handler}",
+            "pop %es",
+            "pop %ds",
+            "popl %edx",
+            "popl %ecx",
+            "popl %ebx",
+            "popl %eax",
+            "iret",
+            handler = sym keyboard_handler,
+            options(att_syntax),
+        );
     }
 }
 
-struct KeyboardState {
-    modifiers: Modifiers,
-    leds: u8,
-    extended_prefix: bool,
-}
-
+/// Shared keyboard controller state guarded by a `KernelCell`.
 static KEYBOARD: KernelCell<KeyboardState> = KernelCell::new(KeyboardState {
     modifiers: Modifiers::empty(),
     leds: 2, // Num Lock on
@@ -99,6 +111,63 @@ static CURSOR_TABLE: [u8; 13] = [
     b'Y', b'B', b'6', // End, Down, PgDn
     b'2', b'3', // Ins, Del
 ];
+
+bitflags! {
+    /// Active modifier key state, tracked across make/break scan codes.
+    #[derive(Clone, Copy)]
+    struct Modifiers: u8 {
+        /// Left Shift held.
+        const LEFT_SHIFT  = 0x01;
+        /// Right Shift held.
+        const RIGHT_SHIFT = 0x02;
+        /// Left Ctrl held.
+        const LEFT_CTRL   = 0x04;
+        /// Right Ctrl held.
+        const RIGHT_CTRL  = 0x08;
+        /// Left Alt held.
+        const LEFT_ALT    = 0x10;
+        /// Right Alt held.
+        const RIGHT_ALT   = 0x20;
+        /// CapsLock toggle is active.
+        const CAPS_LOCK   = 0x40;
+        /// CapsLock key is currently pressed (debounces the toggle).
+        const CAPS_PRESSED = 0x80;
+    }
+}
+
+/// Keyboard controller state tracked across interrupts.
+struct KeyboardState {
+    /// Active modifier keys.
+    modifiers: Modifiers,
+    /// Current keyboard LED state (bit 1 = Num Lock).
+    leds: u8,
+    /// Whether the previous scan code was an extended (0xe0/0xe1) prefix.
+    extended_prefix: bool,
+}
+
+/// Rust-side keyboard interrupt handler.
+///
+/// Reads the scan code, acknowledges the keyboard controller and PIC,
+/// translates the scan code, and feeds resulting bytes into the console TTY.
+extern "C" fn keyboard_handler() {
+    let scancode = inb(0x60);
+
+    // Toggle keyboard controller acknowledge lines.
+    let port_b = inb(0x61);
+    outb(port_b | 0x80, 0x61);
+    outb(port_b, 0x61);
+
+    // Translate scan code to ASCII.
+    let mut buf = [0u8; 8];
+    let count = unsafe { KEYBOARD.exclusive_unchecked(|kb| kb.translate(scancode, &mut buf)) };
+
+    // Send End-Of-Interrupt to master PIC.
+    outb(0x20, 0x20);
+
+    if count > 0 {
+        tty::receive_input(0, &buf[..count]);
+    }
+}
 
 impl KeyboardState {
     /// Translate one scan code into zero or more ASCII bytes pushed to the
@@ -261,61 +330,5 @@ impl KeyboardState {
 
         out[0] = c;
         1
-    }
-}
-
-/// Naked ISR stub for IRQ1 (keyboard interrupt).
-///
-/// Saves registers, sets up kernel data segments, calls the Rust handler,
-/// then restores and returns via `iret`. Follows the same convention as
-/// `timer_interrupt` in `task/timer.rs`.
-#[naked]
-pub extern "C" fn keyboard_interrupt() {
-    unsafe {
-        naked_asm!(
-            "pushl %eax",
-            "pushl %ebx",
-            "pushl %ecx",
-            "pushl %edx",
-            "push %ds",
-            "push %es",
-            "movl $0x10, %eax",
-            "movw %ax, %ds",
-            "movw %ax, %es",
-            "call {handler}",
-            "pop %es",
-            "pop %ds",
-            "popl %edx",
-            "popl %ecx",
-            "popl %ebx",
-            "popl %eax",
-            "iret",
-            handler = sym keyboard_handler,
-            options(att_syntax),
-        );
-    }
-}
-
-/// Rust-side keyboard interrupt handler.
-///
-/// Reads the scan code, acknowledges the keyboard controller and PIC,
-/// translates the scan code, and feeds resulting bytes into the console TTY.
-extern "C" fn keyboard_handler() {
-    let scancode = inb(0x60);
-
-    // Toggle keyboard controller acknowledge lines.
-    let port_b = inb(0x61);
-    outb(port_b | 0x80, 0x61);
-    outb(port_b, 0x61);
-
-    // Translate scan code to ASCII.
-    let mut buf = [0u8; 8];
-    let count = unsafe { KEYBOARD.exclusive_unchecked(|kb| kb.translate(scancode, &mut buf)) };
-
-    // Send End-Of-Interrupt to master PIC.
-    outb(0x20, 0x20);
-
-    if count > 0 {
-        tty::receive_input(0, &buf[..count]);
     }
 }

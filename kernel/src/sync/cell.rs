@@ -6,6 +6,25 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::sync::IrqSaveGuard;
 
+/// Panics if a [`KernelCell`] borrow is currently held (debug builds only).
+///
+/// If a task switch occurs while a borrow is active, the switched-to task
+/// may enter the same critical section and attempt a second mutable borrow,
+/// violating Rust's aliasing rules and causing a `RefCell` panic.
+#[inline]
+pub fn assert_can_schedule(context: &str) {
+    #[cfg(debug_assertions)]
+    {
+        assert_eq!(
+            BORROW_DEPTH.load(Ordering::Relaxed),
+            0,
+            "{context} must not reschedule while holding a KernelCell borrow"
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = context;
+}
+
 /// IRQ-safe interior mutability wrapper for `static` kernel data.
 ///
 /// Wraps a [`RefCell`] and gates every mutable access behind an IRQ-masked
@@ -20,6 +39,12 @@ use crate::sync::IrqSaveGuard;
 pub struct KernelCell<T> {
     inner: RefCell<T>,
 }
+
+#[cfg(debug_assertions)]
+static BORROW_DEPTH: AtomicU32 = AtomicU32::new(0);
+
+/// Tracks borrow depth on enter/drop for [`assert_can_schedule`].
+struct BorrowGuard;
 
 // SAFETY: Single-core kernel; IRQ masking prevents concurrent access.
 unsafe impl<T> Sync for KernelCell<T> {}
@@ -53,30 +78,6 @@ impl<T> KernelCell<T> {
         f(&mut *self.inner.borrow_mut())
     }
 }
-
-/// Panics if a [`KernelCell`] borrow is currently held (debug builds only).
-///
-/// If a task switch occurs while a borrow is active, the switched-to task
-/// may enter the same critical section and attempt a second mutable borrow,
-/// violating Rust's aliasing rules and causing a `RefCell` panic.
-#[inline]
-pub fn assert_can_schedule(context: &str) {
-    #[cfg(debug_assertions)]
-    {
-        assert_eq!(
-            BORROW_DEPTH.load(Ordering::Relaxed),
-            0,
-            "{context} must not reschedule while holding a KernelCell borrow"
-        );
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = context;
-}
-
-#[cfg(debug_assertions)]
-static BORROW_DEPTH: AtomicU32 = AtomicU32::new(0);
-
-struct BorrowGuard;
 
 impl BorrowGuard {
     #[inline]

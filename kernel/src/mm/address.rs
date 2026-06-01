@@ -169,10 +169,12 @@ impl PhysAddr {
         self.0
     }
 
+    /// Return the physical page number containing this address.
     pub fn floor(&self) -> PhysPageNum {
         PhysPageNum(self.0 >> PAGE_SHIFT)
     }
 
+    /// Return the byte offset within the 4KB page.
     pub fn page_offset(&self) -> u32 {
         self.0 & PAGE_OFFSET_MASK
     }

@@ -123,11 +123,11 @@ const HARD_DISK_MAJOR: u8 = 3;
 const MAX_DRIVE_COUNT: usize = 2;
 /// Each drive exposes up to four primary partitions.
 const PRIMARY_PARTITION_COUNT: usize = 4;
-/// Linux 0.11 exposes one whole-disk slot plus four partition slots per drive.
+/// Exposes one whole-disk slot plus four partition slots per drive.
 const PARTITION_SLOTS_PER_DRIVE: usize = PRIMARY_PARTITION_COUNT + 1;
 /// One ATA sector is transferred as 256 16-bit words.
 const SECTOR_WORD_COUNT: usize = block::SECTOR_SIZE / 2;
-/// Maximum per-request error count from the original driver.
+/// Maximum per-request error count before the request is failed.
 const MAX_REQUEST_ERRORS: u32 = 7;
 
 /// Legacy CHS geometry reported for one ATA drive.
@@ -217,109 +217,6 @@ struct AtaRequest {
     remaining_sectors: u32,
     /// Memory address for the next sector transfer.
     data_addr: NonNull<u8>,
-}
-
-impl AtaDriver {
-    /// Create an uninitialized ATA driver state.
-    const fn new() -> Self {
-        Self {
-            disks: DiskTable::new(),
-            setup_completed: false,
-            recovery: RecoveryState::Ready,
-            phase: InterruptPhase::Idle,
-        }
-    }
-}
-
-impl DiskTable {
-    /// Create an empty disk table with no detected drives.
-    const fn new() -> Self {
-        Self {
-            drives: [const { None }; MAX_DRIVE_COUNT],
-        }
-    }
-}
-
-impl DriveGeometry {
-    /// Parse drive geometry from a BIOS drive-info table entry in user memory.
-    ///
-    /// Returns `None` when the entry describes no drive. The BIOS table is laid
-    /// out as 16-byte entries:
-    ///
-    /// ```text
-    /// +0  u16 cylinders
-    /// +2  u8  heads
-    /// +5  u16 write precompensation
-    /// +8  u8  control
-    /// +14 u8  sectors per track
-    /// ```
-    unsafe fn from_bios_entry(entry_addr: *const u8) -> Option<Self> {
-        // SAFETY: caller guarantees `entry_addr` points to a valid BIOS drive-info entry.
-        let geo = unsafe {
-            Self {
-                cylinder_count: uaccess::read_u16(entry_addr.cast::<u16>()),
-                head_count: u16::from(uaccess::read_u8(entry_addr.add(2))),
-                write_precompensation: uaccess::read_u16(entry_addr.add(5).cast::<u16>()),
-                control: uaccess::read_u8(entry_addr.add(8)),
-                sectors_per_track: u16::from(uaccess::read_u8(entry_addr.add(14))),
-            }
-        };
-        (geo.cylinder_count != 0).then_some(geo)
-    }
-
-    /// Total addressable sectors for this CHS geometry.
-    fn total_sectors(&self) -> u32 {
-        [self.head_count, self.sectors_per_track, self.cylinder_count]
-            .into_iter()
-            .fold(1u32, |acc, v| acc.saturating_mul(u32::from(v)))
-    }
-}
-
-impl DrivePartition {
-    /// Parse one partition entry from an MBR sector.
-    ///
-    /// Empty partition entries have a zero sector count and are represented as
-    /// `None`. Only the LBA start/count fields are needed by this driver.
-    fn from_mbr_entry(sector: &[u8], index: usize) -> Option<Self> {
-        /// First partition entry offset inside an MBR sector.
-        const PARTITION_TABLE_OFFSET: usize = 0x1BE;
-        /// Size of one DOS partition table entry.
-        const PARTITION_TABLE_ENTRY_SIZE: usize = 16;
-        /// Offset of the little-endian start-sector field in one entry.
-        const PARTITION_START_SECTOR_OFFSET: usize = 8;
-        /// Offset of the little-endian sector-count field in one entry.
-        const PARTITION_SECTOR_COUNT_OFFSET: usize = 12;
-
-        let off = PARTITION_TABLE_OFFSET + index * PARTITION_TABLE_ENTRY_SIZE;
-        let start_sector = u32::from_le_bytes(
-            sector[off + PARTITION_START_SECTOR_OFFSET..][..4]
-                .try_into()
-                .unwrap(),
-        );
-        let sector_count = u32::from_le_bytes(
-            sector[off + PARTITION_SECTOR_COUNT_OFFSET..][..4]
-                .try_into()
-                .unwrap(),
-        );
-        (sector_count != 0).then_some(Self {
-            start_sector,
-            sector_count,
-        })
-    }
-}
-
-impl DriveDescriptor {
-    /// Build a descriptor from BIOS geometry with empty partition slots.
-    fn from_geometry(geometry: DriveGeometry) -> Self {
-        Self {
-            whole_disk: DrivePartition {
-                start_sector: 0,
-                sector_count: geometry.total_sectors(),
-            },
-            geometry,
-            primary_partitions: [const { None }; PRIMARY_PARTITION_COUNT],
-        }
-    }
 }
 
 /// Start or resume processing the current hard disk request.
@@ -583,7 +480,7 @@ fn current_request_snapshot() -> Option<AtaRequest> {
     })
 }
 
-/// Consume the current recovery request, preserving the original reset flow.
+/// Consume the current recovery request, advancing the reset/recalibrate flow.
 fn take_recovery_state() -> RecoveryState {
     ATA_DRIVER.exclusive(|driver| {
         match core::mem::replace(&mut driver.recovery, RecoveryState::Ready) {
@@ -622,5 +519,108 @@ fn mark_request_error() -> bool {
 fn complete_current_and_maybe_kick(result: Result<()>) {
     if block::complete_current(HARD_DISK_MAJOR, result) == QueueAfterComplete::More {
         kick();
+    }
+}
+
+impl AtaDriver {
+    /// Create an uninitialized ATA driver state.
+    const fn new() -> Self {
+        Self {
+            disks: DiskTable::new(),
+            setup_completed: false,
+            recovery: RecoveryState::Ready,
+            phase: InterruptPhase::Idle,
+        }
+    }
+}
+
+impl DiskTable {
+    /// Create an empty disk table with no detected drives.
+    const fn new() -> Self {
+        Self {
+            drives: [const { None }; MAX_DRIVE_COUNT],
+        }
+    }
+}
+
+impl DriveGeometry {
+    /// Parse drive geometry from a BIOS drive-info table entry in user memory.
+    ///
+    /// Returns `None` when the entry describes no drive. The BIOS table is laid
+    /// out as 16-byte entries:
+    ///
+    /// ```text
+    /// +0  u16 cylinders
+    /// +2  u8  heads
+    /// +5  u16 write precompensation
+    /// +8  u8  control
+    /// +14 u8  sectors per track
+    /// ```
+    unsafe fn from_bios_entry(entry_addr: *const u8) -> Option<Self> {
+        // SAFETY: caller guarantees `entry_addr` points to a valid BIOS drive-info entry.
+        let geo = unsafe {
+            Self {
+                cylinder_count: uaccess::read_u16(entry_addr.cast::<u16>()),
+                head_count: u16::from(uaccess::read_u8(entry_addr.add(2))),
+                write_precompensation: uaccess::read_u16(entry_addr.add(5).cast::<u16>()),
+                control: uaccess::read_u8(entry_addr.add(8)),
+                sectors_per_track: u16::from(uaccess::read_u8(entry_addr.add(14))),
+            }
+        };
+        (geo.cylinder_count != 0).then_some(geo)
+    }
+
+    /// Total addressable sectors for this CHS geometry.
+    fn total_sectors(&self) -> u32 {
+        [self.head_count, self.sectors_per_track, self.cylinder_count]
+            .into_iter()
+            .fold(1u32, |acc, v| acc.saturating_mul(u32::from(v)))
+    }
+}
+
+impl DrivePartition {
+    /// Parse one partition entry from an MBR sector.
+    ///
+    /// Empty partition entries have a zero sector count and are represented as
+    /// `None`. Only the LBA start/count fields are needed by this driver.
+    fn from_mbr_entry(sector: &[u8], index: usize) -> Option<Self> {
+        /// First partition entry offset inside an MBR sector.
+        const PARTITION_TABLE_OFFSET: usize = 0x1BE;
+        /// Size of one DOS partition table entry.
+        const PARTITION_TABLE_ENTRY_SIZE: usize = 16;
+        /// Offset of the little-endian start-sector field in one entry.
+        const PARTITION_START_SECTOR_OFFSET: usize = 8;
+        /// Offset of the little-endian sector-count field in one entry.
+        const PARTITION_SECTOR_COUNT_OFFSET: usize = 12;
+
+        let off = PARTITION_TABLE_OFFSET + index * PARTITION_TABLE_ENTRY_SIZE;
+        let start_sector = u32::from_le_bytes(
+            sector[off + PARTITION_START_SECTOR_OFFSET..][..4]
+                .try_into()
+                .unwrap(),
+        );
+        let sector_count = u32::from_le_bytes(
+            sector[off + PARTITION_SECTOR_COUNT_OFFSET..][..4]
+                .try_into()
+                .unwrap(),
+        );
+        (sector_count != 0).then_some(Self {
+            start_sector,
+            sector_count,
+        })
+    }
+}
+
+impl DriveDescriptor {
+    /// Build a descriptor from BIOS geometry with empty partition slots.
+    fn from_geometry(geometry: DriveGeometry) -> Self {
+        Self {
+            whole_disk: DrivePartition {
+                start_sector: 0,
+                sector_count: geometry.total_sectors(),
+            },
+            geometry,
+            primary_partitions: [const { None }; PRIMARY_PARTITION_COUNT],
+        }
     }
 }

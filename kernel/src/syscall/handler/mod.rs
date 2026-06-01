@@ -13,12 +13,18 @@ mod process;
 
 use crate::{define_syscall_handler, error::Result, syscall::SyscallContext};
 
+/// Dispatch table mapping each syscall number to its handler function.
+///
+/// Populated at link time: every [`define_syscall_handler!`] invocation inserts
+/// its function at a fixed index via the `linkme` distributed slice.
 #[::linkme::distributed_slice]
 pub static SYSCALL_TABLE: [fn(&mut SyscallContext) -> Result<u32>];
 
-// linkme requires an integer literal in `distributed_slice(..., N)`, so the
-// syscall number must be written as a literal at the call site. A compile-time
-// assertion then verifies it matches the corresponding `Syscall` variant.
+/// Registers a syscall handler at a fixed index in [`SYSCALL_TABLE`].
+///
+/// `$number` must be written as an integer literal because `linkme` requires
+/// one in `distributed_slice(..., N)`. A compile-time assertion verifies the
+/// literal matches the value of the corresponding `Syscall` variant.
 #[macro_export]
 macro_rules! define_syscall_handler {
     (

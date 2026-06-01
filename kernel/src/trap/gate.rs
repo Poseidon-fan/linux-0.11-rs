@@ -2,12 +2,6 @@
 
 use crate::segment::KERNEL_CS;
 
-unsafe extern "C" {
-    static mut idt: [GateDescriptor; 256];
-}
-
-pub type TrapHandler = extern "C" fn();
-
 /// Install a kernel-only **interrupt gate** at IDT `vector`.
 ///
 /// The CPU clears `IF` on entry, masking further maskable interrupts until
@@ -41,6 +35,14 @@ pub fn set_system_gate(vector: usize, handler: TrapHandler) {
     set_gate(vector, GateDescriptor::trap(handler, 3));
 }
 
+/// Signature of a low-level exception/interrupt entry stub installed in the IDT.
+pub type TrapHandler = extern "C" fn();
+
+unsafe extern "C" {
+    /// The Interrupt Descriptor Table, defined in assembly and filled by [`set_gate`].
+    static mut idt: [GateDescriptor; 256];
+}
+
 /// An i386 IDT gate descriptor (interrupt gate or trap gate).
 ///
 /// ```text
@@ -54,13 +56,19 @@ pub fn set_system_gate(vector: usize, handler: TrapHandler) {
 /// - Trap gate (type `0xF`): leaves IF unchanged.
 #[repr(C)]
 struct GateDescriptor {
+    /// Low 16 bits of the handler offset.
     offset_low: u16,
+    /// Code-segment selector the handler runs under.
     selector: u16,
+    /// Reserved byte (must be zero).
     _reserved: u8,
+    /// Present bit, DPL, and gate type packed into one byte.
     flags: u8,
+    /// High 16 bits of the handler offset.
     offset_high: u16,
 }
 
+/// Writes `desc` into IDT slot `vector`.
 #[inline]
 fn set_gate(vector: usize, desc: GateDescriptor) {
     unsafe {

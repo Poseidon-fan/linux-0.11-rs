@@ -1,6 +1,6 @@
 //! 8250-compatible RS-232 serial ports.
 //!
-//! The serial driver owns the two Linux 0.11-style RS-232 channels:
+//! The serial driver owns two RS-232 channels:
 //!
 //! ```text
 //! TTY channel 1 ──► COM1 base 0x3f8 ──► IRQ4 / IDT vector 0x24
@@ -10,7 +10,7 @@
 //! Each interrupt loops over the UART interrupt-identification register until
 //! the device reports no pending cause. Receive interrupts feed raw bytes into
 //! the TTY line discipline, and transmit-empty interrupts drain the TTY output
-//! queue one byte at a time, matching the original interrupt-driven design.
+//! queue one byte at a time using an interrupt-driven design.
 
 use core::arch::naked_asm;
 
@@ -21,36 +21,6 @@ use crate::{
     pmio::{inb, inb_p, outb, outb_p},
     trap,
 };
-
-/// Number of serial ports implemented by this driver.
-const PORT_COUNT: usize = 2;
-
-/// TTY channel number for the first serial port.
-const FIRST_SERIAL_TTY: usize = 1;
-
-/// Master PIC interrupt mask register.
-const PIC_MASTER_MASK: u16 = 0x21;
-
-/// End-of-interrupt command value for the 8259A PIC.
-const PIC_EOI: u8 = 0x20;
-
-/// IRQ3 and IRQ4 mask bits in the master PIC interrupt mask register.
-const SERIAL_IRQ_MASK: u8 = 0x18;
-
-/// COM1 hardware descriptor.
-const COM1: SerialPort = SerialPort {
-    base: 0x3f8,
-    tty_channel: 1,
-};
-
-/// COM2 hardware descriptor.
-const COM2: SerialPort = SerialPort {
-    base: 0x2f8,
-    tty_channel: 2,
-};
-
-/// Static serial-port table indexed by `tty_channel - FIRST_SERIAL_TTY`.
-const PORTS: [SerialPort; PORT_COUNT] = [COM1, COM2];
 
 /// Initialize both serial ports and install IRQ gates.
 pub fn init() {
@@ -92,11 +62,95 @@ pub fn configure(channel: usize, termios: Termios) {
     port.configure(termios);
 }
 
-/// Return the serial port serving `channel`.
-fn port_for_channel(channel: usize) -> Option<SerialPort> {
-    let index = channel.checked_sub(FIRST_SERIAL_TTY)?;
-    PORTS.get(index).copied()
+/// Naked ISR stub for IRQ4, used by COM1.
+#[naked]
+pub extern "C" fn serial1_interrupt() {
+    unsafe {
+        naked_asm!(
+            "pushl %eax",
+            "pushl %ebx",
+            "pushl %ecx",
+            "pushl %edx",
+            "push %ds",
+            "push %es",
+            "movl $0x10, %eax",
+            "movw %ax, %ds",
+            "movw %ax, %es",
+            "pushl $0",
+            "call {entry}",
+            "addl $4, %esp",
+            "pop %es",
+            "pop %ds",
+            "popl %edx",
+            "popl %ecx",
+            "popl %ebx",
+            "popl %eax",
+            "iret",
+            entry = sym serial_interrupt_entry,
+            options(att_syntax),
+        );
+    }
 }
+
+/// Naked ISR stub for IRQ3, used by COM2.
+#[naked]
+pub extern "C" fn serial2_interrupt() {
+    unsafe {
+        naked_asm!(
+            "pushl %eax",
+            "pushl %ebx",
+            "pushl %ecx",
+            "pushl %edx",
+            "push %ds",
+            "push %es",
+            "movl $0x10, %eax",
+            "movw %ax, %ds",
+            "movw %ax, %es",
+            "pushl $1",
+            "call {entry}",
+            "addl $4, %esp",
+            "pop %es",
+            "pop %ds",
+            "popl %edx",
+            "popl %ecx",
+            "popl %ebx",
+            "popl %eax",
+            "iret",
+            entry = sym serial_interrupt_entry,
+            options(att_syntax),
+        );
+    }
+}
+
+/// Number of serial ports implemented by this driver.
+const PORT_COUNT: usize = 2;
+
+/// TTY channel number for the first serial port.
+const FIRST_SERIAL_TTY: usize = 1;
+
+/// Master PIC interrupt mask register.
+const PIC_MASTER_MASK: u16 = 0x21;
+
+/// End-of-interrupt command value for the 8259A PIC.
+const PIC_EOI: u8 = 0x20;
+
+/// IRQ3 and IRQ4 mask bits in the master PIC interrupt mask register.
+const SERIAL_IRQ_MASK: u8 = 0x18;
+
+/// COM1 hardware descriptor.
+const COM1: SerialPort = SerialPort {
+    base: 0x3f8,
+    tty_channel: 1,
+};
+
+/// COM2 hardware descriptor.
+const COM2: SerialPort = SerialPort {
+    base: 0x2f8,
+    tty_channel: 2,
+};
+
+/// Static serial-port table indexed by `tty_channel - FIRST_SERIAL_TTY`.
+const PORTS: [SerialPort; PORT_COUNT] = [COM1, COM2];
 
 /// One 8250-compatible UART port.
 ///
@@ -112,19 +166,28 @@ fn port_for_channel(channel: usize) -> Option<SerialPort> {
 /// ```
 #[derive(Clone, Copy)]
 struct SerialPort {
+    /// Base I/O port address of the UART.
     base: u16,
+    /// TTY channel this port is bound to.
     tty_channel: usize,
 }
 
 /// UART register offsets from the port base address.
 #[repr(u16)]
 enum Register {
+    /// Receive buffer / transmit holding / divisor low.
     Data = 0,
+    /// Interrupt enable / divisor high.
     InterruptEnable = 1,
+    /// Interrupt identification (read) or FIFO control (write).
     InterruptIdentifyOrFifoControl = 2,
+    /// Line control register.
     LineControl = 3,
+    /// Modem control register.
     ModemControl = 4,
+    /// Line status register.
     LineStatus = 5,
+    /// Modem status register.
     ModemStatus = 6,
 }
 
@@ -192,6 +255,66 @@ mod modem_control {
 mod line_status {
     /// At least one byte is available in the receive buffer.
     pub const DATA_READY: u8 = 1 << 0;
+}
+
+/// Return the serial port serving `channel`.
+fn port_for_channel(channel: usize) -> Option<SerialPort> {
+    let index = channel.checked_sub(FIRST_SERIAL_TTY)?;
+    PORTS.get(index).copied()
+}
+
+/// Return the UART divisor for the low four `c_cflag` baud bits.
+fn baud_divisor(control_mode: ControlMode) -> Option<u16> {
+    match control_mode & ControlMode::CBAUD {
+        mode if mode.is_empty() => None,
+        ControlMode::B50 => Some(2304),
+        ControlMode::B75 => Some(1536),
+        ControlMode::B110 => Some(1047),
+        ControlMode::B134 => Some(857),
+        ControlMode::B150 => Some(768),
+        ControlMode::B200 => Some(576),
+        ControlMode::B300 => Some(384),
+        ControlMode::B600 => Some(192),
+        ControlMode::B1200 => Some(96),
+        ControlMode::B1800 => Some(64),
+        ControlMode::B2400 => Some(48),
+        ControlMode::B4800 => Some(24),
+        ControlMode::B9600 => Some(12),
+        ControlMode::B19200 => Some(6),
+        ControlMode::B38400 => Some(3),
+        _ => Some(48),
+    }
+}
+
+/// Convert termios character-format flags into an 8250 line-control value.
+fn line_control_from_termios(control_mode: ControlMode) -> u8 {
+    let mut line = match control_mode & ControlMode::CSIZE {
+        ControlMode::CS6 => line_control::WORD_LEN_6,
+        ControlMode::CS7 => line_control::WORD_LEN_7,
+        ControlMode::CS8 => line_control::WORD_LEN_8,
+        _ => line_control::WORD_LEN_5,
+    };
+
+    if control_mode.contains(ControlMode::CSTOPB) {
+        line |= line_control::STOP_BITS;
+    }
+    if control_mode.contains(ControlMode::CPARENB) {
+        line |= line_control::PARITY_ENABLE;
+        if !control_mode.contains(ControlMode::CPARODD) {
+            line |= line_control::EVEN_PARITY;
+        }
+    }
+
+    line
+}
+
+/// Rust-side dispatcher shared by the COM1 and COM2 interrupt stubs.
+extern "C" fn serial_interrupt_entry(index: usize) {
+    if let Some(port) = PORTS.get(index).copied() {
+        port.handle_interrupt();
+    }
+
+    outb(PIC_EOI, 0x20);
 }
 
 impl SerialPort {
@@ -341,118 +464,4 @@ impl SerialPort {
     fn write(self, register: Register, value: u8) {
         outb_p(value, self.base + register as u16);
     }
-}
-
-/// Return the UART divisor for the low four `c_cflag` baud bits.
-fn baud_divisor(control_mode: ControlMode) -> Option<u16> {
-    match control_mode & ControlMode::CBAUD {
-        mode if mode.is_empty() => None,
-        ControlMode::B50 => Some(2304),
-        ControlMode::B75 => Some(1536),
-        ControlMode::B110 => Some(1047),
-        ControlMode::B134 => Some(857),
-        ControlMode::B150 => Some(768),
-        ControlMode::B200 => Some(576),
-        ControlMode::B300 => Some(384),
-        ControlMode::B600 => Some(192),
-        ControlMode::B1200 => Some(96),
-        ControlMode::B1800 => Some(64),
-        ControlMode::B2400 => Some(48),
-        ControlMode::B4800 => Some(24),
-        ControlMode::B9600 => Some(12),
-        ControlMode::B19200 => Some(6),
-        ControlMode::B38400 => Some(3),
-        _ => Some(48),
-    }
-}
-
-/// Convert termios character-format flags into an 8250 line-control value.
-fn line_control_from_termios(control_mode: ControlMode) -> u8 {
-    let mut line = match control_mode & ControlMode::CSIZE {
-        ControlMode::CS6 => line_control::WORD_LEN_6,
-        ControlMode::CS7 => line_control::WORD_LEN_7,
-        ControlMode::CS8 => line_control::WORD_LEN_8,
-        _ => line_control::WORD_LEN_5,
-    };
-
-    if control_mode.contains(ControlMode::CSTOPB) {
-        line |= line_control::STOP_BITS;
-    }
-    if control_mode.contains(ControlMode::CPARENB) {
-        line |= line_control::PARITY_ENABLE;
-        if !control_mode.contains(ControlMode::CPARODD) {
-            line |= line_control::EVEN_PARITY;
-        }
-    }
-
-    line
-}
-
-/// Naked ISR stub for IRQ4, used by COM1.
-#[naked]
-pub extern "C" fn serial1_interrupt() {
-    unsafe {
-        naked_asm!(
-            "pushl %eax",
-            "pushl %ebx",
-            "pushl %ecx",
-            "pushl %edx",
-            "push %ds",
-            "push %es",
-            "movl $0x10, %eax",
-            "movw %ax, %ds",
-            "movw %ax, %es",
-            "pushl $0",
-            "call {entry}",
-            "addl $4, %esp",
-            "pop %es",
-            "pop %ds",
-            "popl %edx",
-            "popl %ecx",
-            "popl %ebx",
-            "popl %eax",
-            "iret",
-            entry = sym serial_interrupt_entry,
-            options(att_syntax),
-        );
-    }
-}
-
-/// Naked ISR stub for IRQ3, used by COM2.
-#[naked]
-pub extern "C" fn serial2_interrupt() {
-    unsafe {
-        naked_asm!(
-            "pushl %eax",
-            "pushl %ebx",
-            "pushl %ecx",
-            "pushl %edx",
-            "push %ds",
-            "push %es",
-            "movl $0x10, %eax",
-            "movw %ax, %ds",
-            "movw %ax, %es",
-            "pushl $1",
-            "call {entry}",
-            "addl $4, %esp",
-            "pop %es",
-            "pop %ds",
-            "popl %edx",
-            "popl %ecx",
-            "popl %ebx",
-            "popl %eax",
-            "iret",
-            entry = sym serial_interrupt_entry,
-            options(att_syntax),
-        );
-    }
-}
-
-/// Rust-side dispatcher shared by the COM1 and COM2 interrupt stubs.
-extern "C" fn serial_interrupt_entry(index: usize) {
-    if let Some(port) = PORTS.get(index).copied() {
-        port.handle_interrupt();
-    }
-
-    outb(PIC_EOI, 0x20);
 }

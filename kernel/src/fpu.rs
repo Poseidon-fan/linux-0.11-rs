@@ -22,17 +22,6 @@ use user_lib::syscall::signal::Signal;
 
 use crate::{sync::IrqSaveGuard, task, task::task_struct::Task};
 
-/// Per-task x87 register snapshot, stored in the PCB.
-///
-/// Holds the 108-byte `FNSAVE`/`FRSTOR` register image plus a flag recording
-/// whether the task has ever used the FPU, which decides whether its first
-/// fault loads a saved image or a freshly initialized one.
-#[derive(Clone, Copy, Default)]
-pub struct FpuContext {
-    regs: I387,
-    used: bool,
-}
-
 /// Marks the boot CPU as having no live FPU owner with `CR0.TS` set, so the
 /// first floating-point instruction in user space faults into [`switch_in`].
 pub fn init() {
@@ -145,9 +134,17 @@ pub fn handle_error() {
     }
 }
 
-/// Drops FPU ownership if `task_ptr` currently holds it.
-fn abandon(task_ptr: *mut Task) {
-    let _ = FPU_OWNER.compare_exchange(task_ptr, null_mut(), Ordering::AcqRel, Ordering::Acquire);
+/// Per-task x87 register snapshot, stored in the PCB.
+///
+/// Holds the 108-byte `FNSAVE`/`FRSTOR` register image plus a flag recording
+/// whether the task has ever used the FPU, which decides whether its first
+/// fault loads a saved image or a freshly initialized one.
+#[derive(Clone, Copy, Default)]
+pub struct FpuContext {
+    /// Saved x87 register image.
+    regs: I387,
+    /// Whether the task has ever executed a floating-point instruction.
+    used: bool,
 }
 
 /// Raw pointer to the task whose FPU state is live in the hardware registers,
@@ -166,16 +163,25 @@ const CR0_TS: u32 = 1 << 3;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct I387 {
+    /// Control word.
     cwd: u32,
+    /// Status word.
     swd: u32,
+    /// Tag word.
     twd: u32,
+    /// Instruction pointer offset.
     fip: u32,
+    /// Instruction pointer selector.
     fcs: u32,
+    /// Operand (data) pointer offset.
     foo: u32,
+    /// Operand (data) pointer selector.
     fos: u32,
+    /// The eight 80-bit stack registers, packed into 32-bit words.
     st_space: [u32; 20],
 }
 
+/// Reads `CR0`.
 #[inline]
 fn read_cr0() -> u32 {
     let cr0: u32;
@@ -224,4 +230,9 @@ unsafe fn fnsave(regs: &mut I387) {
 #[inline]
 unsafe fn frstor(regs: &I387) {
     unsafe { asm!("frstor ({0})", in(reg) regs as *const I387, options(att_syntax, nostack)) };
+}
+
+/// Drops FPU ownership if `task_ptr` currently holds it.
+fn abandon(task_ptr: *mut Task) {
+    let _ = FPU_OWNER.compare_exchange(task_ptr, null_mut(), Ordering::AcqRel, Ordering::Acquire);
 }

@@ -12,13 +12,6 @@
 /// Number of bytes each ring buffer can store (must be a power of two).
 pub const CAPACITY: usize = 1024;
 
-const _: () = assert!(
-    CAPACITY.is_power_of_two(),
-    "RingBuffer CAPACITY must be a power of two"
-);
-
-const MASK: usize = CAPACITY - 1;
-
 /// A fixed-size, single-producer / single-consumer byte ring buffer.
 ///
 /// `head` is the next position to write (push) into.
@@ -27,10 +20,20 @@ const MASK: usize = CAPACITY - 1;
 /// `CAPACITY - 1` bytes (one slot is always unused to distinguish
 /// full from empty).
 pub struct RingBuffer {
+    /// Backing byte storage.
     buf: [u8; CAPACITY],
+    /// Index of the next slot to write.
     head: usize,
+    /// Index of the next slot to read.
     tail: usize,
 }
+
+const _: () = assert!(
+    CAPACITY.is_power_of_two(),
+    "RingBuffer CAPACITY must be a power of two"
+);
+
+const MASK: usize = CAPACITY - 1;
 
 impl RingBuffer {
     /// Create an empty ring buffer. Usable in `const` / `static` context.
@@ -48,11 +51,13 @@ impl RingBuffer {
         (self.tail.wrapping_sub(self.head).wrapping_sub(1)) & MASK
     }
 
+    /// Whether the buffer holds no bytes.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.head == self.tail
     }
 
+    /// Whether the buffer has no free space.
     #[inline]
     pub fn is_full(&self) -> bool {
         self.remaining() == 0

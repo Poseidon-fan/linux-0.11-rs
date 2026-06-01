@@ -58,17 +58,23 @@ const UNIX_EPOCH_YEAR: u32 = 1970;
 const UNIX_EPOCH_YEAR_IN_CENTURY: u32 = UNIX_EPOCH_YEAR % 100;
 const MONTH_START_DAYS_IN_LEAP_YEAR: [u32; 12] = build_month_start_days_in_leap_year();
 
-// Calendar fields decoded from the RTC CMOS registers.
+/// Calendar fields decoded from the RTC CMOS registers.
 struct RtcTime {
-    second: u32,          // Seconds in [0, 60] to allow for a leap second.
-    minute: u32,          // Minutes in [0, 59].
-    hour: u32,            // Hours in [0, 23].
-    day_of_month: u32,    // Day of month in [1, 31].
-    month_index: usize,   // Zero-based month index in [0, 11].
-    year_of_century: u32, // Last two digits of the Gregorian year in [0, 99].
+    /// Seconds in `[0, 60]` to allow for a leap second.
+    second: u32,
+    /// Minutes in `[0, 59]`.
+    minute: u32,
+    /// Hours in `[0, 23]`.
+    hour: u32,
+    /// Day of month in `[1, 31]`.
+    day_of_month: u32,
+    /// Zero-based month index in `[0, 11]`.
+    month_index: usize,
+    /// Last two digits of the Gregorian year in `[0, 99]`.
+    year_of_century: u32,
 }
 
-// Reads the RTC until the seconds register remains unchanged across the sample.
+/// Reads the RTC until the seconds register remains unchanged across the sample.
 fn read_rtc_time() -> RtcTime {
     loop {
         let second = pmio::read_cmos(RTC_SECONDS_REGISTER);
@@ -91,15 +97,15 @@ fn read_rtc_time() -> RtcTime {
     }
 }
 
-// Converts the RTC packed-BCD encoding into a binary integer.
+/// Converts the RTC packed-BCD encoding into a binary integer.
 const fn decode_bcd(value: u8) -> u32 {
     ((value & 0x0F) + (value >> 4) * 10) as u32
 }
 
-// Converts a decoded RTC value to a Unix timestamp.
-//
-// The RTC only stores a two-digit year. Values `70..=99` are interpreted as
-// `1970..=1999`, and values `0..=69` are interpreted as `2000..=2069`.
+/// Converts a decoded RTC value to a Unix timestamp.
+///
+/// The RTC only stores a two-digit year. Values `70..=99` are interpreted as
+/// `1970..=1999`, and values `0..=69` are interpreted as `2000..=2069`.
 fn unix_timestamp_from_rtc(rtc: RtcTime) -> u32 {
     let full_year = full_year_from_rtc(rtc.year_of_century);
     let years_since_epoch = full_year - UNIX_EPOCH_YEAR;
@@ -123,7 +129,7 @@ fn unix_timestamp_from_rtc(rtc: RtcTime) -> u32 {
         - leap_day_adjustment
 }
 
-// Expands the RTC two-digit year into the full-year range supported by the kernel.
+/// Expands the RTC two-digit year into the full-year range supported by the kernel.
 const fn full_year_from_rtc(year_of_century: u32) -> u32 {
     if year_of_century >= UNIX_EPOCH_YEAR_IN_CENTURY {
         1900 + year_of_century
@@ -132,15 +138,15 @@ const fn full_year_from_rtc(year_of_century: u32) -> u32 {
     }
 }
 
-// Checks leap-year status for the RTC range supported by the kernel.
-//
-// The supported RTC window stays below 2100, so the simple divisibility-by-4
-// rule matches the Gregorian calendar for every reachable year.
+/// Checks leap-year status for the RTC range supported by the kernel.
+///
+/// The supported RTC window stays below 2100, so the simple divisibility-by-4
+/// rule matches the Gregorian calendar for every reachable year.
 const fn is_leap_year(year: u32) -> bool {
     year % 4 == 0
 }
 
-// Builds the day offset from January 1 to the start of each month in a leap year.
+/// Builds the day offset from January 1 to the start of each month in a leap year.
 const fn build_month_start_days_in_leap_year() -> [u32; 12] {
     let month_lengths = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut offsets = [0u32; 12];

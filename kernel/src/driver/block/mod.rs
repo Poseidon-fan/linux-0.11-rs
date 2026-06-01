@@ -16,7 +16,7 @@
 //! +---------------------+
 //!
 //! Each queue head is the in-flight request. New requests are spliced after
-//! that head using the Linux 0.11 elevator ordering rule.
+//! that head using a seek-ordered elevator rule.
 //! ```
 //!
 //! - [`hd`] — ATA hard disk driver (interrupt-driven, up to 2 drives).
@@ -186,18 +186,26 @@ pub enum BlockRequestType {
 /// Immutable I/O parameters for a block request.
 #[derive(Clone)]
 pub struct BlockRequestIo {
+    /// Target device number.
     dev: DevNum,
+    /// Read or write operation.
     ty: BlockRequestType,
+    /// First 512-byte sector to transfer.
     first_sector: u32,
+    /// Total number of sectors to transfer.
     sector_count: u32,
+    /// Memory address of the first sector's data.
     data_addr: NonNull<u8>,
 }
 
 /// Mutable progress cursor for the current block request.
 #[derive(Clone)]
 pub struct RequestProgress {
+    /// Next 512-byte sector to transfer.
     next_sector: u32,
+    /// Number of sectors still waiting to be transferred.
     remaining_sectors: u32,
+    /// Memory address for the next sector transfer.
     next_data_addr: NonNull<u8>,
 }
 
@@ -214,15 +222,16 @@ pub enum RequestErrorAction {
 
 /// Controlled mutable view over the current request for one block driver.
 pub struct CurrentRequest<'a> {
+    /// Borrowed in-flight request slot.
     request: &'a mut BlockRequest,
 }
+
+static BLOCK_MANAGER: KernelCell<BlockManager> = KernelCell::new(BlockManager::new());
+static DEVICE_WAIT_QUEUE: WaitQueue = WaitQueue::new();
 
 const REQUEST_POOL_CAPACITY: usize = 32;
 const BLOCK_DEVICE_SLOT_COUNT: usize = 7;
 const BUFFER_BLOCK_SECTOR_COUNT: u32 = (BLOCK_SIZE / SECTOR_SIZE) as u32;
-
-static BLOCK_MANAGER: KernelCell<BlockManager> = KernelCell::new(BlockManager::new());
-static DEVICE_WAIT_QUEUE: WaitQueue = WaitQueue::new();
 
 /// Index of one occupied or free slot in the fixed request pool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,28 +251,38 @@ enum RequestPayload {
 
 /// Request slot stored in the shared pool.
 struct BlockRequest {
+    /// Immutable I/O parameters.
     io: BlockRequestIo,
+    /// Mutable transfer progress cursor.
     progress: RequestProgress,
+    /// Number of failed attempts recorded for this request.
     error_count: u32,
+    /// Completion target waited on or notified once the request finishes.
     payload: RequestPayload,
+    /// Next request in the per-major queue, if any.
     next_request: Option<RequestId>,
 }
 
 /// Per-major queue head and driver entry point.
 #[derive(Clone, Copy)]
 struct DeviceQueue {
+    /// Driver callbacks registered for this major.
     ops: BlockDriverOps,
+    /// In-flight request at the head of the queue, if any.
     current_request: Option<RequestId>,
 }
 
 /// Fixed-size request storage shared by all block drivers.
 struct RequestPool {
+    /// Backing storage for all request slots.
     slots: [Option<BlockRequest>; REQUEST_POOL_CAPACITY],
 }
 
 /// Shared block request scheduler and device queue table.
 struct BlockManager {
+    /// Shared request slot pool.
     pool: RequestPool,
+    /// Per-major device queues indexed by major number.
     queues: [Option<DeviceQueue>; BLOCK_DEVICE_SLOT_COUNT],
 }
 
@@ -459,7 +478,7 @@ impl BlockManager {
         Ok((request, queue.current_request.is_some()))
     }
 
-    /// Compare requests using the Linux 0.11 elevator ordering key.
+    /// Compare requests using the seek-ordered elevator key.
     fn request_in_order(left: &BlockRequest, right: &BlockRequest) -> bool {
         (left.io.ty as u8, left.io.dev.0, left.progress.next_sector)
             < (
@@ -492,7 +511,7 @@ impl BlockManager {
         };
 
         // Keep the current head as the in-flight request and splice the new
-        // node into the singly linked request chain using the original
+        // node into the singly linked request chain using the seek-ordered
         // elevator rule. The list therefore stays ordered with at most one
         // wrap point after the current head.
         loop {

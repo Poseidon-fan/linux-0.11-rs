@@ -39,62 +39,28 @@ use crate::{
 
 /// Opened block device file.
 pub struct BlockDeviceFile {
+    /// Device number this file addresses directly.
     dev: DevNum,
+    /// Backing device-node inode, kept for `stat`.
     inode: Arc<Inode>,
+    /// Mutable per-open state guarded by a mutex.
     inner: Mutex<BlockDeviceInner>,
 }
 
+/// Mutable per-open state for one block device file.
 struct BlockDeviceInner {
+    /// Current byte offset into the device.
     offset: usize,
 }
 
 /// One contiguous slice inside a block-sized buffer-cache entry.
 struct BlockChunk {
+    /// Cache block number addressed by this chunk.
     block_number: u32,
+    /// Byte offset within the block.
     offset: usize,
+    /// Number of bytes covered inside the block.
     len: usize,
-}
-
-impl BlockDeviceFile {
-    /// Create an opened block-device file backed by `inode`'s device number.
-    pub fn new(inode: Arc<Inode>) -> Self {
-        let dev = inode.device_number();
-        Self {
-            dev,
-            inode,
-            inner: Mutex::new(BlockDeviceInner { offset: 0 }),
-        }
-    }
-}
-
-impl File for BlockDeviceFile {
-    fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut inner = self.inner.lock();
-        block_read(self.dev, &mut inner.offset, buf)
-    }
-
-    fn write(&self, buf: &[u8]) -> Result<usize> {
-        let mut inner = self.inner.lock();
-        block_write(self.dev, &mut inner.offset, buf)
-    }
-
-    fn stat(&self) -> Result<Stat> {
-        Ok(self.inode.stat())
-    }
-
-    fn seek(&self, offset: i32, whence: Whence) -> Result<usize> {
-        let mut inner = self.inner.lock();
-        let new_offset = match whence {
-            Whence::Set => usize::try_from(offset).map_err(|_| Errno::INVAL)?,
-            Whence::Current => inner
-                .offset
-                .checked_add_signed(offset as isize)
-                .ok_or(Errno::INVAL)?,
-            Whence::End => return Err(Errno::INVAL),
-        };
-        inner.offset = new_offset;
-        Ok(inner.offset)
-    }
 }
 
 /// Read raw bytes from a block device through the buffer cache.
@@ -145,8 +111,51 @@ fn block_write(dev: DevNum, pos: &mut usize, buf: &[u8]) -> Result<usize> {
     Ok(buf_offset)
 }
 
+/// Map a completed byte count onto a result: error only when nothing was done.
 fn partial_io_result(done: usize) -> Result<usize> {
     if done == 0 { Err(Errno::IO) } else { Ok(done) }
+}
+
+impl BlockDeviceFile {
+    /// Create an opened block-device file backed by `inode`'s device number.
+    pub fn new(inode: Arc<Inode>) -> Self {
+        let dev = inode.device_number();
+        Self {
+            dev,
+            inode,
+            inner: Mutex::new(BlockDeviceInner { offset: 0 }),
+        }
+    }
+}
+
+impl File for BlockDeviceFile {
+    fn read(&self, buf: &mut [u8]) -> Result<usize> {
+        let mut inner = self.inner.lock();
+        block_read(self.dev, &mut inner.offset, buf)
+    }
+
+    fn write(&self, buf: &[u8]) -> Result<usize> {
+        let mut inner = self.inner.lock();
+        block_write(self.dev, &mut inner.offset, buf)
+    }
+
+    fn stat(&self) -> Result<Stat> {
+        Ok(self.inode.stat())
+    }
+
+    fn seek(&self, offset: i32, whence: Whence) -> Result<usize> {
+        let mut inner = self.inner.lock();
+        let new_offset = match whence {
+            Whence::Set => usize::try_from(offset).map_err(|_| Errno::INVAL)?,
+            Whence::Current => inner
+                .offset
+                .checked_add_signed(offset as isize)
+                .ok_or(Errno::INVAL)?,
+            Whence::End => return Err(Errno::INVAL),
+        };
+        inner.offset = new_offset;
+        Ok(inner.offset)
+    }
 }
 
 impl BlockChunk {

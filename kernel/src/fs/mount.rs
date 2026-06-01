@@ -54,8 +54,11 @@ pub fn resolve_inode(id: InodeId) -> Arc<Inode> {
 
 /// One mounted filesystem entry stored in the global mount table.
 pub struct Mount {
+    /// Block device this filesystem was loaded from.
     pub device: DevNum,
+    /// Shared filesystem instance backing this mount.
     pub file_system: Arc<Mutex<MinixFileSystem>>,
+    /// Root inode of the mounted filesystem.
     pub root_inode: Arc<Inode>,
     /// Inode covered by this mount entry. The root filesystem has no mount point.
     pub mount_point_inode: Option<Arc<Inode>>,
@@ -63,6 +66,7 @@ pub struct Mount {
 
 /// Fixed-capacity table that tracks all currently mounted filesystems.
 pub struct MountTable {
+    /// Mount slots; `None` means the slot is free.
     slots: [Option<Arc<Mount>>; MOUNT_TABLE_CAPACITY],
 }
 
@@ -70,6 +74,7 @@ pub struct MountTable {
 const MOUNT_TABLE_CAPACITY: usize = 8;
 
 impl MountTable {
+    /// Construct an empty mount table with all slots free.
     fn new() -> Self {
         Self {
             slots: array::from_fn(|_| None),

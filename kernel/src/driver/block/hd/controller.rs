@@ -31,73 +31,6 @@ pub const COMMAND_PORT: u16 = STATUS_PORT;
 /// Primary ATA device-control register.
 pub const CONTROL_PORT: u16 = 0x3F6;
 
-/// Drive/head register base pattern used by the original driver.
-///
-/// Bit layout:
-///
-/// ```text
-///  7 6 5 4 3 2 1 0
-/// +-----+-+-------+
-/// | 101 |D| Head  |
-/// +-----+-+-------+
-/// ```
-const DRIVE_HEAD_BASE: u8 = 0xA0;
-
-/// Software reset bit written to the control register.
-const CONTROL_RESET_BIT: u8 = 1 << 2;
-
-/// Low control bits restored after a controller reset.
-const CONTROL_CONFIGURATION_MASK: u8 = 0x0F;
-
-bitflags! {
-    /// ATA controller status bits returned by [`STATUS_PORT`].
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct StatusFlags: u8 {
-        /// The error register contains command failure details.
-        const ERROR = 1 << 0;
-        /// The controller requests a PIO data transfer.
-        const DATA_REQUEST = 1 << 3;
-        /// The selected drive completed its seek operation.
-        const SEEK_COMPLETE = 1 << 4;
-        /// The drive reported a write fault.
-        const WRITE_FAULT = 1 << 5;
-        /// The selected drive is ready to accept commands.
-        const READY = 1 << 6;
-        /// The controller is busy executing a command.
-        const BUSY = 1 << 7;
-    }
-}
-
-/// ATA commands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ControllerCommand {
-    /// Recalibrate the selected drive to cylinder 0.
-    Restore = 0x10,
-    /// Read one or more sectors using PIO.
-    Read = 0x20,
-    /// Write one or more sectors using PIO.
-    Write = 0x30,
-    /// Program the controller with the drive geometry.
-    Specify = 0x91,
-}
-
-/// ATA task-file register values for one controller command.
-pub struct AtaTaskFile {
-    /// Target drive index, `0` or `1`.
-    pub drive_index: usize,
-    /// Number of sectors to transfer.
-    pub sector_count: u8,
-    /// One-based sector number inside the current track.
-    pub sector: u8,
-    /// Head number inside the current cylinder.
-    pub head: u8,
-    /// Cylinder number.
-    pub cylinder: u16,
-    /// Command opcode written to the controller.
-    pub command: ControllerCommand,
-}
-
 /// Poll the ATA status register until the provided predicate accepts it.
 pub fn wait_for_status(retries: usize, ready: impl Fn(StatusFlags) -> bool) -> Option<StatusFlags> {
     (0..retries).find_map(|_| {
@@ -198,3 +131,70 @@ pub fn issue_command(
     );
     outb(task_file.command as u8, COMMAND_PORT);
 }
+
+bitflags! {
+    /// ATA controller status bits returned by [`STATUS_PORT`].
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct StatusFlags: u8 {
+        /// The error register contains command failure details.
+        const ERROR = 1 << 0;
+        /// The controller requests a PIO data transfer.
+        const DATA_REQUEST = 1 << 3;
+        /// The selected drive completed its seek operation.
+        const SEEK_COMPLETE = 1 << 4;
+        /// The drive reported a write fault.
+        const WRITE_FAULT = 1 << 5;
+        /// The selected drive is ready to accept commands.
+        const READY = 1 << 6;
+        /// The controller is busy executing a command.
+        const BUSY = 1 << 7;
+    }
+}
+
+/// ATA commands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ControllerCommand {
+    /// Recalibrate the selected drive to cylinder 0.
+    Restore = 0x10,
+    /// Read one or more sectors using PIO.
+    Read = 0x20,
+    /// Write one or more sectors using PIO.
+    Write = 0x30,
+    /// Program the controller with the drive geometry.
+    Specify = 0x91,
+}
+
+/// ATA task-file register values for one controller command.
+pub struct AtaTaskFile {
+    /// Target drive index, `0` or `1`.
+    pub drive_index: usize,
+    /// Number of sectors to transfer.
+    pub sector_count: u8,
+    /// One-based sector number inside the current track.
+    pub sector: u8,
+    /// Head number inside the current cylinder.
+    pub head: u8,
+    /// Cylinder number.
+    pub cylinder: u16,
+    /// Command opcode written to the controller.
+    pub command: ControllerCommand,
+}
+
+/// Drive/head register base pattern selecting the LBA/CHS addressing mode.
+///
+/// Bit layout:
+///
+/// ```text
+///  7 6 5 4 3 2 1 0
+/// +-----+-+-------+
+/// | 101 |D| Head  |
+/// +-----+-+-------+
+/// ```
+const DRIVE_HEAD_BASE: u8 = 0xA0;
+
+/// Software reset bit written to the control register.
+const CONTROL_RESET_BIT: u8 = 1 << 2;
+
+/// Low control bits restored after a controller reset.
+const CONTROL_CONFIGURATION_MASK: u8 = 0x0F;

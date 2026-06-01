@@ -7,8 +7,8 @@
 //!
 //! - **TTY mode** (`TTY_READY = true`): formats into a static 1024-byte
 //!   buffer, then writes those kernel-owned bytes through TTY channel 0. This
-//!   preserves the Linux 0.11 `printk -> tty_write(0)` data flow without
-//!   pretending the kernel buffer is a user-space pointer.
+//!   keeps the kernel buffer kernel-owned instead of pretending it is a
+//!   user-space pointer.
 
 use core::{
     fmt::{self, Write},
@@ -20,27 +20,14 @@ use log::{LevelFilter, Log, Metadata};
 
 use crate::driver::character::console::{ORIG_X, ORIG_Y};
 
-/// Set to `true` after `console::init()` completes. Once set, all output
-/// is routed through the TTY layer instead of direct VGA.
-static TTY_READY: AtomicBool = AtomicBool::new(false);
-
-const EARLY_VGA_BASE: *mut u8 = 0xb8000 as *mut u8;
-const EARLY_VGA_COLUMNS: usize = 80;
-const EARLY_VGA_ROWS: usize = 25;
-const EARLY_VGA_CELLS: usize = EARLY_VGA_COLUMNS * EARLY_VGA_ROWS;
-const EARLY_VGA_ATTR: u8 = 0x07;
-
 /// Mark the TTY subsystem as ready for kernel output.
 /// Called at the end of `driver::character::console::init()`.
 pub fn set_tty_ready() {
     TTY_READY.store(true, Ordering::Release);
 }
 
-/// Static format buffer used to bridge formatted output into the TTY path.
-/// This buffer is not reentrant.
-static mut LOG_BUF: [u8; 1024] = [0u8; 1024];
-static mut LOG_LEN: usize = 0;
-
+/// Initializes the kernel logger and continues early VGA output from the
+/// cursor position the bootloader left behind.
 pub fn init() {
     // Start early VGA output from where the bootloader left the cursor,
     // so bootloader messages stay visible and our output follows after them.
@@ -60,20 +47,6 @@ pub fn init() {
     });
 }
 
-#[macro_export]
-macro_rules! print {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::logging::put_fmt(format_args!($fmt $(, $($arg)+)?));
-    };
-}
-
-#[macro_export]
-macro_rules! println {
-    ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::logging::put_fmt(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
-    };
-}
-
 /// Format and output one kernel message.
 pub fn put_fmt(args: fmt::Arguments) {
     if !TTY_READY.load(Ordering::Acquire) {
@@ -91,30 +64,6 @@ pub fn put_fmt(args: fmt::Arguments) {
     }
 }
 
-/// Byte writer over the static `LOG_BUF`, used during formatting.
-struct LogBufWriter;
-
-impl Write for LogBufWriter {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe {
-            let buf = addr_of_mut!(LOG_BUF) as *mut u8;
-            for &b in s.as_bytes() {
-                if LOG_LEN < 1024 {
-                    buf.add(LOG_LEN).write(b);
-                    LOG_LEN += 1;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-// ---- Early boot VGA (before TTY is available) ----
-
-/// Cursor position for early boot VGA output (character index, not byte offset).
-/// Tracked at module level so `console::init` can read it to continue seamlessly.
-static EARLY_VGA_POS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-
 /// Return the early VGA cursor as (column, row) so the VGA console can
 /// continue output from where early boot left off.
 pub fn early_vga_cursor() -> (usize, usize) {
@@ -122,6 +71,56 @@ pub fn early_vga_cursor() -> (usize, usize) {
     (pos % EARLY_VGA_COLUMNS, pos / EARLY_VGA_COLUMNS)
 }
 
+#[macro_export]
+macro_rules! print {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::logging::put_fmt(format_args!($fmt $(, $($arg)+)?));
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::logging::put_fmt(format_args!(concat!($fmt, "\n") $(, $($arg)+)?));
+    };
+}
+
+/// Set to `true` after `console::init()` completes. Once set, all output
+/// is routed through the TTY layer instead of direct VGA.
+static TTY_READY: AtomicBool = AtomicBool::new(false);
+
+/// Static format buffer used to bridge formatted output into the TTY path.
+/// This buffer is not reentrant.
+static mut LOG_BUF: [u8; 1024] = [0u8; 1024];
+/// Number of valid bytes currently held in `LOG_BUF`.
+static mut LOG_LEN: usize = 0;
+
+/// Cursor position for early boot VGA output (character index, not byte offset).
+/// Tracked at module level so `console::init` can read it to continue seamlessly.
+static EARLY_VGA_POS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Base address of the VGA text-mode framebuffer.
+const EARLY_VGA_BASE: *mut u8 = 0xb8000 as *mut u8;
+/// Columns per row in VGA text mode.
+const EARLY_VGA_COLUMNS: usize = 80;
+/// Rows on the VGA text-mode screen.
+const EARLY_VGA_ROWS: usize = 25;
+/// Total addressable character cells.
+const EARLY_VGA_CELLS: usize = EARLY_VGA_COLUMNS * EARLY_VGA_ROWS;
+/// Attribute byte (light gray on black) written alongside each character.
+const EARLY_VGA_ATTR: u8 = 0x07;
+
+/// Byte writer over the static `LOG_BUF`, used during formatting.
+struct LogBufWriter;
+
+/// Direct VGA text-mode writer used before the TTY layer is available.
+struct EarlyConsole;
+
+/// Adapter that routes the `log` crate's records to [`put_fmt`].
+struct KernelLogger;
+
+/// Writes one character to the early VGA framebuffer, advancing and wrapping
+/// the cursor as needed.
 fn early_put_char(c: u8) {
     let mut pos = EARLY_VGA_POS.load(Ordering::Relaxed);
 
@@ -156,7 +155,20 @@ fn early_put_char(c: u8) {
     EARLY_VGA_POS.store(pos, Ordering::Relaxed);
 }
 
-struct EarlyConsole;
+impl Write for LogBufWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        unsafe {
+            let buf = addr_of_mut!(LOG_BUF) as *mut u8;
+            for &b in s.as_bytes() {
+                if LOG_LEN < 1024 {
+                    buf.add(LOG_LEN).write(b);
+                    LOG_LEN += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 impl Write for EarlyConsole {
     fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -166,10 +178,6 @@ impl Write for EarlyConsole {
         Ok(())
     }
 }
-
-// ---- log crate integration ----
-
-struct KernelLogger;
 
 impl Log for KernelLogger {
     fn enabled(&self, _metadata: &Metadata) -> bool {

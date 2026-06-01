@@ -36,16 +36,22 @@ use crate::{
 /// Dropping the last `Arc` to a given endpoint decrements the corresponding
 /// reader/writer count in `PipeState` and wakes any blocked peer.
 pub struct PipeFile {
+    /// Shared ring buffer and endpoint bookkeeping.
     shared: Arc<PipeShared>,
+    /// `true` for the write end, `false` for the read end.
     is_write: bool,
 }
 
+/// Size of the pipe ring buffer in bytes (one physical page).
 const PIPE_BUF_SIZE: usize = PAGE_SIZE;
+/// Mask used to wrap ring-buffer indices within [`PIPE_BUF_SIZE`].
 const WRAP_MASK: usize = PIPE_BUF_SIZE - 1;
 
 /// Shared state between the read and write ends of a pipe.
 struct PipeShared {
+    /// Ring-buffer state protected by a kernel critical section.
     state: KernelCell<PipeState>,
+    /// Wait queue for blocked readers and writers.
     wait: WaitQueue,
 }
 
@@ -54,10 +60,15 @@ struct PipeShared {
 /// The buffer is a raw physical page obtained from the frame allocator.
 /// `PhysFrame`'s `Drop` returns the page when the pipe is destroyed.
 struct PipeState {
+    /// Physical frame backing the ring buffer.
     frame: PhysFrame,
+    /// Write index into the ring buffer.
     head: usize,
+    /// Read index into the ring buffer.
     tail: usize,
+    /// Number of open read ends.
     readers: u32,
+    /// Number of open write ends.
     writers: u32,
 }
 

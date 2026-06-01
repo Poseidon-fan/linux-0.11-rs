@@ -20,16 +20,6 @@ use crate::{
     task, time,
 };
 
-bitflags! {
-    /// Permission mask bits.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct AccessMask: u16 {
-        const MAY_EXEC  = 1;
-        const MAY_WRITE = 2;
-        const MAY_READ  = 4;
-    }
-}
-
 /// Resolve one pathname to its final inode.
 pub fn resolve_path(path: &str) -> Option<Arc<Inode>> {
     let (dir, basename) = resolve_parent(path)?;
@@ -130,6 +120,19 @@ pub fn check_permission_as(inode: &Inode, mask: AccessMask, uid: u16, gid: u16) 
     (mode & mask.bits() & 0o7) == mask.bits() || uid == 0
 }
 
+bitflags! {
+    /// Permission mask bits.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct AccessMask: u16 {
+        /// Execute or directory-search permission.
+        const MAY_EXEC  = 1;
+        /// Write permission.
+        const MAY_WRITE = 2;
+        /// Read permission.
+        const MAY_READ  = 4;
+    }
+}
+
 /// Borrowed pathname used to centralize parsing rules during resolution.
 #[derive(Clone, Copy)]
 struct Pathname<'a> {
@@ -152,6 +155,28 @@ enum PathComponent<'a> {
 struct PathComponents<'a> {
     /// Raw separator-based splitter; empty pieces are skipped by [`Iterator::next`].
     inner: Split<'a, char>,
+}
+
+/// Resolve one `..` step from `current_inode`.
+///
+/// Pathname rule: task root acts as a pseudo-root,
+/// and traversing `..` from a mounted filesystem root first moves back to the
+/// covered mount-point inode before reading that directory's `..` entry.
+fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
+    if current_inode.id == root_inode.id {
+        return Some(Arc::clone(root_inode));
+    }
+
+    let parent_lookup_base = MOUNT_TABLE
+        .lock()
+        .mount_point_for_root(current_inode.id)
+        .unwrap_or_else(|| Arc::clone(current_inode));
+
+    let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
+    Some(resolve_inode(InodeId::new(
+        parent_lookup_base.id.device,
+        parent_inode_number,
+    )))
 }
 
 impl<'a> Pathname<'a> {
@@ -224,26 +249,4 @@ impl<'a> Iterator for PathComponents<'a> {
             .find(|component| !component.is_empty())
             .map(PathComponent::from_raw)
     }
-}
-
-/// Resolve one `..` step from `current_inode`.
-///
-/// Pathname rule: task root acts as a pseudo-root,
-/// and traversing `..` from a mounted filesystem root first moves back to the
-/// covered mount-point inode before reading that directory's `..` entry.
-fn resolve_dotdot(current_inode: &Arc<Inode>, root_inode: &Arc<Inode>) -> Option<Arc<Inode>> {
-    if current_inode.id == root_inode.id {
-        return Some(Arc::clone(root_inode));
-    }
-
-    let parent_lookup_base = MOUNT_TABLE
-        .lock()
-        .mount_point_for_root(current_inode.id)
-        .unwrap_or_else(|| Arc::clone(current_inode));
-
-    let parent_inode_number = parent_lookup_base.lookup("..").ok()??;
-    Some(resolve_inode(InodeId::new(
-        parent_lookup_base.id.device,
-        parent_inode_number,
-    )))
 }

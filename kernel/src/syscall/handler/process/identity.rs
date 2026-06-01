@@ -145,6 +145,8 @@ define_syscall_handler!(
     }
 );
 
+/// Shared implementation of `setuid`/`setreuid`: update the real and/or
+/// effective user IDs subject to the standard permission checks.
 fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32> {
     let superuser = is_superuser();
     task::with_current(|inner| {
@@ -174,6 +176,8 @@ fn sys_setreuid_impl(ruid: u32, euid: u32) -> Result<u32> {
     })
 }
 
+/// Shared implementation of `setgid`/`setregid`: update the real and/or
+/// effective group IDs subject to the standard permission checks.
 fn sys_setregid_impl(rgid: u32, egid: u32) -> Result<u32> {
     let superuser = is_superuser();
     task::with_current(|inner| {

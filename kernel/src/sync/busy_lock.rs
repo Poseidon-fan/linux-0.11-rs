@@ -7,8 +7,7 @@ use crate::{
 
 /// Ownerless sleepable busy-bit lock.
 ///
-/// Models the classic Linux 0.11 lock pattern:
-/// a single busy flag guarded by a wait queue. Unlike [`super::Mutex`], one
+/// A single busy flag guarded by a wait queue. Unlike [`super::Mutex`], one
 /// task may acquire and a different task may release.
 pub struct BusyLock {
     locked: KernelCell<bool>,

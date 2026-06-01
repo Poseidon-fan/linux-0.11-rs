@@ -64,6 +64,12 @@ pub extern "C" fn system_call() {
     }
 }
 
+/// Rust dispatch routine called by the `system_call` stub.
+///
+/// Looks up the handler in [`SYSCALL_TABLE`](handler::SYSCALL_TABLE) by syscall
+/// number, runs it, reschedules if the current task is no longer runnable or
+/// its time slice expired, writes the result into the saved EAX slot, and
+/// delivers any pending signal before returning to user mode.
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_rust_entry(ctx: &mut SyscallContext) -> i32 {
     if (ctx.syscall_number() as usize) >= SYSCALL_TABLE.len() {

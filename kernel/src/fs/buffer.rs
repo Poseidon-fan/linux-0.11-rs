@@ -113,6 +113,15 @@ pub struct BufferSlot {
     meta: KernelCell<BufferMeta>,
 }
 
+lazy_static! {
+    /// Global singleton manager for the buffer-cache metadata graph.
+    static ref BUFFER_MANAGER: Mutex<BufferManager> =
+        Mutex::new(BufferManager::empty());
+}
+
+/// Wait queue for tasks blocked while pinning a cache entry.
+static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
+
 /// Mutable state protected by [`KernelCell`] inside each buffer slot.
 struct BufferMeta {
     /// Current `(dev, block)` binding. `None` means not indexed yet.
@@ -146,15 +155,8 @@ struct BufferManager {
     buffer_index: HashMap<BufferKey, Arc<BufferSlot>>,
 }
 
-lazy_static! {
-    /// Global singleton manager for the buffer-cache metadata graph.
-    static ref BUFFER_MANAGER: Mutex<BufferManager> =
-        Mutex::new(BufferManager::empty());
-}
-
-/// Wait queue for tasks blocked while pinning a cache entry.
-static BUFFER_WAIT_QUEUE: WaitQueue = WaitQueue::new();
-
+/// Pin a slot for `key`, retrying until either the cached slot or a freshly
+/// rebound victim slot is obtained.
 fn acquire_slot(key: BufferKey) -> Arc<BufferSlot> {
     loop {
         if let Some(slot) = try_acquire_cached(key) {
@@ -167,12 +169,14 @@ fn acquire_slot(key: BufferKey) -> Arc<BufferSlot> {
     }
 }
 
+/// Drop one logical reference to `slot` and wake any pinning waiter.
 fn release_slot(slot: &BufferSlot) {
     slot.wait_io();
     slot.dec_ref();
     BUFFER_WAIT_QUEUE.wake();
 }
 
+/// Try to pin an already-cached slot bound to `key`.
 fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferSlot>> {
     let slot = BUFFER_MANAGER.lock().pin_buffer(key)?;
     slot.wait_io();
@@ -186,6 +190,7 @@ fn try_acquire_cached(key: BufferKey) -> Option<Arc<BufferSlot>> {
     None
 }
 
+/// Reclaim a victim slot and rebind it to `key`, or sleep when none is free.
 fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferSlot>> {
     let Some(slot) = BUFFER_MANAGER.lock().buffers.find_reclaim_candidate() else {
         BUFFER_WAIT_QUEUE.sleep();
@@ -209,6 +214,7 @@ fn try_acquire_victim(key: BufferKey) -> Option<Arc<BufferSlot>> {
     None
 }
 
+/// Write back a victim slot to disk when it carries dirty data.
 fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
     if !slot.is_dirty() {
         return;
@@ -216,12 +222,12 @@ fn flush_dirty_victim(slot: &Arc<BufferSlot>) {
     submit_and_wait(BlockRequestType::Write, slot);
 }
 
-// Submit a non-prefetch block request for `slot` and block on the slot's
-// I/O lock until the device layer releases it.
-//
-// `submit_request` may no-op early (already up-to-date read, or clean
-// write), in which case the I/O lock is released before this function
-// returns and `wait_io` falls through immediately.
+/// Submit a non-prefetch block request for `slot` and block on the slot's
+/// I/O lock until the device layer releases it.
+///
+/// `submit_request` may no-op early (already up-to-date read, or clean
+/// write), in which case the I/O lock is released before this function
+/// returns and `wait_io` falls through immediately.
 fn submit_and_wait(ty: BlockRequestType, slot: &Arc<BufferSlot>) {
     block::submit_request(ty, false, Arc::clone(slot));
     slot.wait_io();

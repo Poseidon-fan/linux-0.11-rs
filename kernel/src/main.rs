@@ -33,6 +33,11 @@ use crate::driver::DevNum;
 
 global_asm!(include_str!("boot/head.s"), options(att_syntax));
 
+/// Kernel entry point, called from `head.s` once paging and the GDT are set up.
+///
+/// Reads boot parameters left by the bootloader, sizes physical memory, brings
+/// up every kernel subsystem, then drops to user mode and forks the init
+/// process.
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main() -> ! {
     let ext_mem_k = {

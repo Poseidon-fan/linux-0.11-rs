@@ -20,152 +20,42 @@ use crate::{
 };
 
 const _: () = assert!(BLOCK_SIZE == 1024);
+/// Maximum number of physical pages reserved for argv/envp strings.
 const MAX_ARG_PAGES: usize = 32;
+/// a.out magic for a demand-paged (page-aligned text) executable.
 const ZMAGIC: u32 = 0o413;
 
 /// a.out executable header (demand-paged format).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct AoutHeader {
+    /// Magic number identifying the executable format (`ZMAGIC`).
     a_magic: u32,
+    /// Size of the text (code) segment in bytes.
     a_text: u32,
+    /// Size of the initialized data segment in bytes.
     a_data: u32,
+    /// Size of the zero-initialized BSS segment in bytes.
     a_bss: u32,
+    /// Size of the symbol table in bytes.
     a_syms: u32,
+    /// Program entry point virtual address.
     a_entry: u32,
+    /// Size of the text relocation table in bytes.
     a_trsize: u32,
+    /// Size of the data relocation table in bytes.
     a_drsize: u32,
 }
-
-impl AoutHeader {
-    fn from_block(block: &[u8]) -> Option<Self> {
-        if block.len() < mem::size_of::<Self>() {
-            return None;
-        }
-        // Safety: AoutHeader is repr(C) with no padding requirements beyond u32.
-        Some(unsafe { core::ptr::read_unaligned(block.as_ptr() as *const Self) })
-    }
-
-    fn validate(&self, file_size: u32) -> Result<()> {
-        if self.a_magic != ZMAGIC {
-            return Err(Errno::NOEXEC);
-        }
-        if self.a_trsize != 0 || self.a_drsize != 0 {
-            return Err(Errno::NOEXEC);
-        }
-        if (self.a_text as u64) + (self.a_data as u64) + (self.a_bss as u64) > 0x3000000 {
-            return Err(Errno::NOEXEC);
-        }
-        let header_plus_payload = (BLOCK_SIZE as u64)
-            + (self.a_text as u64)
-            + (self.a_data as u64)
-            + (self.a_syms as u64);
-        if (file_size as u64) < header_plus_payload {
-            return Err(Errno::NOEXEC);
-        }
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Argument page management (RAII)
-// ---------------------------------------------------------------------------
 
 /// Collects argv/envp strings into kernel-owned physical pages.
 ///
 /// Pages are allocated lazily from the top of the argument area downward.
 /// On drop, any allocated pages are freed.
 struct ArgumentPages {
+    /// Backing physical frames, allocated on demand.
     pages: [Option<PhysFrame>; MAX_ARG_PAGES],
     /// Write cursor, counts down from `MAX_ARG_PAGES * PAGE_SIZE`.
     write_cursor: usize,
-}
-
-impl ArgumentPages {
-    fn new() -> Self {
-        Self {
-            pages: [const { None }; MAX_ARG_PAGES],
-            write_cursor: MAX_ARG_PAGES * PAGE_SIZE - 4,
-        }
-    }
-
-    /// Ensure the page for byte `offset` is allocated; returns a raw pointer
-    /// into the page at that offset.
-    fn ensure_page(&mut self, offset: usize) -> Result<*mut u8> {
-        let page_index = offset / PAGE_SIZE;
-        if self.pages[page_index].is_none() {
-            self.pages[page_index] = Some(frame::alloc().ok_or(Errno::NOMEM)?);
-        }
-        let frame = self.pages[page_index].as_ref().unwrap();
-        let phys = frame.ppn.addr();
-        let page_offset = offset % PAGE_SIZE;
-        Ok(phys.byte_add(page_offset))
-    }
-
-    /// Write one byte at the current cursor and advance downward.
-    fn push_byte(&mut self, byte: u8) -> Result<()> {
-        if self.write_cursor == 0 {
-            return Err(Errno::NOMEM);
-        }
-        self.write_cursor -= 1;
-        let ptr = self.ensure_page(self.write_cursor)?;
-        unsafe { *ptr = byte };
-        Ok(())
-    }
-
-    /// Copy one NUL-terminated string (including the terminator) from user
-    /// space into the argument pages.
-    fn copy_one_user_string(&mut self, user_ptr: u32) -> Result<()> {
-        let len = user_strlen(user_ptr);
-        self.push_byte(0)?;
-        for i in (0..len).rev() {
-            let byte = uaccess::read_u8(unsafe { (user_ptr as *const u8).add(i) });
-            self.push_byte(byte)?;
-        }
-        Ok(())
-    }
-
-    /// Copy `argc` user-space strings whose pointers live at `argv_ptr`.
-    /// Strings are copied in reverse order so that argv[0] ends up at the
-    /// lowest address (matching the original semantics).
-    fn copy_user_strings(&mut self, argv_ptr: *const u32, argc: usize) -> Result<()> {
-        for i in (0..argc).rev() {
-            let string_ptr = uaccess::read_u32(unsafe { argv_ptr.add(i) });
-            if string_ptr == 0 {
-                panic!("copy_user_strings: NULL pointer in argv at index {}", i);
-            }
-            self.copy_one_user_string(string_ptr)?;
-        }
-        Ok(())
-    }
-
-    /// Copy one kernel-space byte slice (with appended NUL) into the argument
-    /// pages. Used for #! interpreter name / argument.
-    fn copy_kernel_string(&mut self, bytes: &[u8]) -> Result<()> {
-        self.push_byte(0)?;
-        for &byte in bytes.iter().rev() {
-            self.push_byte(byte)?;
-        }
-        Ok(())
-    }
-
-    /// Transfer ownership of all allocated pages into `space`, mapping them
-    /// at the top of the data segment.
-    ///
-    /// Pages are mapped at linear addresses
-    /// `[base + data_limit - MAX_ARG_PAGES * PAGE_SIZE, base + data_limit)`.
-    fn install_into(&mut self, space: &mut MemorySpace, segment_base: u32, data_limit: u32) {
-        let mut lin_addr = segment_base + data_limit;
-        for frame_slot in self.pages.iter_mut().rev() {
-            lin_addr -= PAGE_SIZE as u32;
-            if let Some(frame) = frame_slot.take() {
-                let lin_page = LinAddr(lin_addr).floor();
-                if space.map_page(lin_page, Some(frame)).is_err() {
-                    panic!("failed to map argument page");
-                }
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -496,3 +386,125 @@ define_syscall_handler!(
         Ok(0)
     }
 );
+
+impl AoutHeader {
+    /// Parse a header from the first block of the file, or `None` if the
+    /// block is too small to contain one.
+    fn from_block(block: &[u8]) -> Option<Self> {
+        if block.len() < mem::size_of::<Self>() {
+            return None;
+        }
+        // Safety: AoutHeader is repr(C) with no padding requirements beyond u32.
+        Some(unsafe { core::ptr::read_unaligned(block.as_ptr() as *const Self) })
+    }
+
+    /// Reject headers that are not a supported `ZMAGIC` image or whose
+    /// segment sizes are inconsistent with the on-disk file size.
+    fn validate(&self, file_size: u32) -> Result<()> {
+        if self.a_magic != ZMAGIC {
+            return Err(Errno::NOEXEC);
+        }
+        if self.a_trsize != 0 || self.a_drsize != 0 {
+            return Err(Errno::NOEXEC);
+        }
+        if (self.a_text as u64) + (self.a_data as u64) + (self.a_bss as u64) > 0x3000000 {
+            return Err(Errno::NOEXEC);
+        }
+        let header_plus_payload = (BLOCK_SIZE as u64)
+            + (self.a_text as u64)
+            + (self.a_data as u64)
+            + (self.a_syms as u64);
+        if (file_size as u64) < header_plus_payload {
+            return Err(Errno::NOEXEC);
+        }
+        Ok(())
+    }
+}
+
+impl ArgumentPages {
+    /// Create an empty argument area with the cursor at the top.
+    fn new() -> Self {
+        Self {
+            pages: [const { None }; MAX_ARG_PAGES],
+            write_cursor: MAX_ARG_PAGES * PAGE_SIZE - 4,
+        }
+    }
+
+    /// Ensure the page for byte `offset` is allocated; returns a raw pointer
+    /// into the page at that offset.
+    fn ensure_page(&mut self, offset: usize) -> Result<*mut u8> {
+        let page_index = offset / PAGE_SIZE;
+        if self.pages[page_index].is_none() {
+            self.pages[page_index] = Some(frame::alloc().ok_or(Errno::NOMEM)?);
+        }
+        let frame = self.pages[page_index].as_ref().unwrap();
+        let phys = frame.ppn.addr();
+        let page_offset = offset % PAGE_SIZE;
+        Ok(phys.byte_add(page_offset))
+    }
+
+    /// Write one byte at the current cursor and advance downward.
+    fn push_byte(&mut self, byte: u8) -> Result<()> {
+        if self.write_cursor == 0 {
+            return Err(Errno::NOMEM);
+        }
+        self.write_cursor -= 1;
+        let ptr = self.ensure_page(self.write_cursor)?;
+        unsafe { *ptr = byte };
+        Ok(())
+    }
+
+    /// Copy one NUL-terminated string (including the terminator) from user
+    /// space into the argument pages.
+    fn copy_one_user_string(&mut self, user_ptr: u32) -> Result<()> {
+        let len = user_strlen(user_ptr);
+        self.push_byte(0)?;
+        for i in (0..len).rev() {
+            let byte = uaccess::read_u8(unsafe { (user_ptr as *const u8).add(i) });
+            self.push_byte(byte)?;
+        }
+        Ok(())
+    }
+
+    /// Copy `argc` user-space strings whose pointers live at `argv_ptr`.
+    /// Strings are copied in reverse order so that argv[0] ends up at the
+    /// lowest address in the packed argument region.
+    fn copy_user_strings(&mut self, argv_ptr: *const u32, argc: usize) -> Result<()> {
+        for i in (0..argc).rev() {
+            let string_ptr = uaccess::read_u32(unsafe { argv_ptr.add(i) });
+            if string_ptr == 0 {
+                panic!("copy_user_strings: NULL pointer in argv at index {}", i);
+            }
+            self.copy_one_user_string(string_ptr)?;
+        }
+        Ok(())
+    }
+
+    /// Copy one kernel-space byte slice (with appended NUL) into the argument
+    /// pages. Used for #! interpreter name / argument.
+    fn copy_kernel_string(&mut self, bytes: &[u8]) -> Result<()> {
+        self.push_byte(0)?;
+        for &byte in bytes.iter().rev() {
+            self.push_byte(byte)?;
+        }
+        Ok(())
+    }
+
+    /// Transfer ownership of all allocated pages into `space`, mapping them
+    /// at the top of the data segment.
+    ///
+    /// Pages are mapped at linear addresses
+    /// `[base + data_limit - MAX_ARG_PAGES * PAGE_SIZE, base + data_limit)`.
+    fn install_into(&mut self, space: &mut MemorySpace, segment_base: u32, data_limit: u32) {
+        let mut lin_addr = segment_base + data_limit;
+        for frame_slot in self.pages.iter_mut().rev() {
+            lin_addr -= PAGE_SIZE as u32;
+            if let Some(frame) = frame_slot.take() {
+                let lin_page = LinAddr(lin_addr).floor();
+                if space.map_page(lin_page, Some(frame)).is_err() {
+                    panic!("failed to map argument page");
+                }
+            }
+        }
+    }
+}

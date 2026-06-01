@@ -22,8 +22,11 @@ use crate::error::{Errno, Result};
 
 /// Generic opened file object in kernel.
 pub trait File: Send + Sync {
+    /// Read into `buffer`, returning the number of bytes read.
     fn read(&self, buffer: &mut [u8]) -> Result<usize>;
+    /// Write from `buffer`, returning the number of bytes written.
     fn write(&self, buffer: &[u8]) -> Result<usize>;
+    /// Return file metadata for this open file.
     fn stat(&self) -> Result<Stat>;
 
     /// Reposition the file offset. Returns the new absolute offset on success.

@@ -30,11 +30,49 @@ use crate::{
 /// Holds a reference to the backing inode (for `stat`) and the device
 /// number extracted from `direct_zones[0]`.
 pub struct CharDeviceFile {
+    /// Device number selecting the major-based dispatch path.
     dev: DevNum,
+    /// Backing device-node inode, kept for `stat`.
     inode: Arc<Inode>,
 }
 
+/// Return the current process's controlling terminal channel.
+fn current_tty_channel() -> Result<usize> {
+    let tty_index = task::with_current(|inner| inner.tty);
+    if tty_index < 0 {
+        return Err(Errno::PERM);
+    }
+    Ok(tty_index as usize)
+}
+
+/// Major 1 — memory pseudo-devices read by minor number.
+fn read_memory(minor: u8, _count: usize) -> Result<usize> {
+    match minor {
+        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
+        0..=2 => Err(Errno::IO),
+        // 3 = /dev/null — reads return EOF
+        3 => Ok(0),
+        // 4 = /dev/port — stub Errno::IO
+        4 => Err(Errno::IO),
+        _ => Err(Errno::IO),
+    }
+}
+
+/// Major 1 — memory pseudo-devices written by minor number.
+fn write_memory(minor: u8, count: usize) -> Result<usize> {
+    match minor {
+        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
+        0..=2 => Err(Errno::IO),
+        // 3 = /dev/null — writes are discarded successfully
+        3 => Ok(count),
+        // 4 = /dev/port — stub Errno::IO
+        4 => Err(Errno::IO),
+        _ => Err(Errno::IO),
+    }
+}
+
 impl CharDeviceFile {
+    /// Create an opened character-device file backed by `inode`'s device number.
     pub fn new(inode: Arc<Inode>) -> Self {
         let dev = inode.device_number();
         Self { inode, dev }
@@ -70,40 +108,5 @@ impl File for CharDeviceFile {
             5 => tty::ioctl(current_tty_channel()?, cmd, arg),
             _ => Err(Errno::NOTTY),
         }
-    }
-}
-
-/// Return the current process's controlling terminal channel.
-fn current_tty_channel() -> Result<usize> {
-    let tty_index = task::with_current(|inner| inner.tty);
-    if tty_index < 0 {
-        return Err(Errno::PERM);
-    }
-    Ok(tty_index as usize)
-}
-
-/// Major 1 — memory pseudo-devices read by minor number.
-fn read_memory(minor: u8, _count: usize) -> Result<usize> {
-    match minor {
-        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
-        0..=2 => Err(Errno::IO),
-        // 3 = /dev/null — reads return EOF
-        3 => Ok(0),
-        // 4 = /dev/port — stub Errno::IO
-        4 => Err(Errno::IO),
-        _ => Err(Errno::IO),
-    }
-}
-
-/// Major 1 — memory pseudo-devices written by minor number.
-fn write_memory(minor: u8, count: usize) -> Result<usize> {
-    match minor {
-        // 0 = /dev/ram, 1 = /dev/mem, 2 = /dev/kmem — stub Errno::IO
-        0..=2 => Err(Errno::IO),
-        // 3 = /dev/null — writes are discarded successfully
-        3 => Ok(count),
-        // 4 = /dev/port — stub Errno::IO
-        4 => Err(Errno::IO),
-        _ => Err(Errno::IO),
     }
 }

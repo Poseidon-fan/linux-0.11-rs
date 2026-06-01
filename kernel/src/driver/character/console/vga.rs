@@ -23,21 +23,83 @@ use crate::{
     sync::KernelCell,
 };
 
-/// BIOS data area addresses written by setup.s during boot.
+/// Global VGA console state guarded by a `KernelCell`.
+pub static CONSOLE: KernelCell<VgaConsole> = KernelCell::new(VgaConsole::uninitialized());
+
+/// BIOS data area address holding the early-boot cursor column.
 pub const ORIG_X: *const u8 = 0x90000 as *const u8;
+/// BIOS data area address holding the early-boot cursor row.
 pub const ORIG_Y: *const u8 = 0x90001 as *const u8;
+
+/// VGA text-mode console state.
+///
+/// Manages the entire screen geometry, cursor position, scroll region, attribute
+/// state, and the ANSI escape parser. Protected by a global `KernelCell`.
+pub struct VgaConsole {
+    /// Detected display adapter type.
+    display_type: DisplayType,
+    /// Visible columns per row.
+    columns: usize,
+    /// Visible rows on screen.
+    lines: usize,
+    /// Bytes occupied by one screen row.
+    row_bytes: usize,
+    /// Start address of the text-mode video memory.
+    mem_start: usize,
+    /// End address of the text-mode video memory.
+    mem_end: usize,
+    /// CRT controller index register port.
+    port_reg: u16,
+    /// CRT controller data register port.
+    port_val: u16,
+    /// Cell value (char + attribute) written when erasing.
+    erase_cell: u16,
+
+    /// Current display origin address.
+    origin: usize,
+    /// Address one past the last visible cell.
+    screen_end: usize,
+    /// Memory address of the current cursor cell.
+    cursor_pos: usize,
+    /// Cursor column.
+    cursor_x: usize,
+    /// Cursor row.
+    cursor_y: usize,
+    /// Top row of the active scroll region.
+    scroll_top: usize,
+    /// Bottom row (exclusive) of the active scroll region.
+    scroll_bottom: usize,
+
+    /// Current character attribute byte.
+    attribute: u8,
+    /// Saved cursor column for save/restore sequences.
+    saved_x: usize,
+    /// Saved cursor row for save/restore sequences.
+    saved_y: usize,
+
+    /// ANSI escape sequence parser state.
+    parser: AnsiParser,
+}
+
+/// BIOS data area address with the original video mode word.
 const ORIG_VIDEO_MODE: *const u16 = 0x90006 as *const u16;
+/// BIOS data area address with the EGA/VGA configuration word.
 const ORIG_VIDEO_EGA_BX: *const u16 = 0x9000a as *const u16;
 
+/// Maximum number of CSI parameters accumulated per escape sequence.
 const MAX_ANSI_PARAMS: usize = 16;
 
 /// Display adapter type detected during initialization.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum DisplayType {
+    /// Monochrome Display Adapter.
     Mda = 0x10,
+    /// Color Graphics Adapter.
     Cga = 0x11,
+    /// EGA in monochrome mode.
     EgaMonochrome = 0x20,
+    /// EGA in color mode.
     EgaColor = 0x21,
 }
 
@@ -50,21 +112,30 @@ enum DisplayType {
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AnsiState {
+    /// Passing bytes through to the screen.
     Normal,
+    /// Saw ESC, awaiting the next byte.
     Escape,
+    /// Saw `ESC [`, awaiting the first parameter byte.
     CsiEntry,
+    /// Accumulating CSI parameters.
     CsiParam,
 }
 
 /// ANSI CSI parameter accumulator.
 struct AnsiParser {
+    /// Current parser state.
     state: AnsiState,
+    /// Numeric parameters parsed from the current sequence.
     params: [u32; MAX_ANSI_PARAMS],
+    /// Number of parameters accumulated so far.
     param_count: usize,
+    /// Whether the sequence began with a `?` private marker.
     is_question_mark: bool,
 }
 
 impl AnsiParser {
+    /// Create a parser in the normal pass-through state.
     const fn new() -> Self {
         Self {
             state: AnsiState::Normal,
@@ -74,44 +145,13 @@ impl AnsiParser {
         }
     }
 
+    /// Reset accumulated parameters before a new escape sequence.
     fn reset_params(&mut self) {
         self.params = [0; MAX_ANSI_PARAMS];
         self.param_count = 0;
         self.is_question_mark = false;
     }
 }
-
-/// VGA text-mode console state.
-///
-/// Manages the entire screen geometry, cursor position, scroll region, attribute
-/// state, and the ANSI escape parser. Protected by a global `KernelCell`.
-pub struct VgaConsole {
-    display_type: DisplayType,
-    columns: usize,
-    lines: usize,
-    row_bytes: usize,
-    mem_start: usize,
-    mem_end: usize,
-    port_reg: u16,
-    port_val: u16,
-    erase_cell: u16,
-
-    origin: usize,
-    screen_end: usize,
-    cursor_pos: usize,
-    cursor_x: usize,
-    cursor_y: usize,
-    scroll_top: usize,
-    scroll_bottom: usize,
-
-    attribute: u8,
-    saved_x: usize,
-    saved_y: usize,
-
-    parser: AnsiParser,
-}
-
-pub static CONSOLE: KernelCell<VgaConsole> = KernelCell::new(VgaConsole::uninitialized());
 
 impl VgaConsole {
     const fn uninitialized() -> Self {

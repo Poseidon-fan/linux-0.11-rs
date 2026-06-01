@@ -11,13 +11,13 @@ use core::sync::atomic::{AtomicU16, Ordering};
 pub mod block;
 pub mod character;
 
-static ROOT_DEV: AtomicU16 = AtomicU16::new(0);
-
+/// Store the global root device number selected during boot.
 #[inline]
 pub fn set_root_dev(dev: DevNum) {
     ROOT_DEV.store(dev.0, Ordering::Release);
 }
 
+/// Return the global root device number.
 #[inline]
 pub fn root_dev() -> DevNum {
     DevNum(ROOT_DEV.load(Ordering::Acquire))
@@ -27,6 +27,9 @@ pub fn root_dev() -> DevNum {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct DevNum(pub u16);
+
+/// Global root device number, published during boot and read on demand.
+static ROOT_DEV: AtomicU16 = AtomicU16::new(0);
 
 impl DevNum {
     /// Build a device number from major and minor components.

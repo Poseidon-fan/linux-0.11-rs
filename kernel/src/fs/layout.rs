@@ -164,6 +164,13 @@ pub struct DiskDirectoryEntry {
     pub name: [u8; MINIX_NAME_LENGTH],
 }
 
+// On-disk layout invariants enforced at compile time. Any change to the
+// `Disk*` structs above must keep these sizes intact, otherwise filesystem
+// images written by other tools would be misinterpreted.
+const _: () = assert!(size_of::<DiskSuperBlock>() == 20);
+const _: () = assert!(size_of::<DiskInode>() == 32);
+const _: () = assert!(size_of::<DiskDirectoryEntry>() == 16);
+
 impl DiskInode {
     /// Return an all-zero inode suitable for a freshly allocated inode slot.
     pub const fn zeroed() -> Self {
@@ -249,10 +256,3 @@ impl DiskDirectoryEntry {
         core::str::from_utf8(&self.name[..len]).unwrap()
     }
 }
-
-// On-disk layout invariants enforced at compile time. Any change to the
-// `Disk*` structs above must keep these sizes intact, otherwise filesystem
-// images written by other tools would be misinterpreted.
-const _: () = assert!(size_of::<DiskSuperBlock>() == 20);
-const _: () = assert!(size_of::<DiskInode>() == 32);
-const _: () = assert!(size_of::<DiskDirectoryEntry>() == 16);

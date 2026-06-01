@@ -3,10 +3,6 @@
 use super::task_struct::TaskStateSegment;
 use crate::segment::Descriptor;
 
-unsafe extern "C" {
-    static mut gdt: [u64; 256];
-}
-
 /// First TSS entry index in the GDT.
 pub const FIRST_TSS_ENTRY: u16 = 4;
 
@@ -42,10 +38,17 @@ pub fn clear_task_descs(task_slot: u16) {
     }
 }
 
+unsafe extern "C" {
+    /// The Global Descriptor Table, defined in assembly startup code.
+    static mut gdt: [u64; 256];
+}
+
+/// GDT index of the TSS descriptor for the task at `task_slot`.
 const fn tss_gdt_index(task_slot: u16) -> usize {
     (FIRST_TSS_ENTRY + task_slot * 2) as usize
 }
 
+/// GDT index of the LDT descriptor for the task at `task_slot`.
 const fn ldt_gdt_index(task_slot: u16) -> usize {
     (FIRST_LDT_ENTRY + task_slot * 2) as usize
 }

@@ -23,6 +23,10 @@ use user_lib::syscall::Syscall;
 
 use crate::{define_syscall_handler, error::Result, syscall::context::SyscallContext, task};
 
+/// Minimum gap kept between the program break and the top of the user stack,
+/// so a growing heap cannot collide with the stack.
+const MIN_STACK_GAP: u32 = 16384;
+
 define_syscall_handler!(
     Syscall::Exit = 1,
     fn sys_exit(ctx: &mut SyscallContext) -> Result<u32> {
@@ -43,8 +47,6 @@ define_syscall_handler!(
         Ok(0)
     }
 );
-
-const MIN_STACK_GAP: u32 = 16384;
 
 define_syscall_handler!(
     Syscall::Brk = 45,

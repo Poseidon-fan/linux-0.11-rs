@@ -10,11 +10,19 @@ use log::error;
 
 use crate::{fs, println, task};
 
+/// Fallback handler for IDT vectors that have no dedicated service routine.
+#[unsafe(no_mangle)]
+pub extern "C" fn handle_unknown_interrupt() {
+    error!("Unknown interrupt");
+}
+
 /// Set to `true` the first time the panic handler runs, so a panic raised
 /// while the handler itself is unwinding does not spiral into infinite
 /// recursion.
 static IN_PANIC: AtomicBool = AtomicBool::new(false);
 
+/// Kernel panic handler: prints the panic message and location, flushes the
+/// buffer cache when safe, then halts the CPU.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     // If we're already inside the panic handler, don't try to print again
@@ -50,9 +58,4 @@ fn panic(info: &PanicInfo) -> ! {
     loop {
         spin_loop();
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn handle_unknown_interrupt() {
-    error!("Unknown interrupt");
 }

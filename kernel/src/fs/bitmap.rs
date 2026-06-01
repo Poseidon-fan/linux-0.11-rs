@@ -18,9 +18,21 @@ pub struct Bitmap<const N: usize> {
     bit_count: usize,
 }
 
+/// Total addressable bits in one cached bitmap block.
 const BITS_PER_BLOCK: usize = BLOCK_SIZE * 8;
+/// Bit width of the `u64` scan word used to traverse the bitmap.
 const BITS_PER_WORD: usize = u64::BITS as usize;
+/// Number of `u64` scan words contained in one bitmap block.
 const WORDS_PER_BLOCK: usize = BITS_PER_BLOCK / BITS_PER_WORD;
+
+/// Decompose a global word index into `(block_slot, word_in_block)`.
+#[inline]
+fn split_word_index(global_word_index: usize) -> (usize, usize) {
+    (
+        global_word_index / WORDS_PER_BLOCK,
+        global_word_index % WORDS_PER_BLOCK,
+    )
+}
 
 impl<const N: usize> Bitmap<N> {
     /// Build a bitmap from its backing blocks and mark bit 0 as permanently
@@ -133,13 +145,4 @@ impl<const N: usize> Bitmap<N> {
         self.buffer(block_slot)
             .modify(|bitmap: &mut BitmapBlock| mutate(&mut bitmap[word_in_block]));
     }
-}
-
-/// Decompose a global word index into `(block_slot, word_in_block)`.
-#[inline]
-fn split_word_index(global_word_index: usize) -> (usize, usize) {
-    (
-        global_word_index / WORDS_PER_BLOCK,
-        global_word_index % WORDS_PER_BLOCK,
-    )
 }

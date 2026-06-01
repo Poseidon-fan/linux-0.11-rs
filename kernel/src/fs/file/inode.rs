@@ -18,8 +18,11 @@ use crate::{
 /// use different runtime objects because their I/O semantics do not go
 /// through the regular Minix block mapping path.
 pub struct InodeFile {
+    /// Read/write access mode chosen at open time.
     access_mode: AccessMode,
+    /// Open flags such as `APPEND`.
     open_options: OpenOptions,
+    /// Mutable per-open state guarded by a mutex.
     inner: Mutex<InodeFileInner>,
 }
 
@@ -27,11 +30,14 @@ pub struct InodeFile {
 ///
 /// Per-open-instance state distinct from the shared inode.
 struct InodeFileInner {
+    /// Backing inode shared with other open instances.
     inode: Arc<Inode>,
+    /// Current byte offset into the file.
     offset: usize,
 }
 
 impl InodeFile {
+    /// Create an opened inode file at offset 0 with the given access mode and flags.
     pub fn new(inode: Arc<Inode>, access_mode: AccessMode, open_options: OpenOptions) -> Self {
         Self {
             access_mode,

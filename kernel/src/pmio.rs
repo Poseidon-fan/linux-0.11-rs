@@ -2,12 +2,6 @@
 
 use core::arch::asm;
 
-// Standard CMOS address/data ports used by the RTC and other legacy firmware
-// configuration registers.
-const CMOS_ADDRESS_PORT: u16 = 0x70;
-const CMOS_DATA_PORT: u16 = 0x71;
-const CMOS_NMI_DISABLE_FLAG: u8 = 0x80;
-
 /// Write a byte to the specified I/O port.
 #[inline]
 pub fn outb(value: u8, port: u16) {
@@ -115,3 +109,9 @@ pub fn port_write_words(port: u16, src: *const u16, word_count: usize) {
         );
     }
 }
+
+// Standard CMOS address/data ports used by the RTC and other legacy firmware
+// configuration registers.
+const CMOS_ADDRESS_PORT: u16 = 0x70;
+const CMOS_DATA_PORT: u16 = 0x71;
+const CMOS_NMI_DISABLE_FLAG: u8 = 0x80;
