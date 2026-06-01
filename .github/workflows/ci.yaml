@@ -89,14 +89,14 @@ jobs:
         run: tools/install-tools.sh --locked
 
       - name: Build kernel (serial console)
-        run: make -C kernel Image-console-debug
+        run: make -C kernel Image-console-release
 
       - name: Build disk image
         run: tools/build-disk.sh
 
       - name: Run ktest
         env:
-          KERNEL: ${{ github.workspace }}/kernel/Image-console-debug
+          KERNEL: ${{ github.workspace }}/kernel/Image-console-release
           IMAGE:  ${{ github.workspace }}/disk.img
         run: tools/run-tests.sh --show-log-on-fail
 
@@ -108,5 +108,5 @@ jobs:
           path: |
             target/test-out/
             disk.img
-            kernel/Image-console-debug
+            kernel/Image-console-release
           if-no-files-found: ignore

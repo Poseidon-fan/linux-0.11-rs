@@ -22,7 +22,9 @@ fn panic(info: &PanicInfo) -> ! {
     // If we're already inside the panic handler, don't try to print again
     // (the inner panic was triggered by the cleanup code). Just halt.
     if IN_PANIC.swap(true, Ordering::Relaxed) {
-        spin_loop();
+        loop {
+            spin_loop();
+        }
     }
 
     match info.location() {
