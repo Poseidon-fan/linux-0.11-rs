@@ -10,12 +10,6 @@ use log::error;
 
 use crate::{fs, println, task};
 
-/// Fallback handler for IDT vectors that have no dedicated service routine.
-#[unsafe(no_mangle)]
-pub extern "C" fn handle_unknown_interrupt() {
-    error!("Unknown interrupt");
-}
-
 /// Set to `true` the first time the panic handler runs, so a panic raised
 /// while the handler itself is unwinding does not spiral into infinite
 /// recursion.
@@ -28,9 +22,7 @@ fn panic(info: &PanicInfo) -> ! {
     // If we're already inside the panic handler, don't try to print again
     // (the inner panic was triggered by the cleanup code). Just halt.
     if IN_PANIC.swap(true, Ordering::Relaxed) {
-        loop {
-            spin_loop();
-        }
+        spin_loop();
     }
 
     match info.location() {
@@ -58,4 +50,10 @@ fn panic(info: &PanicInfo) -> ! {
     loop {
         spin_loop();
     }
+}
+
+/// Fallback handler for IDT vectors that have no dedicated service routine.
+#[unsafe(no_mangle)]
+extern "C" fn handle_unknown_interrupt() {
+    error!("Unknown interrupt");
 }

@@ -13,7 +13,7 @@ use core::{
     ptr,
 };
 
-use crate::{println, syscall};
+use crate::syscall;
 
 /// Heap growth granularity. The kernel maps anonymous pages lazily on fault.
 const PAGE_SIZE: usize = 4096;
@@ -388,14 +388,3 @@ const fn align_up(addr: usize, align: usize) -> usize {
 
 #[global_allocator]
 static GLOBAL: System = System;
-
-/// Handles allocation failure for user programs.
-#[alloc_error_handler]
-fn alloc_error_handler(layout: Layout) -> ! {
-    println!(
-        "allocation error: size={} align={}",
-        layout.size(),
-        layout.align()
-    );
-    crate::process::exit(101)
-}

@@ -1,8 +1,6 @@
 //! User-space library — provides system call wrappers and utility functions
 //! that run in ring 3 (user mode) after `move_to_user_mode()`.
 
-#![allow(unused)]
-#![cfg_attr(feature = "alloc", feature(alloc_error_handler))]
 #![no_std]
 
 extern crate alloc;
