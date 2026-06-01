@@ -1,24 +1,19 @@
-//! Fixed-capacity ring buffer for TTY byte queues.
+//! Fixed-capacity byte ring buffer backing the TTY input and output queues.
 //!
-//! Each TTY device uses three ring buffers:
-//!
-//! - `raw_rx`   — raw bytes received from hardware (keyboard, serial)
-//! - `cooked_rx` — bytes processed by the line discipline, ready for user reads
-//! - `tx`        — bytes awaiting transmission to the output device
-//!
-//! All index arithmetic uses bitwise masking, so [`CAPACITY`] must be a power
-//! of two (enforced at compile time).
+//! Every TTY device keeps three of these: one for raw bytes arriving from
+//! hardware, one for line-discipline output ready to be read, and one for
+//! bytes awaiting transmission. All index arithmetic is bitwise masking, so
+//! [`CAPACITY`] must be a power of two (checked at compile time).
 
 /// Number of bytes each ring buffer can store (must be a power of two).
 pub const CAPACITY: usize = 1024;
 
 /// A fixed-size, single-producer / single-consumer byte ring buffer.
 ///
-/// `head` is the next position to write (push) into.
-/// `tail` is the next position to read (pop) from.
-/// The buffer is empty when `head == tail` and can hold at most
-/// `CAPACITY - 1` bytes (one slot is always unused to distinguish
-/// full from empty).
+/// `head` is the next slot to write; `tail` the next slot to read. The buffer
+/// is empty when `head == tail`, and one slot is always left unused so that the
+/// full and empty states stay distinguishable — usable capacity is therefore
+/// `CAPACITY - 1`.
 pub struct RingBuffer {
     /// Backing byte storage.
     buf: [u8; CAPACITY],
@@ -33,10 +28,11 @@ const _: () = assert!(
     "RingBuffer CAPACITY must be a power of two"
 );
 
+/// Bit mask applied to every index to wrap it within the backing storage.
 const MASK: usize = CAPACITY - 1;
 
 impl RingBuffer {
-    /// Create an empty ring buffer. Usable in `const` / `static` context.
+    /// Create an empty ring buffer, usable in `const` / `static` context.
     pub const fn new() -> Self {
         Self {
             buf: [0; CAPACITY],
@@ -45,31 +41,35 @@ impl RingBuffer {
         }
     }
 
+    /// Number of bytes currently stored.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.head.wrapping_sub(self.tail) & MASK
+    }
+
     /// Free space available for writing.
     #[inline]
+    #[must_use]
     pub fn remaining(&self) -> usize {
-        (self.tail.wrapping_sub(self.head).wrapping_sub(1)) & MASK
+        MASK - self.len()
     }
 
     /// Whether the buffer holds no bytes.
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.head == self.tail
     }
 
     /// Whether the buffer has no free space.
     #[inline]
+    #[must_use]
     pub fn is_full(&self) -> bool {
         self.remaining() == 0
     }
 
-    /// Number of bytes currently stored in the buffer.
-    #[inline]
-    pub fn len(&self) -> usize {
-        (self.head.wrapping_sub(self.tail)) & MASK
-    }
-
-    /// Append one byte. Returns `true` on success, `false` if full.
+    /// Append one byte, returning `false` if the buffer was full.
     #[inline]
     pub fn push(&mut self, byte: u8) -> bool {
         if self.is_full() {
@@ -80,7 +80,7 @@ impl RingBuffer {
         true
     }
 
-    /// Remove and return the oldest byte. Returns `None` if empty.
+    /// Remove and return the oldest byte, or `None` if empty.
     #[inline]
     pub fn pop(&mut self) -> Option<u8> {
         if self.is_empty() {
@@ -92,30 +92,36 @@ impl RingBuffer {
     }
 
     /// Peek at the most recently pushed byte without removing it.
-    /// Used by line editing to inspect the last character before a backspace.
+    ///
+    /// Canonical-mode editing uses this to inspect the last character before
+    /// deciding how a backspace should rub it out.
     #[inline]
-    pub fn peek_last(&self) -> Option<u8> {
+    #[must_use]
+    pub fn last(&self) -> Option<u8> {
         if self.is_empty() {
             return None;
         }
-        Some(self.buf[(self.head.wrapping_sub(1)) & MASK])
+        Some(self.buf[self.head.wrapping_sub(1) & MASK])
     }
 
-    /// Remove and return the most recently pushed byte (undo a `push`).
-    /// Used by canonical-mode ERASE/KILL to retract characters from the
-    /// cooked input queue.
+    /// Remove and return the most recently pushed byte, undoing a [`push`].
+    ///
+    /// Canonical-mode ERASE/KILL uses this to retract characters that have not
+    /// yet been handed to a reader.
+    ///
+    /// [`push`]: Self::push
     #[inline]
-    pub fn unpush(&mut self) -> Option<u8> {
+    pub fn pop_last(&mut self) -> Option<u8> {
         if self.is_empty() {
             return None;
         }
-        self.head = (self.head.wrapping_sub(1)) & MASK;
+        self.head = self.head.wrapping_sub(1) & MASK;
         Some(self.buf[self.head])
     }
 
-    /// Discard all buffered data.
+    /// Discard all buffered bytes.
     #[inline]
-    pub fn flush(&mut self) {
+    pub fn clear(&mut self) {
         self.tail = self.head;
     }
 }

@@ -1,20 +1,18 @@
-//! PS/2 keyboard interrupt handler and scan code translation.
+//! PS/2 keyboard interrupt handler and scan-code translation.
 //!
-//! Reads scan codes from port 0x60, translates them via static US keymap
-//! tables, and feeds ASCII bytes into the console TTY.
-//!
-//! Modifier tracking (Shift, Ctrl, Alt, CapsLock, NumLock) is maintained in a
-//! [`KeyboardState`] struct protected by `KernelCell`.
-//!
-//! Scan code → ASCII pipeline:
+//! Scan codes read from port 0x60 are translated through static US keymap
+//! tables and fed into the console TTY as ASCII (or escape sequences for the
+//! cursor/keypad cluster):
 //!
 //! ```text
 //!  IRQ1 ──► read 0x60 ──► translate(scancode) ──► tty::receive_input()
-//!                                │
-//!                                ├─ modifier keys: update state only
-//!                                ├─ normal keys: select map, apply Ctrl/Caps
-//!                                └─ cursor keys: push ESC [ <letter> sequence
+//!                               │
+//!                               ├─ modifier keys: update state (+ LEDs)
+//!                               ├─ normal keys: select map, apply Ctrl/Caps
+//!                               └─ cursor keys: emit ESC [ <letter> sequence
 //! ```
+//!
+//! Modifier and lock state lives in a [`KeyboardState`] behind a `KernelCell`.
 
 use core::arch::naked_asm;
 
@@ -26,11 +24,10 @@ use crate::{
     sync::KernelCell,
 };
 
-/// Naked ISR stub for IRQ1 (keyboard interrupt).
+/// Naked ISR stub for IRQ1 (keyboard).
 ///
-/// Saves registers, sets up kernel data segments, calls the Rust handler,
-/// then restores and returns via `iret`. Follows the same register-save
-/// convention as the timer interrupt stub.
+/// Saves registers, loads the kernel data segments, calls the Rust handler,
+/// then restores and returns via `iret`.
 #[naked]
 pub extern "C" fn keyboard_interrupt() {
     unsafe {
@@ -58,15 +55,47 @@ pub extern "C" fn keyboard_interrupt() {
     }
 }
 
-/// Shared keyboard controller state guarded by a `KernelCell`.
+bitflags! {
+    /// Active modifier and lock state, tracked across make/break scan codes.
+    #[derive(Clone, Copy)]
+    struct Modifiers: u8 {
+        const LEFT_SHIFT   = 1 << 0;
+        const RIGHT_SHIFT  = 1 << 1;
+        const LEFT_CTRL    = 1 << 2;
+        const RIGHT_CTRL   = 1 << 3;
+        const LEFT_ALT     = 1 << 4;
+        const RIGHT_ALT    = 1 << 5;
+        /// CapsLock toggle is currently active.
+        const CAPS_LOCK    = 1 << 6;
+        /// CapsLock key is held down (debounces the toggle).
+        const CAPS_PRESSED = 1 << 7;
+
+        /// Either Shift key.
+        const SHIFT = Self::LEFT_SHIFT.bits() | Self::RIGHT_SHIFT.bits();
+        /// Either Ctrl key.
+        const CTRL = Self::LEFT_CTRL.bits() | Self::RIGHT_CTRL.bits();
+    }
+}
+
+bitflags! {
+    /// Keyboard LED state sent to the controller with the set-LEDs command.
+    #[derive(Clone, Copy)]
+    struct Leds: u8 {
+        const SCROLL_LOCK = 1 << 0;
+        const NUM_LOCK    = 1 << 1;
+        const CAPS_LOCK   = 1 << 2;
+    }
+}
+
+/// Shared keyboard controller state, guarded by a `KernelCell`.
 static KEYBOARD: KernelCell<KeyboardState> = KernelCell::new(KeyboardState {
     modifiers: Modifiers::empty(),
-    leds: 2, // Num Lock on
+    leds: Leds::NUM_LOCK,
     extended_prefix: false,
 });
 
-/// US keyboard layout — unshifted key map.
-/// Index = scan code (0x00..0x3A), value = ASCII (0 = no mapping).
+/// US keyboard layout — unshifted map. Index = scan code, value = ASCII
+/// (`0` means no mapping).
 #[rustfmt::skip]
 static NORMAL_MAP: [u8; 89] = [
     0,   27,  b'1', b'2', b'3', b'4', b'5', b'6',  // 0x00-0x07
@@ -83,7 +112,7 @@ static NORMAL_MAP: [u8; 89] = [
     0,    0,    b'<', 0,    0,                          // 0x54-0x58
 ];
 
-/// US keyboard layout — shifted key map.
+/// US keyboard layout — shifted map.
 #[rustfmt::skip]
 static SHIFT_MAP: [u8; 89] = [
     0,   27,  b'!', b'@', b'#', b'$', b'%', b'^',  // 0x00-0x07
@@ -100,235 +129,282 @@ static SHIFT_MAP: [u8; 89] = [
     0,    0,    b'>', 0,    0,                          // 0x54-0x58
 ];
 
-/// Cursor/numpad scan codes (0x47..0x53) to escape sequence final character.
-/// For keys producing ESC [ <char>, value > '9' means no tilde suffix.
-/// Values <= '9' produce ESC [ <char> ~.
+/// Cursor/keypad scan codes (0x47..=0x53) to escape-sequence final character.
+/// A value `> b'9'` emits `ESC [ <char>`; a value `<= b'9'` emits the tilde
+/// form `ESC [ <char> ~`. `0` entries are non-cursor keys in this range.
+#[rustfmt::skip]
 static CURSOR_TABLE: [u8; 13] = [
     b'H', b'A', b'5', // Home, Up, PgUp
-    0,    // (gap: 0x4A = numpad -)
+    0,                // 0x4A numpad -
     b'D', b'G', b'C', // Left, center, Right
-    0,    // (gap: 0x4E = numpad +)
+    0,                // 0x4E numpad +
     b'Y', b'B', b'6', // End, Down, PgDn
-    b'2', b'3', // Ins, Del
+    b'2', b'3',       // Ins, Del
 ];
 
-bitflags! {
-    /// Active modifier key state, tracked across make/break scan codes.
-    #[derive(Clone, Copy)]
-    struct Modifiers: u8 {
-        /// Left Shift held.
-        const LEFT_SHIFT  = 0x01;
-        /// Right Shift held.
-        const RIGHT_SHIFT = 0x02;
-        /// Left Ctrl held.
-        const LEFT_CTRL   = 0x04;
-        /// Right Ctrl held.
-        const RIGHT_CTRL  = 0x08;
-        /// Left Alt held.
-        const LEFT_ALT    = 0x10;
-        /// Right Alt held.
-        const RIGHT_ALT   = 0x20;
-        /// CapsLock toggle is active.
-        const CAPS_LOCK   = 0x40;
-        /// CapsLock key is currently pressed (debounces the toggle).
-        const CAPS_PRESSED = 0x80;
-    }
-}
+/// Keyboard controller data/command port.
+const KBD_DATA_PORT: u16 = 0x60;
+
+/// Keyboard controller status/command port.
+const KBD_STATUS_PORT: u16 = 0x64;
+
+/// Status-register bit set while the controller input buffer is full.
+const KBD_INPUT_FULL: u8 = 1 << 1;
+
+/// Controller command: set keyboard LEDs (followed by an [`Leds`] byte).
+const KBD_CMD_SET_LEDS: u8 = 0xed;
+
+/// Keyboard controller port B (acknowledge toggling).
+const KBD_CONTROL_PORT_B: u16 = 0x61;
+
+/// Acknowledge bit pulsed on port B after reading a scan code.
+const KBD_ACK_BIT: u8 = 1 << 7;
+
+/// Master PIC command register.
+const PIC_MASTER_COMMAND: u16 = 0x20;
+
+/// End-of-interrupt command for the 8259A PIC.
+const PIC_EOI: u8 = 0x20;
+
+/// Extended scan-code prefix bytes (0xe0 / 0xe1).
+const EXTENDED_PREFIXES: [u8; 2] = [0xe0, 0xe1];
+
+/// Break (key-release) bit set in a scan code.
+const BREAK_BIT: u8 = 0x80;
+
+/// First scan code of the cursor/keypad cluster.
+const CURSOR_FIRST: u8 = 0x47;
+/// Last scan code of the cursor/keypad cluster.
+const CURSOR_LAST: u8 = 0x53;
+
+/// Maximum bytes one key press can translate to (longest escape sequence).
+const MAX_TRANSLATION: usize = 8;
+
+/// ASCII escape, leading byte of cursor-key sequences.
+const ESC: u8 = 0x1b;
+
+/// High bit OR-ed into a byte when Left Alt is held (meta prefix).
+const ALT_HIGH_BIT: u8 = 0x80;
 
 /// Keyboard controller state tracked across interrupts.
 struct KeyboardState {
-    /// Active modifier keys.
+    /// Active modifier and lock keys.
     modifiers: Modifiers,
-    /// Current keyboard LED state (bit 1 = Num Lock).
-    leds: u8,
+    /// Current LED state mirrored to the controller.
+    leds: Leds,
     /// Whether the previous scan code was an extended (0xe0/0xe1) prefix.
     extended_prefix: bool,
 }
 
-/// Rust-side keyboard interrupt handler.
-///
-/// Reads the scan code, acknowledges the keyboard controller and PIC,
-/// translates the scan code, and feeds resulting bytes into the console TTY.
+/// Rust-side keyboard interrupt handler: read the scan code, acknowledge the
+/// controller and PIC, translate, and feed the result into the console TTY.
 extern "C" fn keyboard_handler() {
-    let scancode = inb(0x60);
+    let scancode = inb(KBD_DATA_PORT);
 
-    // Toggle keyboard controller acknowledge lines.
-    let port_b = inb(0x61);
-    outb(port_b | 0x80, 0x61);
-    outb(port_b, 0x61);
+    // Pulse the controller acknowledge line.
+    let port_b = inb(KBD_CONTROL_PORT_B);
+    outb(port_b | KBD_ACK_BIT, KBD_CONTROL_PORT_B);
+    outb(port_b, KBD_CONTROL_PORT_B);
 
-    // Translate scan code to ASCII.
-    let mut buf = [0u8; 8];
+    let mut buf = [0u8; MAX_TRANSLATION];
+    // SAFETY: runs inside the IRQ handler with interrupts masked, so no
+    // reentrant access to KEYBOARD can occur.
     let count = unsafe { KEYBOARD.exclusive_unchecked(|kb| kb.translate(scancode, &mut buf)) };
 
-    // Send End-Of-Interrupt to master PIC.
-    outb(0x20, 0x20);
+    outb(PIC_EOI, PIC_MASTER_COMMAND);
 
     if count > 0 {
         tty::receive_input(0, &buf[..count]);
     }
 }
 
+/// Outcome of translating one scan code.
+enum Key {
+    /// Code was consumed without producing output (modifier, prefix, break).
+    Consumed,
+    /// Code produced the given number of bytes in the output buffer.
+    Bytes(usize),
+}
+
 impl KeyboardState {
-    /// Translate one scan code into zero or more ASCII bytes pushed to the
-    /// given buffer. Returns the number of bytes produced.
-    fn translate(&mut self, scancode: u8, out: &mut [u8; 8]) -> usize {
-        // Handle extended prefix codes.
-        if scancode == 0xe0 {
-            self.extended_prefix = true;
-            return 0;
-        }
-        if scancode == 0xe1 {
+    /// Translate one scan code into ASCII bytes written to `out`, returning the
+    /// number of bytes produced.
+    fn translate(&mut self, scancode: u8, out: &mut [u8; MAX_TRANSLATION]) -> usize {
+        if EXTENDED_PREFIXES.contains(&scancode) {
             self.extended_prefix = true;
             return 0;
         }
 
-        let is_break = scancode & 0x80 != 0;
-        let code = scancode & 0x7f;
-
+        let is_break = scancode & BREAK_BIT != 0;
+        let code = scancode & !BREAK_BIT;
         let was_extended = self.extended_prefix;
         self.extended_prefix = false;
 
-        // --- Modifier keys ---
-        match code {
-            0x2a => {
-                if is_break {
-                    self.modifiers.remove(Modifiers::LEFT_SHIFT);
-                } else {
-                    self.modifiers.insert(Modifiers::LEFT_SHIFT);
-                }
-                return 0;
-            }
-            0x36 => {
-                if is_break {
-                    self.modifiers.remove(Modifiers::RIGHT_SHIFT);
-                } else {
-                    self.modifiers.insert(Modifiers::RIGHT_SHIFT);
-                }
-                return 0;
-            }
-            0x1d => {
-                if is_break {
-                    if was_extended {
-                        self.modifiers.remove(Modifiers::RIGHT_CTRL);
-                    } else {
-                        self.modifiers.remove(Modifiers::LEFT_CTRL);
-                    }
-                } else if was_extended {
-                    self.modifiers.insert(Modifiers::RIGHT_CTRL);
-                } else {
-                    self.modifiers.insert(Modifiers::LEFT_CTRL);
-                }
-                return 0;
-            }
-            0x38 => {
-                if is_break {
-                    if was_extended {
-                        self.modifiers.remove(Modifiers::RIGHT_ALT);
-                    } else {
-                        self.modifiers.remove(Modifiers::LEFT_ALT);
-                    }
-                } else if was_extended {
-                    self.modifiers.insert(Modifiers::RIGHT_ALT);
-                } else {
-                    self.modifiers.insert(Modifiers::LEFT_ALT);
-                }
-                return 0;
-            }
-            0x3a => {
-                if is_break {
-                    self.modifiers.remove(Modifiers::CAPS_PRESSED);
-                } else if !self.modifiers.contains(Modifiers::CAPS_PRESSED) {
-                    self.modifiers.toggle(Modifiers::CAPS_LOCK);
-                    self.modifiers.insert(Modifiers::CAPS_PRESSED);
-                }
-                return 0;
-            }
-            0x45 => {
-                if !is_break {
-                    self.leds ^= 0x02;
-                }
-                return 0;
-            }
-            _ => {}
-        }
-
-        // Ignore break codes for non-modifier keys.
-        if is_break {
-            return 0;
-        }
-
-        // --- Cursor / numpad keys (0x47..0x53) ---
-        if (0x47..=0x53).contains(&code) {
-            let cursor_index = (code - 0x47) as usize;
-            let shifted = self
-                .modifiers
-                .intersects(Modifiers::LEFT_SHIFT | Modifiers::RIGHT_SHIFT);
-            let num_lock_enabled = (self.leds & 0x02) != 0;
-            let use_cursor_sequence = was_extended || !num_lock_enabled || shifted;
-
-            if use_cursor_sequence {
-                let ch = CURSOR_TABLE[cursor_index];
-                if ch != 0 {
-                    out[0] = 0x1b;
-                    out[1] = b'[';
-                    if ch > b'9' {
-                        out[2] = ch;
-                        return 3;
-                    } else {
-                        out[2] = ch;
-                        out[3] = b'~';
-                        return 4;
-                    }
-                }
-            }
-        }
-
-        // --- Normal keys ---
-        if (code as usize) >= NORMAL_MAP.len() {
-            return 0;
-        }
-
-        let shifted = self
-            .modifiers
-            .intersects(Modifiers::LEFT_SHIFT | Modifiers::RIGHT_SHIFT);
-        let mut c = if shifted {
-            SHIFT_MAP[code as usize]
+        let key = if let Some(modifier) = modifier_for(code, was_extended) {
+            self.apply_modifier(code, modifier, is_break);
+            Key::Consumed
+        } else if is_break {
+            Key::Consumed
+        } else if (CURSOR_FIRST..=CURSOR_LAST).contains(&code) {
+            self.translate_cursor(code, was_extended, out)
         } else {
-            NORMAL_MAP[code as usize]
+            self.translate_normal(code, out)
         };
 
-        if c == 0 {
-            return 0;
+        match key {
+            Key::Consumed => 0,
+            Key::Bytes(n) => n,
         }
-
-        // CapsLock: swap case for letters.
-        if self.modifiers.contains(Modifiers::CAPS_LOCK) {
-            if c.is_ascii_lowercase() {
-                c = c.to_ascii_uppercase();
-            } else if c.is_ascii_uppercase() {
-                c = c.to_ascii_lowercase();
-            }
-        }
-
-        // Ctrl: map A-Z / a-z to control codes 0x01..0x1a.
-        if self
-            .modifiers
-            .intersects(Modifiers::LEFT_CTRL | Modifiers::RIGHT_CTRL)
-        {
-            if (b'@'..b'@' + 32).contains(&c) {
-                c -= b'@';
-            } else if c.is_ascii_lowercase() {
-                c -= b'a' - 1;
-            }
-        }
-
-        // Left Alt: set high bit.
-        if self.modifiers.contains(Modifiers::LEFT_ALT) {
-            c |= 0x80;
-        }
-
-        out[0] = c;
-        1
     }
+
+    /// Update modifier/lock state for a modifier key.
+    fn apply_modifier(&mut self, code: u8, modifier: Modifiers, is_break: bool) {
+        match code {
+            CAPS_LOCK_CODE => self.toggle_caps_lock(is_break),
+            NUM_LOCK_CODE => {
+                if !is_break {
+                    self.leds.toggle(Leds::NUM_LOCK);
+                    self.update_leds();
+                }
+            }
+            _ => self.modifiers.set(modifier, !is_break),
+        }
+    }
+
+    /// Toggle CapsLock on key-down, debouncing auto-repeat, and refresh the LED.
+    fn toggle_caps_lock(&mut self, is_break: bool) {
+        if is_break {
+            self.modifiers.remove(Modifiers::CAPS_PRESSED);
+        } else if !self.modifiers.contains(Modifiers::CAPS_PRESSED) {
+            self.modifiers.toggle(Modifiers::CAPS_LOCK);
+            self.modifiers.insert(Modifiers::CAPS_PRESSED);
+            self.leds.set(
+                Leds::CAPS_LOCK,
+                self.modifiers.contains(Modifiers::CAPS_LOCK),
+            );
+            self.update_leds();
+        }
+    }
+
+    /// Translate a cursor/keypad key, emitting an escape sequence when the
+    /// cursor interpretation applies (extended key, NumLock off, or Shift).
+    fn translate_cursor(
+        &self,
+        code: u8,
+        was_extended: bool,
+        out: &mut [u8; MAX_TRANSLATION],
+    ) -> Key {
+        let num_lock = self.leds.contains(Leds::NUM_LOCK);
+        let as_cursor = was_extended || !num_lock || self.modifiers.intersects(Modifiers::SHIFT);
+        if !as_cursor {
+            return self.translate_normal(code, out);
+        }
+
+        let final_char = CURSOR_TABLE[(code - CURSOR_FIRST) as usize];
+        if final_char == 0 {
+            return Key::Consumed;
+        }
+
+        // `ESC [ <char>`, with a trailing `~` for keys whose code is a digit.
+        out[0] = ESC;
+        out[1] = b'[';
+        out[2] = final_char;
+        if final_char > b'9' {
+            Key::Bytes(3)
+        } else {
+            out[3] = b'~';
+            Key::Bytes(4)
+        }
+    }
+
+    /// Translate a normal key through the keymap, applying CapsLock, Ctrl, and
+    /// Alt modifiers.
+    fn translate_normal(&self, code: u8, out: &mut [u8; MAX_TRANSLATION]) -> Key {
+        let Some(&base) = self.active_map().get(code as usize) else {
+            return Key::Consumed;
+        };
+        if base == 0 {
+            return Key::Consumed;
+        }
+
+        let mut ch = base;
+        if self.modifiers.contains(Modifiers::CAPS_LOCK) {
+            ch = swap_ascii_case(ch);
+        }
+        if self.modifiers.intersects(Modifiers::CTRL) {
+            ch = to_control(ch);
+        }
+        if self.modifiers.contains(Modifiers::LEFT_ALT) {
+            ch |= ALT_HIGH_BIT;
+        }
+
+        out[0] = ch;
+        Key::Bytes(1)
+    }
+
+    /// Select the keymap matching the current Shift state.
+    fn active_map(&self) -> &'static [u8; 89] {
+        if self.modifiers.intersects(Modifiers::SHIFT) {
+            &SHIFT_MAP
+        } else {
+            &NORMAL_MAP
+        }
+    }
+
+    /// Send the current LED state to the keyboard controller.
+    fn update_leds(&self) {
+        kbd_wait();
+        outb(KBD_CMD_SET_LEDS, KBD_DATA_PORT);
+        kbd_wait();
+        outb(self.leds.bits(), KBD_DATA_PORT);
+    }
+}
+
+/// CapsLock make/break scan code.
+const CAPS_LOCK_CODE: u8 = 0x3a;
+/// NumLock make/break scan code.
+const NUM_LOCK_CODE: u8 = 0x45;
+
+/// Map a modifier/lock scan code to the [`Modifiers`] bit it controls.
+///
+/// CapsLock and NumLock have no single [`Modifiers`] bit of their own (they are
+/// handled specially in [`KeyboardState::apply_modifier`]) but still resolve
+/// here so the caller routes them as modifier keys.
+fn modifier_for(code: u8, was_extended: bool) -> Option<Modifiers> {
+    Some(match code {
+        0x2a => Modifiers::LEFT_SHIFT,
+        0x36 => Modifiers::RIGHT_SHIFT,
+        0x1d if was_extended => Modifiers::RIGHT_CTRL,
+        0x1d => Modifiers::LEFT_CTRL,
+        0x38 if was_extended => Modifiers::RIGHT_ALT,
+        0x38 => Modifiers::LEFT_ALT,
+        CAPS_LOCK_CODE | NUM_LOCK_CODE => Modifiers::empty(),
+        _ => return None,
+    })
+}
+
+/// Swap the case of an ASCII letter, leaving other bytes unchanged.
+fn swap_ascii_case(byte: u8) -> u8 {
+    if byte.is_ascii_lowercase() {
+        byte.to_ascii_uppercase()
+    } else if byte.is_ascii_uppercase() {
+        byte.to_ascii_lowercase()
+    } else {
+        byte
+    }
+}
+
+/// Map a byte to its Ctrl-modified control code (`Ctrl-A` == 0x01), leaving
+/// bytes outside the control range unchanged.
+fn to_control(byte: u8) -> u8 {
+    match byte {
+        b'@'..=b'_' => byte - b'@',
+        b'a'..=b'z' => byte - b'a' + 1,
+        _ => byte,
+    }
+}
+
+/// Wait until the keyboard controller input buffer is empty.
+fn kbd_wait() {
+    while inb(KBD_STATUS_PORT) & KBD_INPUT_FULL != 0 {}
 }

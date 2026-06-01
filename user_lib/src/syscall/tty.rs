@@ -29,15 +29,69 @@ pub enum TtyRequest {
     SetTermioWait = 0x5407,
     /// Flush input, then set legacy terminal attributes after output drains.
     SetTermioFlush = 0x5408,
+    /// Flush input and/or output queues (`TCFLSH`).
+    Flush = 0x540B,
     /// Get foreground process group ID.
     GetPgrp = 0x540F,
     /// Set foreground process group ID.
     SetPgrp = 0x5410,
+    /// Return the number of bytes still queued for output (`TIOCOUTQ`).
+    OutputQueueBytes = 0x5411,
+    /// Return the number of bytes available to read (`TIOCINQ`).
+    InputQueueBytes = 0x541B,
 }
 
 impl SyscallArg for TtyRequest {
     fn into_syscall_arg(self) -> u32 {
         self as u32
+    }
+}
+
+impl TryFrom<u32> for TtyRequest {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0x5401 => Self::GetTermios,
+            0x5402 => Self::SetTermios,
+            0x5403 => Self::SetTermiosWait,
+            0x5404 => Self::SetTermiosFlush,
+            0x5405 => Self::GetTermio,
+            0x5406 => Self::SetTermio,
+            0x5407 => Self::SetTermioWait,
+            0x5408 => Self::SetTermioFlush,
+            0x540B => Self::Flush,
+            0x540F => Self::GetPgrp,
+            0x5410 => Self::SetPgrp,
+            0x5411 => Self::OutputQueueBytes,
+            0x541B => Self::InputQueueBytes,
+            _ => return Err(()),
+        })
+    }
+}
+
+/// Argument values for the [`TtyRequest::Flush`] ioctl.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum FlushSelector {
+    /// Discard unread input.
+    Input = 0,
+    /// Discard unsent output.
+    Output = 1,
+    /// Discard both queues.
+    Both = 2,
+}
+
+impl TryFrom<u32> for FlushSelector {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::Input,
+            1 => Self::Output,
+            2 => Self::Both,
+            _ => return Err(()),
+        })
     }
 }
 

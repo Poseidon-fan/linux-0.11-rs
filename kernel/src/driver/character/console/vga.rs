@@ -19,7 +19,7 @@
 use core::ptr;
 
 use crate::{
-    pmio::{inb_p, outb_p},
+    pmio::{inb_p, outb, outb_p},
     sync::KernelCell,
 };
 
@@ -89,18 +89,46 @@ const ORIG_VIDEO_EGA_BX: *const u16 = 0x9000a as *const u16;
 /// Maximum number of CSI parameters accumulated per escape sequence.
 const MAX_ANSI_PARAMS: usize = 16;
 
+/// CRT controller index of the display start-address high byte (low byte at +1).
+const CRTC_START_HIGH: u8 = 12;
+/// CRT controller index of the cursor-location high byte (low byte at +1).
+const CRTC_CURSOR_HIGH: u8 = 14;
+
+/// C0 control bytes handled directly by the console.
+mod control {
+    pub const BELL: u8 = 0x07;
+    pub const BACKSPACE: u8 = 0x08;
+    pub const TAB: u8 = b'\t';
+    pub const LINE_FEED: u8 = b'\n';
+    pub const VERTICAL_TAB: u8 = 0x0b;
+    pub const FORM_FEED: u8 = 0x0c;
+    pub const CARRIAGE_RETURN: u8 = b'\r';
+    pub const ESCAPE: u8 = 0x1b;
+    pub const DELETE: u8 = 0x7f;
+    /// First printable ASCII byte.
+    pub const FIRST_PRINTABLE: u8 = 0x20;
+    /// Last printable ASCII byte.
+    pub const LAST_PRINTABLE: u8 = 0x7e;
+}
+
 /// Display adapter type detected during initialization.
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 enum DisplayType {
     /// Monochrome Display Adapter.
-    Mda = 0x10,
+    Mda,
     /// Color Graphics Adapter.
-    Cga = 0x11,
+    Cga,
     /// EGA in monochrome mode.
-    EgaMonochrome = 0x20,
+    EgaMonochrome,
     /// EGA in color mode.
-    EgaColor = 0x21,
+    EgaColor,
+}
+
+impl DisplayType {
+    /// Whether this adapter supports the EGA/VGA fast-scroll origin register.
+    fn is_ega(self) -> bool {
+        matches!(self, Self::EgaMonochrome | Self::EgaColor)
+    }
 }
 
 /// VT102/ANSI escape sequence parser state machine.
@@ -130,8 +158,6 @@ struct AnsiParser {
     params: [u32; MAX_ANSI_PARAMS],
     /// Number of parameters accumulated so far.
     param_count: usize,
-    /// Whether the sequence began with a `?` private marker.
-    is_question_mark: bool,
 }
 
 impl AnsiParser {
@@ -141,7 +167,6 @@ impl AnsiParser {
             state: AnsiState::Normal,
             params: [0; MAX_ANSI_PARAMS],
             param_count: 0,
-            is_question_mark: false,
         }
     }
 
@@ -149,7 +174,17 @@ impl AnsiParser {
     fn reset_params(&mut self) {
         self.params = [0; MAX_ANSI_PARAMS];
         self.param_count = 0;
-        self.is_question_mark = false;
+    }
+
+    /// Parameter `index`, treating a zero or absent value as `default`.
+    ///
+    /// CSI cursor-movement parameters default to 1 (move one cell), so an
+    /// omitted count behaves like an explicit `1`.
+    fn param_or(&self, index: usize, default: u32) -> u32 {
+        match self.params.get(index).copied().unwrap_or(0) {
+            0 => default,
+            value => value,
+        }
     }
 }
 
@@ -158,21 +193,21 @@ impl VgaConsole {
         Self {
             display_type: DisplayType::Cga,
             columns: 80,
-            lines: 25,
+            lines: SCREEN_LINES,
             row_bytes: 160,
             mem_start: 0xb8000,
             mem_end: 0xba000,
             port_reg: 0x3d4,
             port_val: 0x3d5,
-            erase_cell: 0x0720,
+            erase_cell: ERASE_CELL,
             origin: 0xb8000,
-            screen_end: 0xb8000 + 25 * 160,
+            screen_end: 0xb8000 + SCREEN_LINES * 160,
             cursor_pos: 0xb8000,
             cursor_x: 0,
             cursor_y: 0,
             scroll_top: 0,
-            scroll_bottom: 25,
-            attribute: 0x07,
+            scroll_bottom: SCREEN_LINES,
+            attribute: ATTR_NORMAL,
             saved_x: 0,
             saved_y: 0,
             parser: AnsiParser::new(),
@@ -187,16 +222,16 @@ impl VgaConsole {
         let ega_bx = unsafe { ptr::read_volatile(ORIG_VIDEO_EGA_BX) };
 
         self.columns = cols;
-        self.lines = 25;
+        self.lines = SCREEN_LINES;
         self.row_bytes = cols * 2;
-        self.erase_cell = 0x0720;
+        self.erase_cell = ERASE_CELL;
 
-        if mode == 7 {
-            // Monochrome display
+        if mode == MONO_VIDEO_MODE {
+            // Monochrome display.
             self.mem_start = 0xb0000;
             self.port_reg = 0x3b4;
             self.port_val = 0x3b5;
-            if (ega_bx & 0xff) != 0x10 {
+            if (ega_bx & 0xff) != NO_EGA_SENTINEL {
                 self.display_type = DisplayType::EgaMonochrome;
                 self.mem_end = 0xb8000;
             } else {
@@ -204,11 +239,11 @@ impl VgaConsole {
                 self.mem_end = 0xb2000;
             }
         } else {
-            // Color display
+            // Color display.
             self.mem_start = 0xb8000;
             self.port_reg = 0x3d4;
             self.port_val = 0x3d5;
-            if (ega_bx & 0xff) != 0x10 {
+            if (ega_bx & 0xff) != NO_EGA_SENTINEL {
                 self.display_type = DisplayType::EgaColor;
                 self.mem_end = 0xbc000;
             } else {
@@ -221,7 +256,7 @@ impl VgaConsole {
         self.screen_end = self.mem_start + self.lines * self.row_bytes;
         self.scroll_top = 0;
         self.scroll_bottom = self.lines;
-        self.attribute = 0x07;
+        self.attribute = ATTR_NORMAL;
         self.parser = AnsiParser::new();
 
         // Continue from wherever early-boot VGA output left off, while clearing
@@ -244,7 +279,7 @@ impl VgaConsole {
     }
 
     fn handle_normal(&mut self, byte: u8) {
-        if byte > 31 && byte < 127 {
+        if (control::FIRST_PRINTABLE..=control::LAST_PRINTABLE).contains(&byte) {
             if self.cursor_x >= self.columns {
                 self.cursor_x -= self.columns;
                 self.cursor_pos -= self.row_bytes;
@@ -253,17 +288,18 @@ impl VgaConsole {
             self.put_char(byte);
             self.cursor_pos += 2;
             self.cursor_x += 1;
-        } else {
-            match byte {
-                0x1b => self.parser.state = AnsiState::Escape,
-                b'\n' | 11 | 12 => self.line_feed(),
-                b'\r' => self.carriage_return(),
-                0x7f => self.delete(),
-                8 => self.backspace(),
-                b'\t' => self.tab(),
-                7 => self.bell(),
-                _ => {}
-            }
+            return;
+        }
+
+        match byte {
+            control::ESCAPE => self.parser.state = AnsiState::Escape,
+            control::LINE_FEED | control::VERTICAL_TAB | control::FORM_FEED => self.line_feed(),
+            control::CARRIAGE_RETURN => self.carriage_return(),
+            control::DELETE => self.delete(),
+            control::BACKSPACE => self.backspace(),
+            control::TAB => self.tab(),
+            control::BELL => self.bell(),
+            _ => {}
         }
     }
 
@@ -284,13 +320,12 @@ impl VgaConsole {
     }
 
     fn handle_csi_entry(&mut self, byte: u8) {
-        if byte == b'?' {
-            self.parser.is_question_mark = true;
-            self.parser.state = AnsiState::CsiParam;
-            return;
-        }
         self.parser.state = AnsiState::CsiParam;
-        self.handle_csi_param(byte);
+        // Swallow the DEC private-sequence marker (e.g. `ESC [ ? 25 h`); the
+        // private modes it introduces are not implemented.
+        if byte != b'?' {
+            self.handle_csi_param(byte);
+        }
     }
 
     fn handle_csi_param(&mut self, byte: u8) {
@@ -311,64 +346,49 @@ impl VgaConsole {
 
     /// Dispatch a completed CSI sequence based on the final character.
     fn dispatch_csi(&mut self, final_ch: u8) {
-        let p = self.parser.params;
+        // Movement counts default to 1; absolute positions default to 1 then
+        // become 0-based, so an omitted parameter means row/column 0.
+        let count = self.parser.param_or(0, 1) as usize;
+        let col = self.parser.param_or(0, 1) as usize - 1;
+        let row = self.parser.param_or(0, 1) as usize - 1;
 
         match final_ch {
-            b'G' | b'`' => {
-                let col = if p[0] > 0 { p[0] - 1 } else { 0 };
-                self.move_cursor(col as usize, self.cursor_y);
-            }
-            b'A' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(self.cursor_x, self.cursor_y.saturating_sub(n as usize));
-            }
-            b'B' | b'e' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(self.cursor_x, self.cursor_y + n as usize);
-            }
-            b'C' | b'a' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(self.cursor_x + n as usize, self.cursor_y);
-            }
-            b'D' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(self.cursor_x.saturating_sub(n as usize), self.cursor_y);
-            }
-            b'E' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(0, self.cursor_y + n as usize);
-            }
-            b'F' => {
-                let n = if p[0] == 0 { 1 } else { p[0] };
-                self.move_cursor(0, self.cursor_y.saturating_sub(n as usize));
-            }
-            b'd' => {
-                let row = if p[0] > 0 { p[0] - 1 } else { 0 };
-                self.move_cursor(self.cursor_x, row as usize);
-            }
+            b'G' | b'`' => self.move_cursor(col, self.cursor_y),
+            b'A' => self.move_cursor(self.cursor_x, self.cursor_y.saturating_sub(count)),
+            b'B' | b'e' => self.move_cursor(self.cursor_x, self.cursor_y + count),
+            b'C' | b'a' => self.move_cursor(self.cursor_x + count, self.cursor_y),
+            b'D' => self.move_cursor(self.cursor_x.saturating_sub(count), self.cursor_y),
+            b'E' => self.move_cursor(0, self.cursor_y + count),
+            b'F' => self.move_cursor(0, self.cursor_y.saturating_sub(count)),
+            b'd' => self.move_cursor(self.cursor_x, row),
             b'H' | b'f' => {
-                let row = if p[0] > 0 { p[0] - 1 } else { 0 };
-                let col = if p[1] > 0 { p[1] - 1 } else { 0 };
-                self.move_cursor(col as usize, row as usize);
+                let target_col = self.parser.param_or(1, 1) as usize - 1;
+                self.move_cursor(target_col, row);
             }
-            b'J' => self.erase_display(p[0]),
-            b'K' => self.erase_line(p[0]),
-            b'L' => self.insert_lines(p[0]),
-            b'M' => self.delete_lines(p[0]),
-            b'P' => self.delete_chars(p[0]),
-            b'@' => self.insert_chars(p[0]),
+            b'J' => self.erase_display(self.parser.param_or(0, 0)),
+            b'K' => self.erase_line(self.parser.param_or(0, 0)),
+            b'L' => self.insert_lines(count),
+            b'M' => self.delete_lines(count),
+            b'P' => self.delete_chars(count),
+            b'@' => self.insert_chars(count),
             b'm' => self.set_graphic_rendition(),
-            b'r' => {
-                let top = if p[0] > 0 { p[0] - 1 } else { 0 };
-                let bottom = if p[1] == 0 { self.lines as u32 } else { p[1] };
-                if (top as usize) < (bottom as usize) && (bottom as usize) <= self.lines {
-                    self.scroll_top = top as usize;
-                    self.scroll_bottom = bottom as usize;
-                }
-            }
+            b'r' => self.set_scroll_region(),
             b's' => self.save_cursor(),
             b'u' => self.restore_cursor(),
             _ => {}
+        }
+    }
+
+    /// CSI r — set the top and bottom rows of the scroll region.
+    fn set_scroll_region(&mut self) {
+        let top = self.parser.param_or(0, 1) as usize - 1;
+        let bottom = match self.parser.param_or(1, 0) {
+            0 => self.lines,
+            value => value as usize,
+        };
+        if top < bottom && bottom <= self.lines {
+            self.scroll_top = top;
+            self.scroll_bottom = bottom;
         }
     }
 
@@ -386,10 +406,7 @@ impl VgaConsole {
     /// Program the CRT controller hardware cursor to match `cursor_pos`.
     pub fn sync_hardware_cursor(&self) {
         let offset = (self.cursor_pos - self.mem_start) >> 1;
-        outb_p(14, self.port_reg);
-        outb_p((offset >> 8) as u8, self.port_val);
-        outb_p(15, self.port_reg);
-        outb_p(offset as u8, self.port_val);
+        self.write_crtc_word(CRTC_CURSOR_HIGH, offset);
     }
 
     fn save_cursor(&mut self) {
@@ -463,20 +480,19 @@ impl VgaConsole {
     }
 
     fn bell(&mut self) {
-        // PIT channel 2 beep: enable speaker, set frequency ~750 Hz.
-        let port_b = inb_p(0x61);
-        outb_p(port_b | 3, 0x61);
-        outb_p(0xb6, 0x43);
-        outb_p(0x37, 0x42);
-        crate::pmio::outb(0x06, 0x42);
+        // Drive PIT channel 2 to beep the PC speaker at roughly 750 Hz.
+        let speaker = inb_p(SPEAKER_PORT);
+        outb_p(speaker | SPEAKER_ENABLE, SPEAKER_PORT);
+        outb_p(PIT_CH2_SQUARE_WAVE, PIT_COMMAND);
+        outb_p(BELL_DIVISOR as u8, PIT_CH2_DATA);
+        outb((BELL_DIVISOR >> 8) as u8, PIT_CH2_DATA);
     }
 
     // ---- Scrolling ----
 
     /// Scroll the display up one line within the scroll region.
     fn scroll_up(&mut self) {
-        let is_ega = self.display_type == DisplayType::EgaColor
-            || self.display_type == DisplayType::EgaMonochrome;
+        let is_ega = self.display_type.is_ega();
 
         if is_ega && self.scroll_top == 0 && self.scroll_bottom == self.lines {
             // EGA/VGA fast scroll: adjust the display origin register.
@@ -542,10 +558,18 @@ impl VgaConsole {
     /// Program the CRT controller display origin for EGA/VGA fast scroll.
     fn set_origin(&self) {
         let offset = (self.origin - self.mem_start) >> 1;
-        outb_p(12, self.port_reg);
-        outb_p((offset >> 8) as u8, self.port_val);
-        outb_p(13, self.port_reg);
-        outb_p(offset as u8, self.port_val);
+        self.write_crtc_word(CRTC_START_HIGH, offset);
+    }
+
+    /// Write a 16-bit value across a high/low CRT controller register pair.
+    ///
+    /// `index_high` selects the high-byte register; the low-byte register is
+    /// always the next index.
+    fn write_crtc_word(&self, index_high: u8, value: usize) {
+        outb_p(index_high, self.port_reg);
+        outb_p((value >> 8) as u8, self.port_val);
+        outb_p(index_high + 1, self.port_reg);
+        outb_p(value as u8, self.port_val);
     }
 
     // ---- Erase operations ----
@@ -606,14 +630,8 @@ impl VgaConsole {
 
     // ---- Insert / delete ----
 
-    fn insert_chars(&mut self, mut count: u32) {
-        if count > self.columns as u32 {
-            count = self.columns as u32;
-        }
-        if count == 0 {
-            count = 1;
-        }
-        for _ in 0..count {
+    fn insert_chars(&mut self, count: usize) {
+        for _ in 0..count.clamp(1, self.columns) {
             self.insert_char_at_cursor();
         }
     }
@@ -631,14 +649,8 @@ impl VgaConsole {
         }
     }
 
-    fn delete_chars(&mut self, mut count: u32) {
-        if count > self.columns as u32 {
-            count = self.columns as u32;
-        }
-        if count == 0 {
-            count = 1;
-        }
-        for _ in 0..count {
+    fn delete_chars(&mut self, count: usize) {
+        for _ in 0..count.clamp(1, self.columns) {
             self.delete_char_at_cursor();
         }
     }
@@ -657,54 +669,74 @@ impl VgaConsole {
         unsafe { ptr::write_volatile(p.wrapping_add(i - self.cursor_x), self.erase_cell) };
     }
 
-    fn insert_lines(&mut self, mut count: u32) {
-        if count > self.lines as u32 {
-            count = self.lines as u32;
-        }
-        if count == 0 {
-            count = 1;
-        }
-        let old_top = self.scroll_top;
-        let old_bottom = self.scroll_bottom;
-        self.scroll_top = self.cursor_y;
-        self.scroll_bottom = self.lines;
-        for _ in 0..count {
-            self.scroll_down();
-        }
-        self.scroll_top = old_top;
-        self.scroll_bottom = old_bottom;
+    fn insert_lines(&mut self, count: usize) {
+        self.scroll_region_temporarily(|console| {
+            for _ in 0..count.clamp(1, console.lines) {
+                console.scroll_down();
+            }
+        });
     }
 
-    fn delete_lines(&mut self, mut count: u32) {
-        if count > self.lines as u32 {
-            count = self.lines as u32;
-        }
-        if count == 0 {
-            count = 1;
-        }
-        let old_top = self.scroll_top;
-        let old_bottom = self.scroll_bottom;
+    fn delete_lines(&mut self, count: usize) {
+        self.scroll_region_temporarily(|console| {
+            for _ in 0..count.clamp(1, console.lines) {
+                console.scroll_up();
+            }
+        });
+    }
+
+    /// Run `body` with the scroll region temporarily set from the cursor row to
+    /// the bottom of the screen, restoring the previous region afterward.
+    ///
+    /// CSI insert-line / delete-line operate within this transient region.
+    fn scroll_region_temporarily(&mut self, body: impl FnOnce(&mut Self)) {
+        let saved = (self.scroll_top, self.scroll_bottom);
         self.scroll_top = self.cursor_y;
         self.scroll_bottom = self.lines;
-        for _ in 0..count {
-            self.scroll_up();
-        }
-        self.scroll_top = old_top;
-        self.scroll_bottom = old_bottom;
+        body(self);
+        (self.scroll_top, self.scroll_bottom) = saved;
     }
 
     // ---- SGR (Select Graphic Rendition) ----
 
     fn set_graphic_rendition(&mut self) {
-        for i in 0..=self.parser.param_count {
-            match self.parser.params[i] {
-                0 => self.attribute = 0x07,  // Reset / normal
-                1 => self.attribute = 0x0f,  // Bold (bright foreground)
-                4 => self.attribute = 0x0f,  // Underline (rendered as bold on VGA)
-                7 => self.attribute = 0x70,  // Inverse video
-                27 => self.attribute = 0x07, // Inverse off
-                _ => {}
-            }
+        for index in 0..=self.parser.param_count {
+            self.attribute = match self.parser.params[index] {
+                0 | 27 => ATTR_NORMAL, // reset / inverse off
+                1 | 4 => ATTR_BOLD,    // bold; underline rendered as bold
+                7 => ATTR_INVERSE,     // inverse video
+                _ => self.attribute,
+            };
         }
     }
 }
+
+/// Normal foreground-on-background text attribute.
+const ATTR_NORMAL: u8 = 0x07;
+/// Bright (bold) foreground attribute.
+const ATTR_BOLD: u8 = 0x0f;
+/// Inverse-video attribute.
+const ATTR_INVERSE: u8 = 0x70;
+
+/// Blank cell written when erasing: a space in the normal attribute.
+const ERASE_CELL: u16 = ((ATTR_NORMAL as u16) << 8) | b' ' as u16;
+
+/// BIOS video mode value indicating a monochrome display.
+const MONO_VIDEO_MODE: u16 = 7;
+/// EGA configuration sentinel: a low byte of `0x10` means no EGA present.
+const NO_EGA_SENTINEL: u16 = 0x10;
+/// Visible rows on a standard text-mode screen.
+const SCREEN_LINES: usize = 25;
+
+/// System control port B, whose low bits gate the PC speaker.
+const SPEAKER_PORT: u16 = 0x61;
+/// Speaker-enable bits (gate + data) in [`SPEAKER_PORT`].
+const SPEAKER_ENABLE: u8 = 0b11;
+/// PIT mode/command register.
+const PIT_COMMAND: u16 = 0x43;
+/// PIT channel 2 data register.
+const PIT_CH2_DATA: u16 = 0x42;
+/// PIT command: channel 2, low+high byte, square-wave mode.
+const PIT_CH2_SQUARE_WAVE: u8 = 0xb6;
+/// PIT reload divisor for the bell tone (1193182 Hz / 1591 ≈ 750 Hz).
+const BELL_DIVISOR: u16 = 1591;
