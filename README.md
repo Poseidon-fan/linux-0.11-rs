@@ -67,11 +67,12 @@ ec<TAB>                              # completes to `echo `
 
 Outside a devcontainer you'll also need a recent Rust nightly (pinned in
 `rust-toolchain.toml`), `qemu-system-i386`, the `x86_64-linux-gnu-*`
-cross-binutils, and the two local image tools:
+cross-binutils, and the local image/test tools:
 
 ```bash
 cargo install --path mbrkit
 cargo install --path miniximg/miniximg-cli
+cargo install --path ktest
 ```
 
 ## ✅ Tests
