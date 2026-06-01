@@ -85,11 +85,8 @@ jobs:
             mbrkit
             miniximg
 
-      - name: Install mbrkit + miniximg + ktest
-        run: |
-          cargo install --path mbrkit --locked
-          cargo install --path miniximg/miniximg-cli --locked
-          cargo install --path ktest --locked
+      - name: Install built-in tools (mbrkit + miniximg + ktest)
+        run: tools/install-tools.sh --locked
 
       - name: Build kernel (serial console)
         run: make -C kernel Image-console-debug

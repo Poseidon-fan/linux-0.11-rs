@@ -70,9 +70,7 @@ Outside a devcontainer you'll also need a recent Rust nightly (pinned in
 cross-binutils, and the local image/test tools:
 
 ```bash
-cargo install --path mbrkit
-cargo install --path miniximg/miniximg-cli
-cargo install --path ktest
+tools/install-tools.sh        # installs mbrkit, miniximg, ktest onto PATH
 ```
 
 ## ✅ Tests
