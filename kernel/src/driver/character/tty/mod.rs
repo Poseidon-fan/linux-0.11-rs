@@ -30,28 +30,6 @@ use crate::{
 /// Number of fixed TTY devices: console, serial port 1, and serial port 2.
 pub const DEVICE_COUNT: usize = 3;
 
-/// Hardware backend driving one TTY channel.
-///
-/// The core calls these on its own thread of control; implementations must not
-/// assume any particular lock is held. Output draining goes through
-/// [`TtyDevice::take_output`], so backends only react to "there is now work"
-/// ([`start_output`]) and configuration changes ([`configure`]).
-///
-/// [`start_output`]: TtyBackend::start_output
-/// [`configure`]: TtyBackend::configure
-pub trait TtyBackend: Sync {
-    /// Begin or resume draining the channel's output queue.
-    fn start_output(&self, channel: usize);
-
-    /// Reconfigure the hardware from updated `termios` state.
-    ///
-    /// The default does nothing, which suits backends like the console whose
-    /// line settings are fixed.
-    fn configure(&self, channel: usize, termios: &Termios) {
-        let _ = (channel, termios);
-    }
-}
-
 /// Read cooked input from a TTY into a kernel-owned buffer.
 pub fn read(channel: usize, buffer: &mut [u8]) -> Result<usize> {
     device(channel)?.read(buffer)
@@ -116,6 +94,28 @@ pub fn clear_foreground_group(channel: usize) {
     }
 }
 
+/// Hardware backend driving one TTY channel.
+///
+/// The core calls these on its own thread of control; implementations must not
+/// assume any particular lock is held. Output draining goes through
+/// [`TtyDevice::take_output`], so backends only react to "there is now work"
+/// ([`start_output`]) and configuration changes ([`configure`]).
+///
+/// [`start_output`]: TtyBackend::start_output
+/// [`configure`]: TtyBackend::configure
+pub trait TtyBackend: Sync {
+    /// Begin or resume draining the channel's output queue.
+    fn start_output(&self, channel: usize);
+
+    /// Reconfigure the hardware from updated `termios` state.
+    ///
+    /// The default does nothing, which suits backends like the console whose
+    /// line settings are fixed.
+    fn configure(&self, channel: usize, termios: &Termios) {
+        let _ = (channel, termios);
+    }
+}
+
 static DEVICES: [TtyDevice; DEVICE_COUNT] = [
     TtyDevice::new(Termios::console_default(), &console::CONSOLE_BACKEND),
     TtyDevice::new(Termios::serial_default(), &serial::SERIAL_BACKEND),
@@ -168,6 +168,31 @@ struct TtyState {
 /// Look up a TTY device by channel number.
 fn device(channel: usize) -> Result<&'static TtyDevice> {
     DEVICES.get(channel).ok_or(Errno::NODEV)
+}
+
+/// Whether the current task has a pending signal.
+fn signal_pending() -> bool {
+    task::with_current(|inner| inner.signal_info.signal != 0)
+}
+
+/// Post `signal` to every task in the given foreground process group.
+fn signal_foreground_group(foreground_group: i32, signal: u32) {
+    let Ok(pgrp) = u32::try_from(foreground_group) else {
+        return;
+    };
+    if pgrp == NO_FOREGROUND_GROUP as u32 {
+        return;
+    }
+
+    task::TASK_MANAGER.exclusive(|manager| {
+        for task in manager.tasks.iter().flatten() {
+            task.pcb.inner.exclusive(|inner| {
+                if inner.relation.pgrp == pgrp {
+                    inner.signal_info.raise(signal);
+                }
+            });
+        }
+    });
 }
 
 impl TtyDevice {
@@ -400,29 +425,4 @@ impl TtyState {
         self.output.clear();
         self.output_cr_pending = false;
     }
-}
-
-/// Whether the current task has a pending signal.
-fn signal_pending() -> bool {
-    task::with_current(|inner| inner.signal_info.signal != 0)
-}
-
-/// Post `signal` to every task in the given foreground process group.
-fn signal_foreground_group(foreground_group: i32, signal: u32) {
-    let Ok(pgrp) = u32::try_from(foreground_group) else {
-        return;
-    };
-    if pgrp == NO_FOREGROUND_GROUP as u32 {
-        return;
-    }
-
-    task::TASK_MANAGER.exclusive(|manager| {
-        for task in manager.tasks.iter().flatten() {
-            task.pcb.inner.exclusive(|inner| {
-                if inner.relation.pgrp == pgrp {
-                    inner.signal_info.raise(signal);
-                }
-            });
-        }
-    });
 }

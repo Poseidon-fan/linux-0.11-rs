@@ -22,24 +22,6 @@ use crate::{
 /// Backend instance for console channel 0.
 pub static CONSOLE_BACKEND: ConsoleBackend = ConsoleBackend;
 
-/// TTY backend for the VGA console.
-pub struct ConsoleBackend;
-
-/// Master PIC interrupt-mask register.
-const PIC_MASTER_MASK: u16 = 0x21;
-
-/// IRQ1 (keyboard) mask bit in the master PIC.
-const KEYBOARD_IRQ_MASK: u8 = 1 << 1;
-
-/// Keyboard controller port B (acknowledge toggling).
-const KBD_CONTROL_PORT_B: u16 = 0x61;
-
-/// Acknowledge bit pulsed on port B to reset the keyboard controller.
-const KBD_ACK_BIT: u8 = 1 << 7;
-
-/// Maximum bytes drained from the output queue per parser batch.
-const OUTPUT_BATCH: usize = 256;
-
 /// Initialize the VGA console and register the keyboard interrupt handler.
 ///
 /// Must run after `task::init()` (which sets up the IDT base) and before any
@@ -61,6 +43,24 @@ pub fn init() {
     // the display via this backend.
     crate::logging::set_tty_ready();
 }
+
+/// TTY backend for the VGA console.
+pub struct ConsoleBackend;
+
+/// Master PIC interrupt-mask register.
+const PIC_MASTER_MASK: u16 = 0x21;
+
+/// IRQ1 (keyboard) mask bit in the master PIC.
+const KEYBOARD_IRQ_MASK: u8 = 1 << 1;
+
+/// Keyboard controller port B (acknowledge toggling).
+const KBD_CONTROL_PORT_B: u16 = 0x61;
+
+/// Acknowledge bit pulsed on port B to reset the keyboard controller.
+const KBD_ACK_BIT: u8 = 1 << 7;
+
+/// Maximum bytes drained from the output queue per parser batch.
+const OUTPUT_BATCH: usize = 256;
 
 impl TtyBackend for ConsoleBackend {
     fn start_output(&self, channel: usize) {

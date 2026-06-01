@@ -94,6 +94,36 @@ const CRTC_START_HIGH: u8 = 12;
 /// CRT controller index of the cursor-location high byte (low byte at +1).
 const CRTC_CURSOR_HIGH: u8 = 14;
 
+/// Normal foreground-on-background text attribute.
+const ATTR_NORMAL: u8 = 0x07;
+/// Bright (bold) foreground attribute.
+const ATTR_BOLD: u8 = 0x0f;
+/// Inverse-video attribute.
+const ATTR_INVERSE: u8 = 0x70;
+
+/// Blank cell written when erasing: a space in the normal attribute.
+const ERASE_CELL: u16 = ((ATTR_NORMAL as u16) << 8) | b' ' as u16;
+
+/// BIOS video mode value indicating a monochrome display.
+const MONO_VIDEO_MODE: u16 = 7;
+/// EGA configuration sentinel: a low byte of `0x10` means no EGA present.
+const NO_EGA_SENTINEL: u16 = 0x10;
+/// Visible rows on a standard text-mode screen.
+const SCREEN_LINES: usize = 25;
+
+/// System control port B, whose low bits gate the PC speaker.
+const SPEAKER_PORT: u16 = 0x61;
+/// Speaker-enable bits (gate + data) in [`SPEAKER_PORT`].
+const SPEAKER_ENABLE: u8 = 0b11;
+/// PIT mode/command register.
+const PIT_COMMAND: u16 = 0x43;
+/// PIT channel 2 data register.
+const PIT_CH2_DATA: u16 = 0x42;
+/// PIT command: channel 2, low+high byte, square-wave mode.
+const PIT_CH2_SQUARE_WAVE: u8 = 0xb6;
+/// PIT reload divisor for the bell tone (1193182 Hz / 1591 ≈ 750 Hz).
+const BELL_DIVISOR: u16 = 1591;
+
 /// C0 control bytes handled directly by the console.
 mod control {
     pub const BELL: u8 = 0x07;
@@ -124,13 +154,6 @@ enum DisplayType {
     EgaColor,
 }
 
-impl DisplayType {
-    /// Whether this adapter supports the EGA/VGA fast-scroll origin register.
-    fn is_ega(self) -> bool {
-        matches!(self, Self::EgaMonochrome | Self::EgaColor)
-    }
-}
-
 /// VT102/ANSI escape sequence parser state machine.
 ///
 /// ```text
@@ -158,6 +181,13 @@ struct AnsiParser {
     params: [u32; MAX_ANSI_PARAMS],
     /// Number of parameters accumulated so far.
     param_count: usize,
+}
+
+impl DisplayType {
+    /// Whether this adapter supports the EGA/VGA fast-scroll origin register.
+    fn is_ega(self) -> bool {
+        matches!(self, Self::EgaMonochrome | Self::EgaColor)
+    }
 }
 
 impl AnsiParser {
@@ -710,33 +740,3 @@ impl VgaConsole {
         }
     }
 }
-
-/// Normal foreground-on-background text attribute.
-const ATTR_NORMAL: u8 = 0x07;
-/// Bright (bold) foreground attribute.
-const ATTR_BOLD: u8 = 0x0f;
-/// Inverse-video attribute.
-const ATTR_INVERSE: u8 = 0x70;
-
-/// Blank cell written when erasing: a space in the normal attribute.
-const ERASE_CELL: u16 = ((ATTR_NORMAL as u16) << 8) | b' ' as u16;
-
-/// BIOS video mode value indicating a monochrome display.
-const MONO_VIDEO_MODE: u16 = 7;
-/// EGA configuration sentinel: a low byte of `0x10` means no EGA present.
-const NO_EGA_SENTINEL: u16 = 0x10;
-/// Visible rows on a standard text-mode screen.
-const SCREEN_LINES: usize = 25;
-
-/// System control port B, whose low bits gate the PC speaker.
-const SPEAKER_PORT: u16 = 0x61;
-/// Speaker-enable bits (gate + data) in [`SPEAKER_PORT`].
-const SPEAKER_ENABLE: u8 = 0b11;
-/// PIT mode/command register.
-const PIT_COMMAND: u16 = 0x43;
-/// PIT channel 2 data register.
-const PIT_CH2_DATA: u16 = 0x42;
-/// PIT command: channel 2, low+high byte, square-wave mode.
-const PIT_CH2_SQUARE_WAVE: u8 = 0xb6;
-/// PIT reload divisor for the bell tone (1193182 Hz / 1591 ≈ 750 Hz).
-const BELL_DIVISOR: u16 = 1591;

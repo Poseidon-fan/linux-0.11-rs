@@ -25,9 +25,6 @@ use crate::{
 /// Backend instance shared by both serial TTY channels.
 pub static SERIAL_BACKEND: SerialBackend = SerialBackend;
 
-/// TTY backend for the serial channels.
-pub struct SerialBackend;
-
 /// Initialize both serial ports and install their IRQ gates.
 pub fn init() {
     trap::set_intr_gate(0x24, serial1_interrupt);
@@ -41,26 +38,8 @@ pub fn init() {
     outb(inb_p(PIC_MASTER_MASK) & !SERIAL_IRQ_MASK, PIC_MASTER_MASK);
 }
 
-impl TtyBackend for SerialBackend {
-    fn start_output(&self, channel: usize) {
-        let Some(port) = port_for_channel(channel) else {
-            return;
-        };
-
-        if tty::has_pending_output(channel) {
-            port.enable_transmit_interrupt();
-        } else {
-            port.disable_transmit_interrupt();
-            tty::notify_output_drained(channel);
-        }
-    }
-
-    fn configure(&self, channel: usize, termios: &Termios) {
-        if let Some(port) = port_for_channel(channel) {
-            port.configure(termios);
-        }
-    }
-}
+/// TTY backend for the serial channels.
+pub struct SerialBackend;
 
 /// Build a naked IRQ stub that saves state and calls [`serial_interrupt_entry`]
 /// with the given port index.
@@ -133,6 +112,9 @@ const PORTS: [SerialPort; PORT_COUNT] = [
     },
 ];
 
+/// At least one byte is available in the receive buffer (line-status bit 0).
+const LINE_STATUS_DATA_READY: u8 = 1 << 0;
+
 /// One 8250-compatible UART port.
 ///
 /// ```text
@@ -172,6 +154,14 @@ enum Register {
     ModemStatus = 6,
 }
 
+/// Interrupt cause read from the interrupt-identification register.
+enum InterruptCause {
+    ModemStatus,
+    TransmitEmpty,
+    ReceivedData,
+    LineStatus,
+}
+
 /// Interrupt-enable register bits.
 mod interrupt_enable {
     /// Received-data-available interrupt.
@@ -185,37 +175,6 @@ mod interrupt_enable {
 
     /// All receive-side interrupts enabled together.
     pub const RECEIVE_SET: u8 = RECEIVED_DATA | LINE_STATUS | MODEM_STATUS;
-}
-
-/// Interrupt cause read from the interrupt-identification register.
-enum InterruptCause {
-    ModemStatus,
-    TransmitEmpty,
-    ReceivedData,
-    LineStatus,
-}
-
-impl InterruptCause {
-    /// Set when the UART reports no pending interrupt.
-    const NONE_PENDING: u8 = 1 << 0;
-    /// Mask selecting the cause field of the identification register.
-    const CAUSE_MASK: u8 = 0x0e;
-
-    /// Decode the interrupt-identification register, returning `None` when no
-    /// interrupt is pending or the cause is unrecognized.
-    fn decode(ident: u8) -> Option<Self> {
-        if ident & Self::NONE_PENDING != 0 {
-            return None;
-        }
-        match ident & Self::CAUSE_MASK {
-            0x00 => Some(Self::ModemStatus),
-            0x02 => Some(Self::TransmitEmpty),
-            // 0x0c is the FIFO character-timeout interrupt, drained like data.
-            0x04 | 0x0c => Some(Self::ReceivedData),
-            0x06 => Some(Self::LineStatus),
-            _ => None,
-        }
-    }
 }
 
 /// Line-control register bits.
@@ -244,9 +203,6 @@ mod modem_control {
     /// Lines asserted for an active, interrupt-routed connection.
     pub const ACTIVE_SET: u8 = DATA_TERMINAL_READY | REQUEST_TO_SEND | OUT2;
 }
-
-/// At least one byte is available in the receive buffer (line-status bit 0).
-const LINE_STATUS_DATA_READY: u8 = 1 << 0;
 
 /// Return the serial port serving `channel`.
 fn port_for_channel(channel: usize) -> Option<SerialPort> {
@@ -306,6 +262,50 @@ extern "C" fn serial_interrupt_entry(index: usize) {
         port.handle_interrupt();
     }
     outb(PIC_EOI, PIC_MASTER_COMMAND);
+}
+
+impl InterruptCause {
+    /// Set when the UART reports no pending interrupt.
+    const NONE_PENDING: u8 = 1 << 0;
+    /// Mask selecting the cause field of the identification register.
+    const CAUSE_MASK: u8 = 0x0e;
+
+    /// Decode the interrupt-identification register, returning `None` when no
+    /// interrupt is pending or the cause is unrecognized.
+    fn decode(ident: u8) -> Option<Self> {
+        if ident & Self::NONE_PENDING != 0 {
+            return None;
+        }
+        match ident & Self::CAUSE_MASK {
+            0x00 => Some(Self::ModemStatus),
+            0x02 => Some(Self::TransmitEmpty),
+            // 0x0c is the FIFO character-timeout interrupt, drained like data.
+            0x04 | 0x0c => Some(Self::ReceivedData),
+            0x06 => Some(Self::LineStatus),
+            _ => None,
+        }
+    }
+}
+
+impl TtyBackend for SerialBackend {
+    fn start_output(&self, channel: usize) {
+        let Some(port) = port_for_channel(channel) else {
+            return;
+        };
+
+        if tty::has_pending_output(channel) {
+            port.enable_transmit_interrupt();
+        } else {
+            port.disable_transmit_interrupt();
+            tty::notify_output_drained(channel);
+        }
+    }
+
+    fn configure(&self, channel: usize, termios: &Termios) {
+        if let Some(port) = port_for_channel(channel) {
+            port.configure(termios);
+        }
+    }
 }
 
 impl SerialPort {

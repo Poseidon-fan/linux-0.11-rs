@@ -55,38 +55,6 @@ pub extern "C" fn keyboard_interrupt() {
     }
 }
 
-bitflags! {
-    /// Active modifier and lock state, tracked across make/break scan codes.
-    #[derive(Clone, Copy)]
-    struct Modifiers: u8 {
-        const LEFT_SHIFT   = 1 << 0;
-        const RIGHT_SHIFT  = 1 << 1;
-        const LEFT_CTRL    = 1 << 2;
-        const RIGHT_CTRL   = 1 << 3;
-        const LEFT_ALT     = 1 << 4;
-        const RIGHT_ALT    = 1 << 5;
-        /// CapsLock toggle is currently active.
-        const CAPS_LOCK    = 1 << 6;
-        /// CapsLock key is held down (debounces the toggle).
-        const CAPS_PRESSED = 1 << 7;
-
-        /// Either Shift key.
-        const SHIFT = Self::LEFT_SHIFT.bits() | Self::RIGHT_SHIFT.bits();
-        /// Either Ctrl key.
-        const CTRL = Self::LEFT_CTRL.bits() | Self::RIGHT_CTRL.bits();
-    }
-}
-
-bitflags! {
-    /// Keyboard LED state sent to the controller with the set-LEDs command.
-    #[derive(Clone, Copy)]
-    struct Leds: u8 {
-        const SCROLL_LOCK = 1 << 0;
-        const NUM_LOCK    = 1 << 1;
-        const CAPS_LOCK   = 1 << 2;
-    }
-}
-
 /// Shared keyboard controller state, guarded by a `KernelCell`.
 static KEYBOARD: KernelCell<KeyboardState> = KernelCell::new(KeyboardState {
     modifiers: Modifiers::empty(),
@@ -186,6 +154,43 @@ const ESC: u8 = 0x1b;
 /// High bit OR-ed into a byte when Left Alt is held (meta prefix).
 const ALT_HIGH_BIT: u8 = 0x80;
 
+/// CapsLock make/break scan code.
+const CAPS_LOCK_CODE: u8 = 0x3a;
+/// NumLock make/break scan code.
+const NUM_LOCK_CODE: u8 = 0x45;
+
+bitflags! {
+    /// Active modifier and lock state, tracked across make/break scan codes.
+    #[derive(Clone, Copy)]
+    struct Modifiers: u8 {
+        const LEFT_SHIFT   = 1 << 0;
+        const RIGHT_SHIFT  = 1 << 1;
+        const LEFT_CTRL    = 1 << 2;
+        const RIGHT_CTRL   = 1 << 3;
+        const LEFT_ALT     = 1 << 4;
+        const RIGHT_ALT    = 1 << 5;
+        /// CapsLock toggle is currently active.
+        const CAPS_LOCK    = 1 << 6;
+        /// CapsLock key is held down (debounces the toggle).
+        const CAPS_PRESSED = 1 << 7;
+
+        /// Either Shift key.
+        const SHIFT = Self::LEFT_SHIFT.bits() | Self::RIGHT_SHIFT.bits();
+        /// Either Ctrl key.
+        const CTRL = Self::LEFT_CTRL.bits() | Self::RIGHT_CTRL.bits();
+    }
+}
+
+bitflags! {
+    /// Keyboard LED state sent to the controller with the set-LEDs command.
+    #[derive(Clone, Copy)]
+    struct Leds: u8 {
+        const SCROLL_LOCK = 1 << 0;
+        const NUM_LOCK    = 1 << 1;
+        const CAPS_LOCK   = 1 << 2;
+    }
+}
+
 /// Keyboard controller state tracked across interrupts.
 struct KeyboardState {
     /// Active modifier and lock keys.
@@ -194,6 +199,14 @@ struct KeyboardState {
     leds: Leds,
     /// Whether the previous scan code was an extended (0xe0/0xe1) prefix.
     extended_prefix: bool,
+}
+
+/// Outcome of translating one scan code.
+enum Key {
+    /// Code was consumed without producing output (modifier, prefix, break).
+    Consumed,
+    /// Code produced the given number of bytes in the output buffer.
+    Bytes(usize),
 }
 
 /// Rust-side keyboard interrupt handler: read the scan code, acknowledge the
@@ -218,12 +231,48 @@ extern "C" fn keyboard_handler() {
     }
 }
 
-/// Outcome of translating one scan code.
-enum Key {
-    /// Code was consumed without producing output (modifier, prefix, break).
-    Consumed,
-    /// Code produced the given number of bytes in the output buffer.
-    Bytes(usize),
+/// Map a modifier/lock scan code to the [`Modifiers`] bit it controls.
+///
+/// CapsLock and NumLock have no single [`Modifiers`] bit of their own (they are
+/// handled specially in [`KeyboardState::apply_modifier`]) but still resolve
+/// here so the caller routes them as modifier keys.
+fn modifier_for(code: u8, was_extended: bool) -> Option<Modifiers> {
+    Some(match code {
+        0x2a => Modifiers::LEFT_SHIFT,
+        0x36 => Modifiers::RIGHT_SHIFT,
+        0x1d if was_extended => Modifiers::RIGHT_CTRL,
+        0x1d => Modifiers::LEFT_CTRL,
+        0x38 if was_extended => Modifiers::RIGHT_ALT,
+        0x38 => Modifiers::LEFT_ALT,
+        CAPS_LOCK_CODE | NUM_LOCK_CODE => Modifiers::empty(),
+        _ => return None,
+    })
+}
+
+/// Swap the case of an ASCII letter, leaving other bytes unchanged.
+fn swap_ascii_case(byte: u8) -> u8 {
+    if byte.is_ascii_lowercase() {
+        byte.to_ascii_uppercase()
+    } else if byte.is_ascii_uppercase() {
+        byte.to_ascii_lowercase()
+    } else {
+        byte
+    }
+}
+
+/// Map a byte to its Ctrl-modified control code (`Ctrl-A` == 0x01), leaving
+/// bytes outside the control range unchanged.
+fn to_control(byte: u8) -> u8 {
+    match byte {
+        b'@'..=b'_' => byte - b'@',
+        b'a'..=b'z' => byte - b'a' + 1,
+        _ => byte,
+    }
+}
+
+/// Wait until the keyboard controller input buffer is empty.
+fn kbd_wait() {
+    while inb(KBD_STATUS_PORT) & KBD_INPUT_FULL != 0 {}
 }
 
 impl KeyboardState {
@@ -358,53 +407,4 @@ impl KeyboardState {
         kbd_wait();
         outb(self.leds.bits(), KBD_DATA_PORT);
     }
-}
-
-/// CapsLock make/break scan code.
-const CAPS_LOCK_CODE: u8 = 0x3a;
-/// NumLock make/break scan code.
-const NUM_LOCK_CODE: u8 = 0x45;
-
-/// Map a modifier/lock scan code to the [`Modifiers`] bit it controls.
-///
-/// CapsLock and NumLock have no single [`Modifiers`] bit of their own (they are
-/// handled specially in [`KeyboardState::apply_modifier`]) but still resolve
-/// here so the caller routes them as modifier keys.
-fn modifier_for(code: u8, was_extended: bool) -> Option<Modifiers> {
-    Some(match code {
-        0x2a => Modifiers::LEFT_SHIFT,
-        0x36 => Modifiers::RIGHT_SHIFT,
-        0x1d if was_extended => Modifiers::RIGHT_CTRL,
-        0x1d => Modifiers::LEFT_CTRL,
-        0x38 if was_extended => Modifiers::RIGHT_ALT,
-        0x38 => Modifiers::LEFT_ALT,
-        CAPS_LOCK_CODE | NUM_LOCK_CODE => Modifiers::empty(),
-        _ => return None,
-    })
-}
-
-/// Swap the case of an ASCII letter, leaving other bytes unchanged.
-fn swap_ascii_case(byte: u8) -> u8 {
-    if byte.is_ascii_lowercase() {
-        byte.to_ascii_uppercase()
-    } else if byte.is_ascii_uppercase() {
-        byte.to_ascii_lowercase()
-    } else {
-        byte
-    }
-}
-
-/// Map a byte to its Ctrl-modified control code (`Ctrl-A` == 0x01), leaving
-/// bytes outside the control range unchanged.
-fn to_control(byte: u8) -> u8 {
-    match byte {
-        b'@'..=b'_' => byte - b'@',
-        b'a'..=b'z' => byte - b'a' + 1,
-        _ => byte,
-    }
-}
-
-/// Wait until the keyboard controller input buffer is empty.
-fn kbd_wait() {
-    while inb(KBD_STATUS_PORT) & KBD_INPUT_FULL != 0 {}
 }

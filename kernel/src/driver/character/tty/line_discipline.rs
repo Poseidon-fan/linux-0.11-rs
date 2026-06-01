@@ -49,6 +49,15 @@ pub fn process_raw_input(state: &mut TtyState) -> bool {
     needs_flush
 }
 
+/// ASCII backspace.
+const BACKSPACE: u8 = 0x08;
+
+/// ASCII delete.
+const DELETE: u8 = 0x7f;
+
+/// Offset mapping a control code to its caret-notation letter (`^A` == 0x01 + 64).
+const CARET_OFFSET: u8 = 64;
+
 /// Apply input-mode translations, returning `None` if the byte is discarded.
 fn map_input(state: &TtyState, mut byte: u8) -> Option<u8> {
     let input_mode = state.termios.input_mode;
@@ -203,12 +212,3 @@ fn is_control(byte: u8) -> bool {
 fn echoed_as_caret(byte: u8) -> bool {
     is_control(byte) || byte == DELETE
 }
-
-/// ASCII backspace.
-const BACKSPACE: u8 = 0x08;
-
-/// ASCII delete.
-const DELETE: u8 = 0x7f;
-
-/// Offset mapping a control code to its caret-notation letter (`^A` == 0x01 + 64).
-const CARET_OFFSET: u8 = 64;
