@@ -28,7 +28,10 @@ pub use wait_queue::WaitQueue;
 
 use crate::{
     driver::character::tty,
-    pmio::{inb_p, outb, outb_p},
+    pmio::{
+        PIC_IRQ_TIMER, PIC_MASTER_MASK, PIT_CH0_DATA, PIT_CH0_SQUARE_WAVE, PIT_COMMAND, inb_p,
+        outb, outb_p,
+    },
     segment,
     sync::assert_can_schedule,
     syscall,
@@ -255,14 +258,12 @@ pub fn init() {
     // Load LDT Register with task 0's LDT selector
     segment::lldt(segment::ldt_selector(0));
 
-    const PIT_CMD: u16 = 0x43;
-    const PIT_CH0: u16 = 0x40;
     // Channel 0, lobyte/hibyte, mode 3 (square wave generator).
-    outb_p(0x36, PIT_CMD);
-    outb_p((timer::LATCH & 0xff) as u8, PIT_CH0);
-    outb_p((timer::LATCH >> 8) as u8, PIT_CH0);
+    outb_p(PIT_CH0_SQUARE_WAVE, PIT_COMMAND);
+    outb_p((timer::LATCH & 0xff) as u8, PIT_CH0_DATA);
+    outb_p((timer::LATCH >> 8) as u8, PIT_CH0_DATA);
     trap::set_intr_gate(0x20, timer::timer_interrupt);
-    outb(inb_p(0x21) & !0x01, 0x21);
+    outb(inb_p(PIC_MASTER_MASK) & !PIC_IRQ_TIMER, PIC_MASTER_MASK);
 
     trap::set_system_gate(0x80, unsafe {
         mem::transmute::<unsafe extern "C" fn(), TrapHandler>(syscall::system_call)

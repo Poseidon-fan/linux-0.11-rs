@@ -6,42 +6,23 @@ use bitflags::bitflags;
 use log::warn;
 
 use super::{ATA_DRIVER, DriveGeometry, InterruptPhase};
-use crate::pmio::{inb, inb_p, outb, outb_p};
-
-/// Primary ATA task-file data register.
-pub const DATA_PORT: u16 = 0x1F0;
-/// Primary ATA error register when read.
-pub const ERROR_PORT: u16 = 0x1F1;
-/// Primary ATA write-precompensation register when written.
-pub const PRECOMP_PORT: u16 = ERROR_PORT;
-/// Primary ATA sector-count register.
-pub const SECTOR_COUNT_PORT: u16 = 0x1F2;
-/// Primary ATA sector-number register.
-pub const SECTOR_NUMBER_PORT: u16 = 0x1F3;
-/// Primary ATA cylinder-low register.
-pub const CYLINDER_LOW_PORT: u16 = 0x1F4;
-/// Primary ATA cylinder-high register.
-pub const CYLINDER_HIGH_PORT: u16 = 0x1F5;
-/// Primary ATA drive/head selector register.
-pub const DRIVE_HEAD_PORT: u16 = 0x1F6;
-/// Primary ATA status register when read.
-pub const STATUS_PORT: u16 = 0x1F7;
-/// Primary ATA command register when written.
-pub const COMMAND_PORT: u16 = STATUS_PORT;
-/// Primary ATA device-control register.
-pub const CONTROL_PORT: u16 = 0x3F6;
+use crate::pmio::{
+    ATA_CONTROL_PORT, ATA_CYLINDER_HIGH_PORT, ATA_CYLINDER_LOW_PORT, ATA_DRIVE_HEAD_PORT,
+    ATA_ERROR_PORT, ATA_SECTOR_COUNT_PORT, ATA_SECTOR_NUMBER_PORT, ATA_STATUS_PORT, inb, inb_p,
+    outb, outb_p,
+};
 
 /// Poll the ATA status register until the provided predicate accepts it.
 pub fn wait_for_status(retries: usize, ready: impl Fn(StatusFlags) -> bool) -> Option<StatusFlags> {
     (0..retries).find_map(|_| {
-        let status = StatusFlags::from_bits_truncate(inb_p(STATUS_PORT));
+        let status = StatusFlags::from_bits_truncate(inb_p(ATA_STATUS_PORT));
         ready(status).then_some(status)
     })
 }
 
 /// Check whether the most recently completed ATA command succeeded.
 pub fn command_succeeded() -> bool {
-    let status = StatusFlags::from_bits_truncate(inb_p(STATUS_PORT));
+    let status = StatusFlags::from_bits_truncate(inb_p(ATA_STATUS_PORT));
     let expected = StatusFlags::READY | StatusFlags::SEEK_COMPLETE;
     let observed = status
         & (StatusFlags::BUSY
@@ -55,7 +36,7 @@ pub fn command_succeeded() -> bool {
     }
 
     if status.contains(StatusFlags::ERROR) {
-        let _ = inb(ERROR_PORT);
+        let _ = inb(ATA_ERROR_PORT);
     }
 
     false
@@ -67,11 +48,11 @@ pub fn reset_controller(control: u8) {
     const RESET_READY_RETRIES: usize = 10_000;
     const RESET_EXPECTED_ERROR_STATUS: u8 = 0x01;
 
-    outb(CONTROL_RESET_BIT, CONTROL_PORT);
+    outb(CONTROL_RESET_BIT, ATA_CONTROL_PORT);
     for _ in 0..RESET_DELAY_ITERATIONS {
         spin_loop();
     }
-    outb(control & CONTROL_CONFIGURATION_MASK, CONTROL_PORT);
+    outb(control & CONTROL_CONFIGURATION_MASK, ATA_CONTROL_PORT);
 
     // Wait until the controller is ready to accept commands.
     if !{
@@ -79,7 +60,7 @@ pub fn reset_controller(control: u8) {
             !status.contains(StatusFlags::BUSY) && status.contains(StatusFlags::READY)
         });
 
-        let status = StatusFlags::from_bits_truncate(inb(STATUS_PORT));
+        let status = StatusFlags::from_bits_truncate(inb(ATA_STATUS_PORT));
         let expected = StatusFlags::READY | StatusFlags::SEEK_COMPLETE;
         let observed =
             status & (StatusFlags::BUSY | StatusFlags::READY | StatusFlags::SEEK_COMPLETE);
@@ -89,7 +70,7 @@ pub fn reset_controller(control: u8) {
         warn!("HD controller still busy after reset");
     }
 
-    let error_status = inb(ERROR_PORT);
+    let error_status = inb(ATA_ERROR_PORT);
     if error_status != RESET_EXPECTED_ERROR_STATUS {
         warn!("HD controller reset failed: {:02x}", error_status);
     }
@@ -119,21 +100,21 @@ pub fn issue_command(
         driver.phase = interrupt_phase;
     });
 
-    outb_p(geometry.control, CONTROL_PORT);
-    outb_p((geometry.write_precompensation >> 2) as u8, PRECOMP_PORT);
-    outb_p(task_file.sector_count, SECTOR_COUNT_PORT);
-    outb_p(task_file.sector, SECTOR_NUMBER_PORT);
-    outb_p(task_file.cylinder as u8, CYLINDER_LOW_PORT);
-    outb_p((task_file.cylinder >> 8) as u8, CYLINDER_HIGH_PORT);
+    outb_p(geometry.control, ATA_CONTROL_PORT);
+    outb_p((geometry.write_precompensation >> 2) as u8, ATA_ERROR_PORT);
+    outb_p(task_file.sector_count, ATA_SECTOR_COUNT_PORT);
+    outb_p(task_file.sector, ATA_SECTOR_NUMBER_PORT);
+    outb_p(task_file.cylinder as u8, ATA_CYLINDER_LOW_PORT);
+    outb_p((task_file.cylinder >> 8) as u8, ATA_CYLINDER_HIGH_PORT);
     outb_p(
         DRIVE_HEAD_BASE | ((task_file.drive_index as u8) << 4) | task_file.head,
-        DRIVE_HEAD_PORT,
+        ATA_DRIVE_HEAD_PORT,
     );
-    outb(task_file.command as u8, COMMAND_PORT);
+    outb(task_file.command as u8, ATA_STATUS_PORT);
 }
 
 bitflags! {
-    /// ATA controller status bits returned by [`STATUS_PORT`].
+    /// ATA controller status bits returned by [`ATA_STATUS_PORT`].
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct StatusFlags: u8 {
         /// The error register contains command failure details.

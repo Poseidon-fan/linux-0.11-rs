@@ -19,7 +19,10 @@ use crate::{
     },
     error::{Errno, Result},
     fs::buffer::{self, BufferKey},
-    pmio::{self, inb_p, outb, outb_p, port_read_words, port_write_words},
+    pmio::{
+        ATA_DATA_PORT, PIC_IRQ_CASCADE, PIC_IRQ_HD, PIC_MASTER_MASK, PIC_SLAVE_MASK, inb_p, outb,
+        outb_p, port_read_words, port_write_words, read_cmos,
+    },
     println,
     segment::uaccess,
     sync::KernelCell,
@@ -32,8 +35,8 @@ pub fn init() {
     trap::set_intr_gate(0x2E, interrupt::hd_interrupt);
 
     // Keep the cascade IRQ enabled on the master PIC and unmask IRQ14 on the slave PIC.
-    outb_p(inb_p(0x21) & !0x04, 0x21);
-    outb(inb_p(0xA1) & !0x40, 0xA1);
+    outb_p(inb_p(PIC_MASTER_MASK) & !PIC_IRQ_CASCADE, PIC_MASTER_MASK);
+    outb(inb_p(PIC_SLAVE_MASK) & !PIC_IRQ_HD, PIC_SLAVE_MASK);
 }
 
 /// Initialize hard disk geometry from the BIOS drive table.
@@ -55,7 +58,7 @@ pub fn setup_from_bios(drive_info_addr: *const u8) -> Result<()> {
         unsafe { DriveGeometry::from_bios_entry(addr) }.map(DriveDescriptor::from_geometry)
     });
 
-    let cmos_disks = pmio::read_cmos(CMOS_DISK_TYPE_REGISTER);
+    let cmos_disks = read_cmos(CMOS_DISK_TYPE_REGISTER);
     let drive_count = match (cmos_disks & 0xF0 != 0, cmos_disks & 0x0F != 0) {
         (false, _) => 0,
         (true, false) => 1,
@@ -275,7 +278,7 @@ fn kick() {
                 }
 
                 port_write_words(
-                    controller::DATA_PORT,
+                    ATA_DATA_PORT,
                     request.data_addr.cast::<u16>().as_ptr(),
                     SECTOR_WORD_COUNT,
                 );
@@ -319,7 +322,7 @@ fn continue_read() {
         return;
     };
 
-    port_read_words(controller::DATA_PORT, buffer.as_ptr(), SECTOR_WORD_COUNT);
+    port_read_words(ATA_DATA_PORT, buffer.as_ptr(), SECTOR_WORD_COUNT);
 
     let has_more = block::with_current_request(HARD_DISK_MAJOR, |request| {
         let Some(mut request) = request else {
@@ -364,11 +367,7 @@ fn continue_write() {
     ATA_DRIVER.exclusive(|driver| {
         driver.phase = InterruptPhase::Writing;
     });
-    port_write_words(
-        controller::DATA_PORT,
-        next_buffer.as_ptr(),
-        SECTOR_WORD_COUNT,
-    );
+    port_write_words(ATA_DATA_PORT, next_buffer.as_ptr(), SECTOR_WORD_COUNT);
 }
 
 /// Continue a pending ATA specify or recalibration command.

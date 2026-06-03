@@ -2,7 +2,7 @@
 
 use core::arch::naked_asm;
 
-use crate::pmio::outb;
+use crate::pmio::{PIC_EOI, PIC_MASTER_COMMAND, PIC_SLAVE_COMMAND, outb};
 
 /// IRQ14 entry stub for the hard disk controller.
 ///
@@ -41,8 +41,8 @@ pub extern "C" fn hd_interrupt() {
 /// Rust-side dispatcher for IRQ14.
 extern "C" fn hd_interrupt_rust_entry() {
     // Acknowledge the slave PIC first, then the master cascade line.
-    outb(0x20, 0xA0);
-    outb(0x20, 0x20);
+    outb(PIC_EOI, PIC_SLAVE_COMMAND);
+    outb(PIC_EOI, PIC_MASTER_COMMAND);
 
     super::on_interrupt();
 }

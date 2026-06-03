@@ -4,7 +4,10 @@ use core::arch::{asm, naked_asm};
 
 use log::{error, info};
 
-use crate::{mm, pmio::outb};
+use crate::{
+    mm,
+    pmio::{COPROC_BUSY_PORT, PIC_EOI, PIC_MASTER_COMMAND, PIC_SLAVE_COMMAND, outb},
+};
 
 macro_rules! stub_no_error {
     ($entry:ident => $handler:ident) => {
@@ -357,9 +360,9 @@ extern "C" fn on_parallel_interrupt(_frame: &ExceptionFrame) {
 extern "C" fn on_irq13(_frame: &ExceptionFrame) {
     // Clear the external coprocessor's busy latch, then acknowledge the slave
     // PIC and the master cascade line before handling the error.
-    outb(0, 0xF0);
-    outb(0x20, 0xA0);
-    outb(0x20, 0x20);
+    outb(0, COPROC_BUSY_PORT);
+    outb(PIC_EOI, PIC_SLAVE_COMMAND);
+    outb(PIC_EOI, PIC_MASTER_COMMAND);
     crate::fpu::handle_error();
 }
 

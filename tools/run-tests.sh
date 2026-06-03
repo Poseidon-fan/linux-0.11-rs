@@ -2,13 +2,15 @@
 #
 # Run the end-to-end test suite from the repo root.
 #
-# Picks a kernel image and a disk image, then invokes the `ktest`
-# runner (installed on PATH by .devcontainer/setup.sh). All extra
-# arguments are forwarded — e.g. `--suite=shell`,
+# By default the kernel image is rebuilt before every run so tests always
+# exercise the latest code.  Pass `--without-rebuild` to skip the rebuild.
+#
+# Extra arguments are forwarded to `ktest` — e.g. `--suite=shell`,
 # `--test-set=shell.basic`, `--disable-reboot`.
 #
 # Usage:
-#   tools/run-tests.sh                              # run everything
+#   tools/run-tests.sh                              # rebuild + run everything
+#   tools/run-tests.sh --without-rebuild               # skip rebuild
 #   tools/run-tests.sh --suite=shell                   # one suite
 #   tools/run-tests.sh --test-set=shell.basic          # one test
 #   KERNEL=kernel/Image-console-release tools/run-tests.sh
@@ -22,9 +24,24 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 KERNEL="${KERNEL:-$REPO_ROOT/kernel/Image-console-debug}"
 IMAGE="${IMAGE:-$REPO_ROOT/disk.img}"
 
+REBUILD=true
+KTEST_ARGS=()
+for arg in "$@"; do
+    if [ "$arg" = "--without-rebuild" ]; then
+        REBUILD=false
+    else
+        KTEST_ARGS+=("$arg")
+    fi
+done
+
+if $REBUILD; then
+    echo "run-tests.sh: rebuilding kernel image..."
+    make -C "$REPO_ROOT/kernel" "$(basename "$KERNEL")"
+fi
+
 if [ ! -f "$KERNEL" ]; then
     echo "run-tests.sh: kernel image not found: $KERNEL" >&2
-    echo "  build it with: make -C kernel Image-console-debug" >&2
+    echo "  build it with: make -C kernel $(basename "$KERNEL")" >&2
     exit 1
 fi
 if [ ! -f "$IMAGE" ]; then
@@ -46,4 +63,4 @@ exec ktest \
     --kernel "$KERNEL" \
     --image "$IMAGE" \
     --suites-root "$REPO_ROOT/ktest/suites" \
-    "$@"
+    "${KTEST_ARGS[@]}"

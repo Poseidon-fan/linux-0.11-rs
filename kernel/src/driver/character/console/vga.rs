@@ -19,7 +19,10 @@
 use core::ptr;
 
 use crate::{
-    pmio::{inb_p, outb, outb_p},
+    pmio::{
+        KBD_CONTROL_PORT_B, PIT_CH2_DATA, PIT_CH2_SQUARE_WAVE, PIT_COMMAND, VGA_CRTC_DATA_COLOR,
+        VGA_CRTC_DATA_MONO, VGA_CRTC_INDEX_COLOR, VGA_CRTC_INDEX_MONO, inb_p, outb, outb_p,
+    },
     sync::KernelCell,
 };
 
@@ -111,16 +114,8 @@ const NO_EGA_SENTINEL: u16 = 0x10;
 /// Visible rows on a standard text-mode screen.
 const SCREEN_LINES: usize = 25;
 
-/// System control port B, whose low bits gate the PC speaker.
-const SPEAKER_PORT: u16 = 0x61;
-/// Speaker-enable bits (gate + data) in [`SPEAKER_PORT`].
+/// Speaker-enable bits (gate + data) in the keyboard controller port B.
 const SPEAKER_ENABLE: u8 = 0b11;
-/// PIT mode/command register.
-const PIT_COMMAND: u16 = 0x43;
-/// PIT channel 2 data register.
-const PIT_CH2_DATA: u16 = 0x42;
-/// PIT command: channel 2, low+high byte, square-wave mode.
-const PIT_CH2_SQUARE_WAVE: u8 = 0xb6;
 /// PIT reload divisor for the bell tone (1193182 Hz / 1591 ≈ 750 Hz).
 const BELL_DIVISOR: u16 = 1591;
 
@@ -227,8 +222,8 @@ impl VgaConsole {
             row_bytes: 160,
             mem_start: 0xb8000,
             mem_end: 0xba000,
-            port_reg: 0x3d4,
-            port_val: 0x3d5,
+            port_reg: VGA_CRTC_INDEX_COLOR,
+            port_val: VGA_CRTC_DATA_COLOR,
             erase_cell: ERASE_CELL,
             origin: 0xb8000,
             screen_end: 0xb8000 + SCREEN_LINES * 160,
@@ -259,8 +254,8 @@ impl VgaConsole {
         if mode == MONO_VIDEO_MODE {
             // Monochrome display.
             self.mem_start = 0xb0000;
-            self.port_reg = 0x3b4;
-            self.port_val = 0x3b5;
+            self.port_reg = VGA_CRTC_INDEX_MONO;
+            self.port_val = VGA_CRTC_DATA_MONO;
             if (ega_bx & 0xff) != NO_EGA_SENTINEL {
                 self.display_type = DisplayType::EgaMonochrome;
                 self.mem_end = 0xb8000;
@@ -271,8 +266,8 @@ impl VgaConsole {
         } else {
             // Color display.
             self.mem_start = 0xb8000;
-            self.port_reg = 0x3d4;
-            self.port_val = 0x3d5;
+            self.port_reg = VGA_CRTC_INDEX_COLOR;
+            self.port_val = VGA_CRTC_DATA_COLOR;
             if (ega_bx & 0xff) != NO_EGA_SENTINEL {
                 self.display_type = DisplayType::EgaColor;
                 self.mem_end = 0xbc000;
@@ -511,8 +506,8 @@ impl VgaConsole {
 
     fn bell(&mut self) {
         // Drive PIT channel 2 to beep the PC speaker at roughly 750 Hz.
-        let speaker = inb_p(SPEAKER_PORT);
-        outb_p(speaker | SPEAKER_ENABLE, SPEAKER_PORT);
+        let speaker = inb_p(KBD_CONTROL_PORT_B);
+        outb_p(speaker | SPEAKER_ENABLE, KBD_CONTROL_PORT_B);
         outb_p(PIT_CH2_SQUARE_WAVE, PIT_COMMAND);
         outb_p(BELL_DIVISOR as u8, PIT_CH2_DATA);
         outb((BELL_DIVISOR >> 8) as u8, PIT_CH2_DATA);

@@ -18,7 +18,10 @@ use user_lib::syscall::tty::{ControlMode, Termios};
 
 use super::tty::{self, TtyBackend};
 use crate::{
-    pmio::{inb, inb_p, outb, outb_p},
+    pmio::{
+        PIC_EOI, PIC_IRQ_COM1, PIC_IRQ_COM2, PIC_MASTER_COMMAND, PIC_MASTER_MASK, SERIAL_COM1_BASE,
+        SERIAL_COM2_BASE, inb, inb_p, outb, outb_p,
+    },
     trap,
 };
 
@@ -35,7 +38,10 @@ pub fn init() {
     }
 
     // Unmask IRQ3 and IRQ4 on the master PIC.
-    outb(inb_p(PIC_MASTER_MASK) & !SERIAL_IRQ_MASK, PIC_MASTER_MASK);
+    outb(
+        inb_p(PIC_MASTER_MASK) & !(PIC_IRQ_COM2 | PIC_IRQ_COM1),
+        PIC_MASTER_MASK,
+    );
 }
 
 /// TTY backend for the serial channels.
@@ -85,29 +91,17 @@ const PORT_COUNT: usize = 2;
 /// TTY channel number of the first serial port.
 const FIRST_SERIAL_TTY: usize = 1;
 
-/// Master PIC interrupt mask register.
-const PIC_MASTER_MASK: u16 = 0x21;
-
-/// Master PIC command register (used to send end-of-interrupt).
-const PIC_MASTER_COMMAND: u16 = 0x20;
-
-/// End-of-interrupt command for the 8259A PIC.
-const PIC_EOI: u8 = 0x20;
-
-/// IRQ3 and IRQ4 mask bits in the master PIC interrupt mask register.
-const SERIAL_IRQ_MASK: u8 = 0x18;
-
 /// Maximum bytes drained from the receive FIFO per interrupt.
 const RX_BATCH: usize = 16;
 
 /// Static serial-port table, indexed by `tty_channel - FIRST_SERIAL_TTY`.
 const PORTS: [SerialPort; PORT_COUNT] = [
     SerialPort {
-        base: 0x3f8,
+        base: SERIAL_COM1_BASE,
         tty_channel: 1,
     },
     SerialPort {
-        base: 0x2f8,
+        base: SERIAL_COM2_BASE,
         tty_channel: 2,
     },
 ];

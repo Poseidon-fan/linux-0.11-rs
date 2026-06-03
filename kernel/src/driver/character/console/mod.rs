@@ -15,7 +15,9 @@ pub use vga::{ORIG_X, ORIG_Y};
 
 use super::tty::{self, TtyBackend};
 use crate::{
-    pmio::{inb_p, outb, outb_p},
+    pmio::{
+        KBD_ACK_BIT, KBD_CONTROL_PORT_B, PIC_IRQ_KEYBOARD, PIC_MASTER_MASK, inb_p, outb, outb_p,
+    },
     trap,
 };
 
@@ -32,7 +34,7 @@ pub fn init() {
     trap::set_intr_gate(0x21, keyboard::keyboard_interrupt);
 
     // Unmask IRQ1 (keyboard) on the master PIC.
-    outb_p(inb_p(PIC_MASTER_MASK) & !KEYBOARD_IRQ_MASK, PIC_MASTER_MASK);
+    outb_p(inb_p(PIC_MASTER_MASK) & !PIC_IRQ_KEYBOARD, PIC_MASTER_MASK);
 
     // Reset the keyboard controller by pulsing the acknowledge line.
     let port_b = inb_p(KBD_CONTROL_PORT_B);
@@ -46,18 +48,6 @@ pub fn init() {
 
 /// TTY backend for the VGA console.
 pub struct ConsoleBackend;
-
-/// Master PIC interrupt-mask register.
-const PIC_MASTER_MASK: u16 = 0x21;
-
-/// IRQ1 (keyboard) mask bit in the master PIC.
-const KEYBOARD_IRQ_MASK: u8 = 1 << 1;
-
-/// Keyboard controller port B (acknowledge toggling).
-const KBD_CONTROL_PORT_B: u16 = 0x61;
-
-/// Acknowledge bit pulsed on port B to reset the keyboard controller.
-const KBD_ACK_BIT: u8 = 1 << 7;
 
 /// Maximum bytes drained from the output queue per parser batch.
 const OUTPUT_BATCH: usize = 256;

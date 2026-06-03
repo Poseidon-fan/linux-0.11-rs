@@ -20,7 +20,10 @@ use bitflags::bitflags;
 
 use super::super::tty;
 use crate::{
-    pmio::{inb, outb},
+    pmio::{
+        KBD_ACK_BIT, KBD_CONTROL_PORT_B, KBD_DATA_PORT, KBD_STATUS_PORT, PIC_EOI,
+        PIC_MASTER_COMMAND, inb, outb,
+    },
     sync::KernelCell,
 };
 
@@ -110,29 +113,11 @@ static CURSOR_TABLE: [u8; 13] = [
     b'2', b'3',       // Ins, Del
 ];
 
-/// Keyboard controller data/command port.
-const KBD_DATA_PORT: u16 = 0x60;
-
-/// Keyboard controller status/command port.
-const KBD_STATUS_PORT: u16 = 0x64;
-
 /// Status-register bit set while the controller input buffer is full.
 const KBD_INPUT_FULL: u8 = 1 << 1;
 
 /// Controller command: set keyboard LEDs (followed by an [`Leds`] byte).
 const KBD_CMD_SET_LEDS: u8 = 0xed;
-
-/// Keyboard controller port B (acknowledge toggling).
-const KBD_CONTROL_PORT_B: u16 = 0x61;
-
-/// Acknowledge bit pulsed on port B after reading a scan code.
-const KBD_ACK_BIT: u8 = 1 << 7;
-
-/// Master PIC command register.
-const PIC_MASTER_COMMAND: u16 = 0x20;
-
-/// End-of-interrupt command for the 8259A PIC.
-const PIC_EOI: u8 = 0x20;
 
 /// Extended scan-code prefix bytes (0xe0 / 0xe1).
 const EXTENDED_PREFIXES: [u8; 2] = [0xe0, 0xe1];

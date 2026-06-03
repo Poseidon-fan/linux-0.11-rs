@@ -7,7 +7,7 @@ use core::{
 };
 
 use crate::{
-    pmio::outb,
+    pmio::{PIC_EOI, PIC_MASTER_COMMAND, outb},
     segment::{USER_CS, USER_DS},
     signal::{self, DeliverAction, SignalDeliveryFrame, SignalSavedRegisters},
     task,
@@ -93,7 +93,7 @@ extern "C" fn handle_timer_tick(frame: *mut TimerInterruptFrame, cpl: u32) {
     JIFFIES.fetch_add(1, Ordering::Relaxed);
 
     // Send End-Of-Interrupt to master 8259A PIC.
-    outb(0x20, 0x20);
+    outb(PIC_EOI, PIC_MASTER_COMMAND);
 
     // Safety: IRQ0 runs through an interrupt gate, so hardware already
     // masked interrupts on entry. This satisfies `exclusive_unchecked`.
