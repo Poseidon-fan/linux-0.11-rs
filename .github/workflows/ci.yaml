@@ -88,9 +88,6 @@ jobs:
       - name: Install built-in tools (mbrkit + miniximg + ktest)
         run: tools/install-tools.sh --locked
 
-      - name: Build kernel (serial console)
-        run: make -C kernel Image-console-release
-
       - name: Build disk image
         run: tools/build-disk.sh
 

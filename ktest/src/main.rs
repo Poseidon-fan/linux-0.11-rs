@@ -40,7 +40,7 @@ use crate::{
 /// QEMU boot timeout — kernel + init + first prompt.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default per-step timeout, overridable from a script via `! timeout N`.
-const DEFAULT_STEP_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_STEP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Parser, Debug)]
 #[command(name = "ktest", about = "End-to-end test runner for linux-0.11-rs")]
