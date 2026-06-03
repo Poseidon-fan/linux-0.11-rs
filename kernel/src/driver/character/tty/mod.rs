@@ -23,7 +23,7 @@ use user_lib::syscall::tty::{ControlChar, LocalMode, OutputMode, Termios};
 use super::{console, serial};
 use crate::{
     error::{Errno, Result},
-    sync::KernelCell,
+    sync::{IrqSaveGuard, KernelCell},
     task::{self, WaitQueue},
 };
 
@@ -224,8 +224,8 @@ impl TtyDevice {
 
         let mut written = 0;
         while !signal_pending() {
-            if !self.state.exclusive(|state| state.has_readable_data()) {
-                self.cooked_wait.sleep_interruptible();
+            if !self.wait_interruptible_while(&self.cooked_wait, |state| !state.has_readable_data())
+            {
                 continue;
             }
 
@@ -250,11 +250,9 @@ impl TtyDevice {
 
             if self.state.exclusive(|state| state.output.is_full()) {
                 self.backend.start_output(channel);
-                if self
-                    .state
-                    .exclusive(|state| state.output.remaining() < WRITE_WAKE_THRESHOLD)
-                {
-                    self.output_wait.sleep_interruptible();
+                if !self.wait_interruptible_while(&self.output_wait, |state| {
+                    state.output.remaining() < WRITE_WAKE_THRESHOLD
+                }) {
                     continue;
                 }
             }
@@ -270,6 +268,23 @@ impl TtyDevice {
         }
 
         Ok(sent)
+    }
+
+    /// Sleep interruptibly while a TTY state predicate remains true.
+    ///
+    /// This mirrors the original TTY wait helpers: interrupts stay masked
+    /// across each condition check and wait-queue enrollment, so IRQ-side input
+    /// or output-drain events cannot land in the gap and lose their wakeup.
+    fn wait_interruptible_while(
+        &'static self,
+        wait_queue: &WaitQueue,
+        mut should_sleep: impl FnMut(&TtyState) -> bool,
+    ) -> bool {
+        let _irq = IrqSaveGuard::enter();
+        while !signal_pending() && self.state.exclusive(|state| should_sleep(state)) {
+            wait_queue.sleep_interruptible();
+        }
+        !signal_pending()
     }
 
     /// Handle a terminal ioctl request for this device.
