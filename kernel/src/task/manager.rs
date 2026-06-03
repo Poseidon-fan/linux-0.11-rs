@@ -8,6 +8,7 @@ use core::{
 };
 
 use lazy_static::lazy_static;
+use user_lib::syscall::signal::Signal;
 
 use super::task_struct::{TASK_PAGE_SIZE, Task, TaskControlBlock, TaskPage, TaskState};
 use crate::sync::KernelCell;
@@ -71,6 +72,25 @@ impl TaskManager {
     /// - `Some(next)` if caller should perform a hardware switch.
     /// - `None` if current task remains unchanged.
     pub fn select_next_task(&self) -> Option<Arc<Task>> {
+        // Signal-aware pre-scan: deliver expired SIGALRM and wake
+        // interruptible tasks that have a pending unblocked signal.
+        // Mirrors the original Linux 0.11 schedule() pre-scan.
+        let j = super::jiffies();
+        let unblockable = (1u32 << (Signal::Kill as u32 - 1)) | (1u32 << (Signal::Stop as u32 - 1));
+        for task in self.tasks.iter().flatten() {
+            task.pcb.inner.exclusive(|inner| {
+                if inner.signal_info.alarm != 0 && inner.signal_info.alarm < j {
+                    inner.signal_info.raise(Signal::Alrm as u32);
+                    inner.signal_info.alarm = 0;
+                }
+                let pending_unblocked =
+                    inner.signal_info.signal & (unblockable | !inner.signal_info.blocked);
+                if inner.sched.state == TaskState::Interruptible && pending_unblocked != 0 {
+                    inner.sched.state = TaskState::Running;
+                }
+            });
+        }
+
         let current_slot = super::current_slot();
         loop {
             // Pick a runnable non-idle task with the largest counter.

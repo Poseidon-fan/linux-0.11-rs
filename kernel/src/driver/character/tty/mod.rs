@@ -189,6 +189,7 @@ fn signal_foreground_group(foreground_group: i32, signal: u32) {
             task.pcb.inner.exclusive(|inner| {
                 if inner.relation.pgrp == pgrp {
                     inner.signal_info.raise(signal);
+                    inner.sched.wake_if_interruptible();
                 }
             });
         }
