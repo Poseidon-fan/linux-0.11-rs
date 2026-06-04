@@ -272,9 +272,9 @@ impl TtyDevice {
 
     /// Sleep interruptibly while a TTY state predicate remains true.
     ///
-    /// This mirrors the original TTY wait helpers: interrupts stay masked
-    /// across each condition check and wait-queue enrollment, so IRQ-side input
-    /// or output-drain events cannot land in the gap and lose their wakeup.
+    /// The predicate check and wait-queue enrollment share one IRQ-masked
+    /// protocol, so IRQ-side input or output-drain events cannot satisfy the
+    /// predicate and wake the queue before the current task is queued.
     fn wait_interruptible_while(
         &'static self,
         wait_queue: &WaitQueue,

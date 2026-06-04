@@ -32,7 +32,7 @@ use crate::{
     driver::DevNum,
     error::{Errno, Result},
     fs::{BLOCK_SIZE, buffer::BufferSlot},
-    sync::KernelCell,
+    sync::{IrqSaveGuard, KernelCell},
     task::WaitQueue,
 };
 
@@ -76,10 +76,12 @@ pub fn submit_request(ty: BlockRequestType, prefetch: bool, buffer: Arc<BufferSl
     }
 
     let request_id = loop {
+        let irq = IrqSaveGuard::enter();
         let candidate = BLOCK_MANAGER.exclusive(|manager| manager.pool.find_free_slot(ty));
         match candidate {
             Some(id) => break id,
             None if prefetch => {
+                drop(irq);
                 buffer.release_io();
                 return;
             }
