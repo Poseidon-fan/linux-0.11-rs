@@ -108,7 +108,7 @@ impl Runner {
     /// before issuing any commands. The kernel takes a few seconds to
     /// boot through init.
     pub fn wait_boot(&mut self, timeout: Duration) -> Result<()> {
-        self.wait_prompt(timeout)
+        self.wait_for_prompt(timeout).map(|_| ())
     }
 
     /// Sends `cmd` followed by `\r`, then waits for the next prompt.
@@ -120,7 +120,7 @@ impl Runner {
             .write_all(cmd.as_bytes())
             .context("write to qemu stdin")?;
         self.stdin.write_all(b"\r").context("write CR")?;
-        let raw = self.wait_for_match(&self.prompt_re.clone(), timeout, /*advance=*/ true)?;
+        let raw = self.wait_for_prompt(timeout)?;
         Ok(strip_echo_and_csi(&raw))
     }
 
@@ -135,7 +135,7 @@ impl Runner {
     /// Blocks until the prompt regex appears, then advances the cursor
     /// past it.
     pub fn wait_prompt(&mut self, timeout: Duration) -> Result<()> {
-        self.wait_for_match(&self.prompt_re.clone(), timeout, true)?;
+        self.wait_for_prompt(timeout)?;
         Ok(())
     }
 
@@ -188,6 +188,46 @@ impl Runner {
                     re.as_str(),
                     timeout
                 ));
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Wait for a shell prompt that belongs to completed command output.
+    ///
+    /// The interactive shell redraws the prompt while the runner is still
+    /// typing a command, e.g. `\r\e[2K[root@linux-rs /]# w`. The generic
+    /// prompt regex can briefly match the redraw when the reader thread has
+    /// only received bytes through the `# ` and not the following command
+    /// character yet. In shared-QEMU runs that races with `send_line()` and
+    /// makes assertions inspect an empty chunk.
+    ///
+    /// A real post-command prompt is preceded by the line break emitted when
+    /// Enter is accepted (or by a program/TTY newline), so skip prompt matches
+    /// that have no `\n` between the current cursor and the match.
+    fn wait_for_prompt(&mut self, timeout: Duration) -> Result<String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            {
+                let log = self.log.lock().unwrap();
+                if let Ok(text) = std::str::from_utf8(&log[self.cursor..]) {
+                    for m in self.prompt_re.find_iter(text) {
+                        if !text[..m.start()].contains('\n') {
+                            continue;
+                        }
+                        let absolute_end = self.cursor + m.end();
+                        let chunk =
+                            String::from_utf8_lossy(&log[self.cursor..absolute_end]).into_owned();
+                        self.cursor = absolute_end;
+                        return Ok(chunk);
+                    }
+                }
+                if self.eof.load(Ordering::Relaxed) {
+                    return Err(anyhow!("qemu exited before matching prompt"));
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(anyhow!("timeout waiting for prompt (after {:?})", timeout));
             }
             thread::sleep(Duration::from_millis(20));
         }
