@@ -55,6 +55,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 /// Fallback handler for IDT vectors that have no dedicated service routine.
+/// Ref: boot/head.s
 #[unsafe(no_mangle)]
 extern "C" fn handle_unknown_interrupt() {
     error!("Unknown interrupt");
