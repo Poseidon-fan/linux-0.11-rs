@@ -5,9 +5,6 @@
 //! bytes awaiting transmission. All index arithmetic is bitwise masking, so
 //! [`CAPACITY`] must be a power of two (checked at compile time).
 
-/// Number of bytes each ring buffer can store (must be a power of two).
-pub const CAPACITY: usize = 1024;
-
 /// A fixed-size, single-producer / single-consumer byte ring buffer.
 ///
 /// `head` is the next slot to write; `tail` the next slot to read. The buffer
@@ -27,6 +24,9 @@ const _: () = assert!(
     CAPACITY.is_power_of_two(),
     "RingBuffer CAPACITY must be a power of two"
 );
+
+/// Number of bytes each ring buffer can store (must be a power of two).
+const CAPACITY: usize = 1024;
 
 /// Bit mask applied to every index to wrap it within the backing storage.
 const MASK: usize = CAPACITY - 1;
