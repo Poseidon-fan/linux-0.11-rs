@@ -92,15 +92,15 @@ fn match_class(pat: &[u8], pi: &mut usize, c: u8, flags: u8) -> bool {
         return false;
     }
 
+    let mut matched = false;
+
     // `]` immediately after `[` or `[!` is literal.
     if pat[*pi] == b']' {
         if c == b']' {
-            return !neg;
+            matched = true;
         }
         *pi += 1;
     }
-
-    let mut matched = false;
     while *pi < pat.len() && pat[*pi] != b']' {
         let lo = pat[*pi];
         *pi += 1;

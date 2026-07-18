@@ -24,3 +24,13 @@
 # $$ is the shell PID — a positive integer.
 > echo $$
 ~ [1-9][0-9]*
+
+# Literal closing bracket []] in character class
+> touch "/tmp/gl/]"
+> echo /tmp/gl/[]]
+< /tmp/gl/]
+
+# Negated closing bracket [!]] in character class
+> touch /tmp/gl/a
+> echo /tmp/gl/[!]]
+< /tmp/gl/a
