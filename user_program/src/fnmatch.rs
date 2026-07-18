@@ -92,15 +92,15 @@ fn match_class(pat: &[u8], pi: &mut usize, c: u8, flags: u8) -> bool {
         return false;
     }
 
+    let mut matched = false;
+
     // `]` immediately after `[` or `[!` is literal.
     if pat[*pi] == b']' {
         if c == b']' {
-            return !neg;
+            matched = true;
         }
         *pi += 1;
     }
-
-    let mut matched = false;
     while *pi < pat.len() && pat[*pi] != b']' {
         let lo = pat[*pi];
         *pi += 1;
@@ -149,4 +149,38 @@ fn byte_eq(a: u8, b: u8, flags: u8) -> bool {
 
 fn has_flag(flags: u8, f: u8) -> bool {
     flags & f != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_match() {
+        assert!(fnmatch("a", "a", 0));
+        assert!(!fnmatch("a", "b", 0));
+        assert!(fnmatch("a*", "ab", 0));
+        assert!(fnmatch("a*b", "axb", 0));
+    }
+
+    #[test]
+    fn test_question_mark() {
+        assert!(fnmatch("a?", "ab", 0));
+        assert!(!fnmatch("a?", "abc", 0));
+    }
+
+    #[test]
+    fn test_class() {
+        assert!(fnmatch("[abc]", "b", 0));
+        assert!(!fnmatch("[abc]", "d", 0));
+        assert!(fnmatch("[!abc]", "d", 0));
+        assert!(!fnmatch("[!abc]", "b", 0));
+    }
+
+    #[test]
+    fn test_class_literal_closing_bracket() {
+        assert!(fnmatch("[]]", "]", 0));
+        assert!(fnmatch("[!]]", "a", 0));
+        assert!(!fnmatch("[!]]", "]", 0));
+    }
 }
