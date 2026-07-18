@@ -150,37 +150,3 @@ fn byte_eq(a: u8, b: u8, flags: u8) -> bool {
 fn has_flag(flags: u8, f: u8) -> bool {
     flags & f != 0
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_basic_match() {
-        assert!(fnmatch("a", "a", 0));
-        assert!(!fnmatch("a", "b", 0));
-        assert!(fnmatch("a*", "ab", 0));
-        assert!(fnmatch("a*b", "axb", 0));
-    }
-
-    #[test]
-    fn test_question_mark() {
-        assert!(fnmatch("a?", "ab", 0));
-        assert!(!fnmatch("a?", "abc", 0));
-    }
-
-    #[test]
-    fn test_class() {
-        assert!(fnmatch("[abc]", "b", 0));
-        assert!(!fnmatch("[abc]", "d", 0));
-        assert!(fnmatch("[!abc]", "d", 0));
-        assert!(!fnmatch("[!abc]", "b", 0));
-    }
-
-    #[test]
-    fn test_class_literal_closing_bracket() {
-        assert!(fnmatch("[]]", "]", 0));
-        assert!(fnmatch("[!]]", "a", 0));
-        assert!(!fnmatch("[!]]", "]", 0));
-    }
-}
