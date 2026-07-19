@@ -1,4 +1,26 @@
 [book]
-title = "Rewrite Linux 0.11 kernel in Rust"
+title = "Rewriting the Linux 0.11 in Rust"
 authors = ["Poseidon"]
+description = "A build-from-scratch guide to rewriting Linux 0.11 in modern Rust."
 language = "en"
+
+[rust]
+edition = "2024"
+
+[build]
+create-missing = false
+extra-watch-dirs = ["../kernel", "../user_lib", "../user_program"]
+
+[output.html]
+git-repository-url = "https://github.com/Poseidon-fan/linux-0.11-rs"
+edit-url-template = "https://github.com/Poseidon-fan/linux-0.11-rs/edit/master/tutorial/{path}"
+site-url = "/linux-0.11-rs/"
+additional-css = ["theme/tokyo-night-storm.css"]
+
+[output.html.playground]
+runnable = false
+copyable = true
+
+[output.html.fold]
+enable = true
+level = 1
